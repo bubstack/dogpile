@@ -44,13 +44,13 @@ Dochkina, V. (2026). *Drop the Hierarchy and Roles: How Self-Organizing LLM Agen
 - **Live when you need it.** `Dogpile.stream()` yields the same event shapes that land in the final trace.
 - **Replayable by construction.** Completed runs return a JSON-serializable trace with inputs, events, provider calls, transcript, accounting, and final output.
 - **Application-owned effects.** Runtime tools, web search, code execution, credentials, and persistence stay under caller policy.
-- **Small public surface.** The v1 package exports the SDK root, browser entrypoint, runtime subpaths, type subpath, and OpenAI-compatible provider adapter.
+- **Small public surface.** The package exports the SDK root, browser entrypoint, runtime subpaths, type subpath, and OpenAI-compatible provider adapter.
 
 ## Documentation
 
-- [Developer usage guide](https://github.com/zakkeown/dogpile/blob/main/docs/developer-usage.md): API choices, providers, protocols, streaming, termination, tools, replay, errors, browser usage, and repo commands.
+- [Developer usage guide](https://github.com/bubstack/dogpile/blob/main/docs/developer-usage.md): API choices, providers, protocols, streaming, termination, tools, replay, errors, browser usage, and repo commands.
 - [Examples](examples/README.md): repeatable protocol comparison and live OpenAI-compatible execution.
-- [Changelog](CHANGELOG.md): v1 release notes and public-surface changes.
+- [Changelog](CHANGELOG.md): release notes and public-surface changes.
 
 ## Choose Your Entry Point
 
@@ -102,22 +102,22 @@ pnpm run build
 pnpm pack --pack-destination ./packed
 ```
 
-The local tarball is named `dogpile-sdk-1.0.0.tgz` for the scoped package
-`@dogpile/sdk@1.0.0`. Install that tarball into a fresh consumer project:
+The local tarball is named `dogpile-sdk-0.1.1.tgz` for the scoped package
+`@dogpile/sdk@0.1.1`. Install that tarball into a fresh consumer project:
 
 ```sh
 mkdir ../dogpile-quickstart
 cd ../dogpile-quickstart
 pnpm init
-pnpm add ../dogpile/packed/dogpile-sdk-1.0.0.tgz
+pnpm add ../dogpile/packed/dogpile-sdk-0.1.1.tgz
 ```
 
 Equivalent install commands for other supported package managers are:
 
 ```sh
-npm install ../dogpile/packed/dogpile-sdk-1.0.0.tgz
-yarn add ../dogpile/packed/dogpile-sdk-1.0.0.tgz
-bun add ../dogpile/packed/dogpile-sdk-1.0.0.tgz
+npm install ../dogpile/packed/dogpile-sdk-0.1.1.tgz
+yarn add ../dogpile/packed/dogpile-sdk-0.1.1.tgz
+bun add ../dogpile/packed/dogpile-sdk-0.1.1.tgz
 ```
 
 ## Versioning and Stability
@@ -128,7 +128,7 @@ Dogpile follows semantic versioning for published packages:
 - Minor releases add backward-compatible APIs, protocols, event fields, or runtime support.
 - Major releases may change public contracts, remove deprecated APIs, or alter protocol semantics.
 
-The v1.0.0 stable surface includes the package root exports, high-level `Dogpile.pile()`, `run()`, `stream()`, `createEngine()`, the dependency-free OpenAI-compatible provider adapter, protocol and tier discriminated unions, event unions, trace/result types, and runtime portability guarantees for Node.js LTS 22 / 24, Bun latest, and browser ESM runtimes.
+The current public surface includes the package root exports, high-level `Dogpile.pile()`, `run()`, `stream()`, `createEngine()`, the dependency-free OpenAI-compatible provider adapter, protocol and tier discriminated unions, event unions, trace/result types, and runtime portability guarantees for Node.js LTS 22 / 24, Bun latest, and browser ESM runtimes.
 
 Dogpile treats documented `dist` entrypoints, their runtime implementation dependencies, JavaScript source maps, declaration maps, original TypeScript sources for shipped runtime/browser/provider files, `README.md`, `CHANGELOG.md`, and `LICENSE` as the publishable package payload. Demo, benchmark, deterministic testing, and internal helper files are repository-only and stay out of the npm tarball. Core runtime code must remain pure TypeScript, storage-free, and free of Node-only dependencies so the same package can run across the supported Node.js, Bun, and browser ESM runtimes.
 
@@ -146,9 +146,9 @@ pnpm run pack:check
 pnpm run publish:check
 ```
 
-`package:identity` asserts the scoped npm package name `@dogpile/sdk`, the v1 release identity, required package metadata (license, repository, keywords, publish access, and package manager), and scans release-facing source, docs, tests, and CI files for stale unscoped package install/import references. `package:artifacts` verifies that every runtime JavaScript file and TypeScript declaration file referenced by package metadata has been emitted by the build and is covered by `package.json` `files` before any pack or publish dry run. `browser:smoke` rebuilds the browser ESM bundle and runs the focused smoke test that imports `@dogpile/sdk` through the `browser` condition. `quickstart:smoke` builds the SDK, runs the package artifact guard, creates a real `pnpm pack` tarball, installs that tarball into a fresh temporary project without provider SDK peer fixtures, asserts the consumer dependency and lockfile resolve `@dogpile/sdk` from the `.tgz` instead of `workspace:` or `link:` metadata, verifies installed package entrypoints and `dist` imports do not resolve through local source imports, imports `@dogpile/sdk` from the consumer, imports every public package subpath from the installed tarball, extracts the marked quickstart from the installed package README, executes that documented provider-neutral `Dogpile.pile()` example end to end, writes a downstream TypeScript fixture that imports the package root and public subpaths, runs `tsc --noEmit` from the consumer project to prove declaration and export-map type resolution, verifies private helper files are absent from the installed tarball, and proves private helper subpaths remain blocked by package exports. `consumer:smoke` is kept as the same packed-tarball quickstart smoke command for compatibility. `verify` rebuilds `dist`, runs the package artifact guard, runs the packed-tarball quickstart smoke against that build, runs strict typecheck, then runs the test suite so declaration export checks, downstream type-resolution smoke tests, public API type-level assertions, the tarball install path, and package identity checks all fail the same local or CI gate. `pack:check` runs package identity, rebuilds `dist`, runs the package artifact guard before the packed-tarball quickstart smoke creates its `pnpm pack` tarball, then runs the packed JavaScript source-map and declaration-map guard and `npm pack --dry-run` so both the actual tarball install path and the npm package payload are checked. The source-map guard extracts the packed tarball, verifies every packaged `dist/**/*.js` and `dist/**/*.d.ts` file has its map, resolves packaged JavaScript and declaration `sourceMappingURL` references to map files present in the tarball, and confirms package-owned source references in those maps resolve to files present in the tarball. `publish:check` runs `verify`, reruns the package artifact guard, and then runs `npm publish --dry-run` so the package metadata, export map, and publishable files are checked without publishing.
+`package:identity` asserts the scoped npm package name `@dogpile/sdk`, the current release identity, required package metadata (license, repository, keywords, publish access, and package manager), and scans release-facing source, docs, tests, and CI files for stale unscoped package install/import references. `package:artifacts` verifies that every runtime JavaScript file and TypeScript declaration file referenced by package metadata has been emitted by the build and is covered by `package.json` `files` before any pack or publish dry run. `browser:smoke` rebuilds the browser ESM bundle and runs the focused smoke test that imports `@dogpile/sdk` through the `browser` condition. `quickstart:smoke` builds the SDK, runs the package artifact guard, creates a real `pnpm pack` tarball, installs that tarball into a fresh temporary project without provider SDK peer fixtures, asserts the consumer dependency and lockfile resolve `@dogpile/sdk` from the `.tgz` instead of `workspace:` or `link:` metadata, verifies installed package entrypoints and `dist` imports do not resolve through local source imports, imports `@dogpile/sdk` from the consumer, imports every public package subpath from the installed tarball, extracts the marked quickstart from the installed package README, executes that documented provider-neutral `Dogpile.pile()` example end to end, writes a downstream TypeScript fixture that imports the package root and public subpaths, runs `tsc --noEmit` from the consumer project to prove declaration and export-map type resolution, verifies private helper files are absent from the installed tarball, and proves private helper subpaths remain blocked by package exports. `consumer:smoke` is kept as the same packed-tarball quickstart smoke command for compatibility. `verify` rebuilds `dist`, runs the package artifact guard, runs the packed-tarball quickstart smoke against that build, runs strict typecheck, then runs the test suite so declaration export checks, downstream type-resolution smoke tests, public API type-level assertions, the tarball install path, and package identity checks all fail the same local or CI gate. `pack:check` runs package identity, rebuilds `dist`, runs the package artifact guard before the packed-tarball quickstart smoke creates its `pnpm pack` tarball, then runs the packed JavaScript source-map and declaration-map guard and `npm pack --dry-run` so both the actual tarball install path and the npm package payload are checked. The source-map guard extracts the packed tarball, verifies every packaged `dist/**/*.js` and `dist/**/*.d.ts` file has its map, resolves packaged JavaScript and declaration `sourceMappingURL` references to map files present in the tarball, and confirms package-owned source references in those maps resolve to files present in the tarball. `publish:check` runs `verify`, reruns the package artifact guard, and then runs `npm publish --dry-run` so the package metadata, export map, and publishable files are checked without publishing.
 
-The release identity is `@dogpile/sdk@1.0.0`. A real `pnpm pack` or `npm pack` for this scoped package produces the local tarball `dogpile-sdk-1.0.0.tgz`; the dry-run package gate must report that tarball filename and the scoped npm package name before publish. See `CHANGELOG.md` for v1.0.0 release notes and breaking-change documentation.
+The release identity is `@dogpile/sdk@0.1.1`. A real `pnpm pack` or `npm pack` for this scoped package produces the local tarball `dogpile-sdk-0.1.1.tgz`; the dry-run package gate must report that tarball filename and the scoped npm package name before publish. See `CHANGELOG.md` for release notes and breaking-change documentation.
 
 The browser ESM target is emitted at `dist/browser/index.js` with `dist/browser/index.js.map`; both the package root `browser` condition and the explicit `@dogpile/sdk/browser` subpath resolve to that bundled artifact.
 
@@ -164,6 +164,44 @@ Before publishing from `main` or a `release/**` branch, GitHub branch protection
 - `Release Validation / Required pack:check package artifact`
 
 Do not publish `@dogpile/sdk` unless all Node LTS matrix entries, the Bun latest suite, the browser bundle smoke job, the packed-tarball quickstart smoke job, and the dependent `pack:check` package artifact job are green.
+
+### Automated npm Publishing
+
+`.github/workflows/npm-publish.yml` publishes `@dogpile/sdk` from GitHub Actions
+when a GitHub Release is published. It can also be started manually with
+`workflow_dispatch`; the manual path defaults to a dry run.
+
+The publish workflow uses npm Trusted Publishing/OIDC rather than a long-lived
+npm automation token. Configure the package's trusted publisher on npmjs.com
+with:
+
+- Organization or user: `bubstack`
+- Repository: `dogpile`
+- Workflow filename: `npm-publish.yml`
+- Environment name: `npm`
+
+Before the first automated release, publish the initial package version from an
+npm account with owner access to the `@dogpile` scope:
+
+```sh
+npm publish --access public
+```
+
+That first manual publish creates the `@dogpile/sdk` package settings page on
+npmjs.com. After it exists, add the Trusted Publisher fields above, then use
+GitHub Releases or the manual workflow dry-run path for future releases. The
+local safety check for the first publish is:
+
+```sh
+pnpm run publish:check
+```
+
+The workflow grants `id-token: write`, runs on a GitHub-hosted Node.js 24
+runner, installs the latest npm CLI, runs `pnpm run publish:check`, verifies the
+target version is not already published, and then runs
+`npm publish --access public`. Keep the `npm` GitHub environment protected for
+release review if this repository should require human approval before a
+published GitHub Release can reach the npm registry.
 
 ## Import
 
@@ -483,7 +521,7 @@ const lookupTool: RuntimeTool<LookupInput> = {
 ## DogpileError Codes
 
 `DogpileError` and `DogpileErrorCode` are exported from `@dogpile/sdk`. The
-string `code` values below are the stable v1 contract for JavaScript callers,
+string `code` values below are the stable public contract for JavaScript callers,
 TypeScript discriminated-union handling, retry policy, and observability. When
 `retryable` is present, prefer it over a hard-coded policy; the handling column
 describes the default caller posture when provider metadata does not override
@@ -510,7 +548,8 @@ Use `stream()` or `Dogpile.stream()` when you need a live event log, and `create
 ## Benchmark Artifacts
 
 Benchmark runners and deterministic provider fixtures remain repository test
-harnesses in v1. They are intentionally not exported from `@dogpile/sdk`.
+harnesses in this release. They are intentionally not exported from
+`@dogpile/sdk`.
 Repository tests and benchmark harnesses that need those helpers import them
 from the source-only internal path `../internal.js`, which resolves to
 `src/internal.ts` in the TypeScript source tree.

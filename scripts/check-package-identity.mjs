@@ -5,18 +5,18 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const expectedPackageName = "@dogpile/sdk";
-const expectedVersion = "1.0.0";
-const expectedPackFilename = "dogpile-sdk-1.0.0.tgz";
+const expectedVersion = "0.1.1";
+const expectedPackFilename = "dogpile-sdk-0.1.1.tgz";
 const expectedPackageMetadata = {
   license: "Apache-2.0",
   repository: {
     type: "git",
-    url: "git+https://github.com/zakkeown/dogpile.git"
+    url: "git+https://github.com/bubstack/dogpile.git"
   },
   bugs: {
-    url: "https://github.com/zakkeown/dogpile/issues"
+    url: "https://github.com/bubstack/dogpile/issues"
   },
-  homepage: "https://github.com/zakkeown/dogpile#readme",
+  homepage: "https://github.com/bubstack/dogpile#readme",
   keywords: [
     "ai",
     "agents",

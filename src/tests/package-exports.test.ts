@@ -228,20 +228,20 @@ function importPackageSubpath(specifier: string): Promise<unknown> {
 }
 
 describe("package exports", () => {
-  it("declares the public scoped v1 npm package identity", async () => {
+  it("declares the public scoped npm package identity", async () => {
     const manifest = await readManifest();
 
     expect(manifest.name).toBe("@dogpile/sdk");
-    expect(manifest.version).toBe("1.0.0");
+    expect(manifest.version).toBe("0.1.1");
     expect(manifest.license).toBe("Apache-2.0");
     expect(manifest.repository).toEqual({
       type: "git",
-      url: "git+https://github.com/zakkeown/dogpile.git"
+      url: "git+https://github.com/bubstack/dogpile.git"
     });
     expect(manifest.bugs).toEqual({
-      url: "https://github.com/zakkeown/dogpile/issues"
+      url: "https://github.com/bubstack/dogpile/issues"
     });
-    expect(manifest.homepage).toBe("https://github.com/zakkeown/dogpile#readme");
+    expect(manifest.homepage).toBe("https://github.com/bubstack/dogpile#readme");
     expect(manifest.keywords).toEqual([
       "ai",
       "agents",
@@ -264,7 +264,7 @@ describe("package exports", () => {
     });
 
     expect(stderr).toBe("");
-    expect(stdout).toContain("Package identity check passed for @dogpile/sdk@1.0.0");
+    expect(stdout).toContain("Package identity check passed for @dogpile/sdk@0.1.1");
   });
 
   it("wires pack:check to the packed JavaScript and declaration map guard", async () => {
@@ -976,11 +976,11 @@ describe("package exports", () => {
     expect(readme).toContain("pnpm add @dogpile/sdk");
     expect(readme).toContain("npm install @dogpile/sdk");
     expect(readme).toContain("yarn add @dogpile/sdk");
-    expect(readme).toContain("@dogpile/sdk@1.0.0");
-    expect(readme).toContain("dogpile-sdk-1.0.0.tgz");
-    expect(changelog).toContain("## 1.0.0");
+    expect(readme).toContain("@dogpile/sdk@0.1.1");
+    expect(readme).toContain("dogpile-sdk-0.1.1.tgz");
+    expect(changelog).toContain("## 0.1.1");
     expect(changelog).toContain("@dogpile/sdk");
-    expect(changelog).toContain("dogpile-sdk-1.0.0.tgz");
+    expect(changelog).toContain("dogpile-sdk-0.1.1.tgz");
   });
 
   it("does not document private demo, benchmark, deterministic testing, or internal helper package imports", async () => {
@@ -1064,10 +1064,10 @@ describe("package exports", () => {
     expect(packedPathSet.has("README.md")).toBe(true);
     expect(packedPathSet.has("CHANGELOG.md")).toBe(true);
     expect(packedPathSet.has("LICENSE")).toBe(true);
-    expect(packManifest.id).toBe("@dogpile/sdk@1.0.0");
+    expect(packManifest.id).toBe("@dogpile/sdk@0.1.1");
     expect(packManifest.name).toBe("@dogpile/sdk");
-    expect(packManifest.version).toBe("1.0.0");
-    expect(packManifest.filename).toBe("dogpile-sdk-1.0.0.tgz");
+    expect(packManifest.version).toBe("0.1.1");
+    expect(packManifest.filename).toBe("dogpile-sdk-0.1.1.tgz");
     expect(packedPaths.some((path) => path.startsWith("dist/") && path.endsWith(".js"))).toBe(true);
     expect(packedPaths.some((path) => path.startsWith("dist/") && path.endsWith(".d.ts"))).toBe(true);
     expect(packedPaths.some((path) => path.startsWith("dist/") && path.endsWith(".map"))).toBe(true);
