@@ -1,6 +1,48 @@
 # Dogpile
 
-Dogpile is a strict TypeScript SDK for running multi-agent LLM workflows through coordination protocols inspired by arXiv 2603.28990v1, "Drop the Hierarchy and Roles".
+Dogpile is a strict TypeScript SDK for turning one mission into a replayable multi-agent coordination run. It is inspired by arXiv 2603.28990v1, "Drop the Hierarchy and Roles", but it is packaged like an application SDK: bring your own model provider, pick a protocol, stream events if you need them, and persist the trace wherever your product already stores work.
+
+The useful bit is the contract. Dogpile does not own your credentials, pricing table, storage, queue, or UI. It owns the coordination loop: agent turns, protocol events, transcripts, cost aggregation, cancellation, termination policy, typed errors, and replayable result shapes.
+
+```ts
+import { Dogpile } from "@dogpile/sdk";
+
+const result = await Dogpile.pile({
+  intent: "Stress-test this release plan before it ships.",
+  model,
+  protocol: "broadcast",
+  tier: "quality"
+});
+
+console.log(result.output);
+console.log(result.trace.events);
+```
+
+## Why Dogpile
+
+- **Provider-neutral by default.** Any object with `id` and `generate(request)` can be the model boundary.
+- **Four first-party protocols.** Use `sequential`, `broadcast`, `shared`, or `coordinator` without changing the result contract.
+- **Live when you need it.** `Dogpile.stream()` yields the same event shapes that land in the final trace.
+- **Replayable by construction.** Completed runs return a JSON-serializable trace with inputs, events, provider calls, transcript, accounting, and final output.
+- **Application-owned effects.** Runtime tools, web search, code execution, credentials, and persistence stay under caller policy.
+- **Small public surface.** The v1 package exports the SDK root, browser entrypoint, runtime subpaths, type subpath, and OpenAI-compatible provider adapter.
+
+## Documentation
+
+- [Developer usage guide](https://github.com/zakkeown/dogpile/blob/main/docs/developer-usage.md): API choices, providers, protocols, streaming, termination, tools, replay, errors, browser usage, and repo commands.
+- [Examples](examples/README.md): repeatable protocol comparison and live OpenAI-compatible execution.
+- [Changelog](CHANGELOG.md): v1 release notes and public-surface changes.
+
+## Choose Your Entry Point
+
+| Need | Start here |
+| --- | --- |
+| One application workflow | `Dogpile.pile({ intent, model })` |
+| Functional API without the namespace | `run({ intent, model })` |
+| Live UI or logs | `Dogpile.stream({ intent, model })` |
+| Repeated controlled runs | `Dogpile.createEngine({ protocol, tier, model })` |
+| Load a saved trace | `Dogpile.replay(trace)` |
+| Direct compatible HTTP endpoint | `createOpenAICompatibleProvider(options)` |
 
 ## Install
 

@@ -32,4 +32,4 @@
 - Added `StreamHandle.cancel()` and `StreamHandle.status` so live streams abort provider-facing requests, close consumers, and record cancelled runs with stable `DogpileError` code `aborted`.
 - Added SDK-enforced `budget.timeoutMs` lifecycle handling for `run()` and `stream()`, including provider-facing request aborts, `DogpileError` code `timeout`, and timer cleanup after completion.
 - Documented optional runtime tool `validateInput` behavior, including registration validation, per-call timing before `execute()`, invalid-input result semantics, and expected side-effect-free tool author usage.
-- Documented required `Release Validation` status checks for Node.js 18, Node.js 20, Node.js 22, Bun latest, browser bundle smoke, packed-tarball quickstart smoke, and the `pack:check` package artifact job before publish.
+- Documented required `Release Validation` status checks for Node.js 22, Node.js 24, Bun latest, browser bundle smoke, packed-tarball quickstart smoke, and the `pack:check` package artifact job before publish.
