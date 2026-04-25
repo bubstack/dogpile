@@ -16,6 +16,8 @@ import {
 } from "../internal.js";
 import type {
   AgentSpec,
+  AgentDecision,
+  AgentParticipation,
   BroadcastProtocolConfig,
   ConfiguredModelProvider,
   CoordinationProtocolSelection,
@@ -113,6 +115,9 @@ type ResultTranscriptEntry = ArrayElement<RunResult["transcript"]>;
 type FinalEventTranscript = FinalEvent["transcript"];
 type FinalTraceEvent = Extract<RunResult["trace"]["events"][number], { readonly type: "final" }>;
 type AgentTurnTraceEvent = Extract<RunResult["trace"]["events"][number], { readonly type: "agent-turn" }>;
+type AgentTurnDecision = NonNullable<AgentTurnTraceEvent["decision"]>;
+type TranscriptDecision = NonNullable<TranscriptEntry["decision"]>;
+type SharedOrganizationalMemory = SharedProtocolConfig["organizationalMemory"];
 type ErrorStreamEvent = Extract<StreamEvent, { readonly type: "error" }>;
 type DogpileErrorConstructorParameter = ConstructorParameters<typeof DogpileError>[0];
 type DogpileErrorCodeProperty = DogpileError["code"];
@@ -271,6 +276,9 @@ type _FinalTraceEventIsExact = ExpectTrue<IsEqual<FinalTraceEvent, FinalEvent>>;
 type _AgentTurnTraceEventIsNotAny = ExpectFalse<IsAny<AgentTurnTraceEvent>>;
 type _AgentTurnOutputIsNotAny = ExpectFalse<IsAny<AgentTurnTraceEvent["output"]>>;
 type _AgentTurnOutputIsString = ExpectTrue<IsEqual<AgentTurnTraceEvent["output"], string>>;
+type _AgentTurnDecisionIsExact = ExpectTrue<IsEqual<AgentTurnDecision, AgentDecision>>;
+type _TranscriptDecisionIsExact = ExpectTrue<IsEqual<TranscriptDecision, AgentDecision>>;
+type _AgentDecisionParticipationIsExact = ExpectTrue<IsEqual<AgentDecision["participation"], AgentParticipation>>;
 type _ErrorStreamEventIsNotAny = ExpectFalse<IsAny<ErrorStreamEvent>>;
 type _ErrorStreamEventMessageIsNotAny = ExpectFalse<IsAny<ErrorStreamEvent["message"]>>;
 type _ErrorStreamEventMessageIsString = ExpectTrue<IsEqual<ErrorStreamEvent["message"], string>>;
@@ -320,6 +328,8 @@ type _ProtocolConfigIncludesSequential = ExpectTrue<IsEqual<Extract<ProtocolConf
 type _ProtocolConfigIncludesCoordinator = ExpectTrue<IsEqual<Extract<ProtocolConfig, { readonly kind: "coordinator" }>, CoordinatorProtocolConfig>>;
 type _ProtocolConfigIncludesBroadcast = ExpectTrue<IsEqual<Extract<ProtocolConfig, { readonly kind: "broadcast" }>, BroadcastProtocolConfig>>;
 type _ProtocolConfigIncludesShared = ExpectTrue<IsEqual<Extract<ProtocolConfig, { readonly kind: "shared" }>, SharedProtocolConfig>>;
+type _SharedOrganizationalMemoryIsOptional = ExpectTrue<IsOptionalProperty<SharedProtocolConfig, "organizationalMemory">>;
+type _SharedOrganizationalMemoryIsExact = ExpectTrue<IsEqual<SharedOrganizationalMemory, string | undefined>>;
 type _ProtocolSelectionIsNotAny = ExpectFalse<IsAny<ProtocolSelection>>;
 type _ProtocolSelectionNameBranchIsNotAny = ExpectFalse<IsAny<ProtocolSelectionNameBranch>>;
 type _ProtocolSelectionNameBranchIsProtocol = ExpectTrue<IsEqual<ProtocolSelectionNameBranch, Protocol>>;

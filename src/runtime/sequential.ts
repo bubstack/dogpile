@@ -35,6 +35,7 @@ import {
   nextProviderCallId
 } from "./defaults.js";
 import { throwIfAborted } from "./cancellation.js";
+import { isParticipatingDecision, parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
 import { evaluateTerminationStop } from "./termination.js";
 import { createRuntimeToolExecutor, executeModelResponseToolRequests, runtimeToolAvailability } from "./tools.js";
@@ -153,6 +154,7 @@ export async function runSequential(options: SequentialRunOptions): Promise<RunR
     });
     const turnCost = responseCost(response);
     totalCost = addCost(totalCost, turnCost);
+    const decision = parseAgentDecision(response.text);
     const toolCalls = await executeModelResponseToolRequests({
       response,
       executor: toolExecutor,
@@ -167,6 +169,7 @@ export async function runSequential(options: SequentialRunOptions): Promise<RunR
       role: agent.role,
       input,
       output: response.text,
+      ...(decision !== undefined ? { decision } : {}),
       ...(toolCalls.length > 0 ? { toolCalls } : {})
     });
 
@@ -178,6 +181,7 @@ export async function runSequential(options: SequentialRunOptions): Promise<RunR
       role: agent.role,
       input,
       output: response.text,
+      ...(decision !== undefined ? { decision } : {}),
       cost: totalCost
     };
     emit(event);
@@ -191,7 +195,7 @@ export async function runSequential(options: SequentialRunOptions): Promise<RunR
     }
   }
 
-  const output = transcript.at(-1)?.output ?? "";
+  const output = [...transcript].reverse().find((entry) => isParticipatingDecision(entry.decision))?.output ?? "";
   throwIfAborted(options.signal, options.model.id);
   const final: RunEvent = {
     type: "final",

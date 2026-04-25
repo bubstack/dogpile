@@ -73,6 +73,59 @@ describe("sequential protocol", () => {
     expect(JSON.parse(JSON.stringify(result.trace))).toEqual(result.trace);
   });
 
+  it("records autonomous decisions and skips abstentions when choosing the final output", async () => {
+    const responses = [
+      [
+        "role_selected: upload workflow analyst",
+        "participation: contribute",
+        "rationale: This starts the plan with the user journey.",
+        "contribution:",
+        "Contribution from the first agent."
+      ].join("\n"),
+      [
+        "role_selected: duplicate reviewer",
+        "participation: abstain",
+        "rationale: The prior output already covers this slice.",
+        "contribution:",
+        "No additional contribution is needed."
+      ].join("\n")
+    ];
+    const model: ConfiguredModelProvider = {
+      id: "sequential-decision-model",
+      async generate() {
+        return { text: responses.shift() ?? "unused" };
+      }
+    };
+
+    const result = await run({
+      intent: "Plan a Hugging Face upload GUI.",
+      protocol: { kind: "sequential", maxTurns: 2 },
+      tier: "fast",
+      model,
+      agents: [
+        { id: "agent-0", role: "autonomous-agent" },
+        { id: "agent-1", role: "autonomous-agent" }
+      ]
+    });
+
+    expect(result.output).toContain("Contribution from the first agent.");
+    expect(result.output).not.toContain("No additional contribution is needed.");
+    expect(result.transcript[0]?.decision).toMatchObject({
+      selectedRole: "upload workflow analyst",
+      participation: "contribute"
+    });
+    expect(result.transcript[1]?.decision).toMatchObject({
+      selectedRole: "duplicate reviewer",
+      participation: "abstain"
+    });
+    const turnEvents = result.trace.events.filter((event) => event.type === "agent-turn");
+    expect(turnEvents[1]?.type).toBe("agent-turn");
+    if (turnEvents[1]?.type !== "agent-turn") {
+      throw new Error("expected second turn event");
+    }
+    expect(turnEvents[1].decision?.participation).toBe("abstain");
+  });
+
   it("streams the same coordination moments before resolving the final result", async () => {
     const handle = stream({
       intent: "Summarize the value of sequential agent collaboration.",

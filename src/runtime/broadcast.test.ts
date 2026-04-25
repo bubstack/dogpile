@@ -103,6 +103,89 @@ describe("broadcast protocol", () => {
     expect(broadcastEvent.contributions.map((contribution) => contribution.output)).toEqual(expectedOutputs);
   });
 
+  it("feeds round-one intentions into round-two final broadcast decisions", async () => {
+    const requests: ModelRequest[] = [];
+    const model: ConfiguredModelProvider = {
+      id: "two-round-broadcast-model",
+      async generate(request) {
+        requests.push(request);
+        const round = Number(request.metadata.round);
+        const agentId = String(request.metadata.agentId);
+        const selectedRole = agentId === "agent-a" ? "upload supervisor" : "release verifier";
+        if (round === 1) {
+          return {
+            text: [
+              `role_selected: ${selectedRole}`,
+              "participation: contribute",
+              "rationale: I am broadcasting my intended specialization before final decisions.",
+              "contribution:",
+              `Intention from ${agentId}: cover ${selectedRole}.`
+            ].join("\n")
+          };
+        }
+
+        return {
+          text: [
+            `role_selected: ${selectedRole}`,
+            "participation: contribute",
+            "rationale: I saw the round one intentions and can now make a final contribution.",
+            "contribution:",
+            `Final contribution from ${agentId}.`
+          ].join("\n")
+        };
+      }
+    };
+
+    const result = await run({
+      intent: "Plan an upload manager.",
+      protocol: { kind: "broadcast", maxRounds: 2 },
+      tier: "fast",
+      model,
+      agents: [
+        { id: "agent-a", role: "autonomous-agent" },
+        { id: "agent-b", role: "autonomous-agent" }
+      ]
+    });
+
+    expect(requests).toHaveLength(4);
+    const roundTwoPrompts = requests.slice(2).map((request) => request.messages.find((message) => message.role === "user")?.content);
+    expect(roundTwoPrompts[0]).toContain("Round 1 intentions:");
+    expect(roundTwoPrompts[0]).toContain("Intention from agent-a");
+    expect(roundTwoPrompts[0]).toContain("Intention from agent-b");
+    expect(roundTwoPrompts[1]).toContain("Intention from agent-a");
+    expect(roundTwoPrompts[1]).toContain("Intention from agent-b");
+    expect(result.output).toContain("Final contribution from agent-a.");
+    expect(result.output).toContain("Final contribution from agent-b.");
+    expect(result.output).not.toContain("Intention from agent-a");
+    expect(result.transcript).toHaveLength(4);
+    expect(result.transcript[0]?.decision).toMatchObject({
+      selectedRole: "upload supervisor",
+      participation: "contribute"
+    });
+    const broadcastEvents = result.trace.events.filter((event) => event.type === "broadcast");
+    expect(broadcastEvents).toHaveLength(2);
+    expect(broadcastEvents[1]?.type).toBe("broadcast");
+    if (broadcastEvents[1]?.type !== "broadcast") {
+      throw new Error("expected second broadcast event");
+    }
+    expect(broadcastEvents[1].contributions.map((contribution) => contribution.output)).toEqual([
+      [
+        "role_selected: upload supervisor",
+        "participation: contribute",
+        "rationale: I saw the round one intentions and can now make a final contribution.",
+        "contribution:",
+        "Final contribution from agent-a."
+      ].join("\n"),
+      [
+        "role_selected: release verifier",
+        "participation: contribute",
+        "rationale: I saw the round one intentions and can now make a final contribution.",
+        "contribution:",
+        "Final contribution from agent-b."
+      ].join("\n")
+    ]);
+  });
+
   it("runs a deterministic test mission against a configured model provider", async () => {
     const result = await run(createDeterministicBroadcastTestMission());
     const expectedTranscript = [

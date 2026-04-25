@@ -488,7 +488,7 @@ describe("termination public types", () => {
       model: createConstantModelProvider("constant-convergence-model", "same final claim")
     });
 
-    expect(result.transcript).toHaveLength(2);
+    expect(result.transcript).toHaveLength(_name === "sequential" ? 2 : 3);
     expect(result.output).toContain("same final claim");
     expect(result.trace.events.map((event) => event.type)).not.toContain("budget-stop");
     expect(result.trace.events.at(-1)?.type).toBe("final");

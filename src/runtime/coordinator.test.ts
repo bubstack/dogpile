@@ -126,6 +126,75 @@ describe("coordinator protocol", () => {
     });
   });
 
+  it("starts coordinator workers in parallel from the same coordinator plan", async () => {
+    const requests: ModelRequest[] = [];
+    const workerRequests: ModelRequest[] = [];
+    let resolveWorkersStarted!: () => void;
+    let releaseWorkers!: () => void;
+    const workersStarted = new Promise<void>((resolve) => {
+      resolveWorkersStarted = resolve;
+    });
+    const workersReleased = new Promise<void>((resolve) => {
+      releaseWorkers = resolve;
+    });
+    const model: ConfiguredModelProvider = {
+      id: "parallel-coordinator-model",
+      async generate(request) {
+        requests.push(request);
+        const phase = String(request.metadata.phase);
+        const agentId = String(request.metadata.agentId);
+        if (phase === "plan") {
+          return { text: "coordinator plan output" };
+        }
+        if (phase === "worker") {
+          workerRequests.push(request);
+          if (workerRequests.length === 2) {
+            resolveWorkersStarted();
+          }
+          await workersReleased;
+          return { text: `worker output from ${agentId}` };
+        }
+        return { text: "final synthesis output" };
+      }
+    };
+
+    const resultPromise = run({
+      intent: "Verify coordinator worker parallelism.",
+      protocol: { kind: "coordinator", maxTurns: 3 },
+      tier: "fast",
+      model,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" },
+        { id: "worker-b", role: "worker" }
+      ]
+    });
+
+    await expect(Promise.race([workersStarted, rejectAfter(100, "workers did not start in parallel")])).resolves.toBeUndefined();
+    expect(workerRequests).toHaveLength(2);
+    expect(workerRequests[0]?.messages.find((message) => message.role === "user")?.content).toContain(
+      "coordinator plan output"
+    );
+    expect(workerRequests[1]?.messages.find((message) => message.role === "user")?.content).toContain(
+      "coordinator plan output"
+    );
+    expect(workerRequests[1]?.messages.find((message) => message.role === "user")?.content).not.toContain(
+      "worker output from worker-a"
+    );
+
+    releaseWorkers();
+    const result = await resultPromise;
+    const finalRequest = requests.at(-1);
+    expect(finalRequest?.metadata.phase).toBe("final-synthesis");
+    expect(finalRequest?.messages.find((message) => message.role === "user")?.content).toContain(
+      "worker output from worker-a"
+    );
+    expect(finalRequest?.messages.find((message) => message.role === "user")?.content).toContain(
+      "worker output from worker-b"
+    );
+    expect(result.output).toBe("final synthesis output");
+  });
+
   it("threads shared runtime tool availability through every coordinator phase", async () => {
     const requests: ModelRequest[] = [];
     const lookupTool: RuntimeTool<JsonObject, JsonValue> = {
@@ -318,8 +387,6 @@ describe("coordinator protocol", () => {
           "Prior contributions:",
           "release-coordinator (agent-1): release-coordinator:agent-1 planned the coordinator-managed mission.",
           "",
-          "evidence-reviewer (agent-2): evidence-reviewer:agent-2 completed the coordinator-assigned work.",
-          "",
           "Follow the coordinator-managed plan and provide your assigned contribution."
         ].join("\n"),
         output: "portability-reviewer:agent-3 completed the coordinator-assigned work."
@@ -392,4 +459,10 @@ function createPhaseEchoProvider(id: string, requests: ModelRequest[] = []): Con
       };
     }
   };
+}
+
+function rejectAfter(ms: number, message: string): Promise<never> {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(message)), ms);
+  });
 }

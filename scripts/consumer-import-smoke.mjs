@@ -697,6 +697,8 @@ function createTypeSmokeSource(packageName) {
   replayStream,
   run,
   stream,
+  type AgentDecision,
+  type AgentParticipation,
   type ConfiguredModelProvider,
   type DogpileOptions,
   type Engine,
@@ -704,6 +706,7 @@ function createTypeSmokeSource(packageName) {
   type ProtocolConfig,
   type RunEvent,
   type RunResult,
+  type SharedProtocolConfig,
   type StreamHandle,
   type Trace
 } from ${JSON.stringify(packageName)};
@@ -716,6 +719,7 @@ import {
 } from ${JSON.stringify(`${packageName}/browser`)};
 import {
   DogpileError as TypesDogpileError,
+  type AgentDecision as TypesAgentDecision,
   type JsonPrimitive,
   type ProtocolConfig as TypesProtocolConfig
 } from ${JSON.stringify(`${packageName}/types`)};
@@ -768,6 +772,19 @@ const provider: ConfiguredModelProvider = {
 };
 const protocol: ProtocolConfig = { kind: "sequential", maxTurns: 1 };
 const protocolFromTypesSubpath: TypesProtocolConfig = { kind: "broadcast", maxRounds: 1 };
+const sharedProtocol: SharedProtocolConfig = {
+  kind: "shared",
+  maxTurns: 2,
+  organizationalMemory: "prior organizational memory"
+};
+const agentDecision: AgentDecision = {
+  selectedRole: "consumer smoke reviewer",
+  participation: "contribute",
+  rationale: "The public package should expose structured agent decisions.",
+  contribution: "Verify AgentDecision resolves from the package root."
+};
+const participation: AgentParticipation = agentDecision.participation;
+const agentDecisionFromTypesSubpath: TypesAgentDecision = agentDecision;
 const primitiveFromTypesSubpath: JsonPrimitive = "consumer-type-resolution";
 const options: DogpileOptions = {
   intent: "Verify the packed SDK resolves from a clean consumer project.",
@@ -893,6 +910,9 @@ export async function consumerTypeResolutionSmoke(): Promise<Trace> {
     !(browserDirectProvider.id === "consumer-type-openai-compatible-browser") ||
     normalized.kind !== "sequential" ||
     primitiveFromTypesSubpath !== "consumer-type-resolution" ||
+    sharedProtocol.organizationalMemory !== "prior organizational memory" ||
+    participation !== "contribute" ||
+    agentDecisionFromTypesSubpath.selectedRole !== agentDecision.selectedRole ||
     usage.totalTokens !== 2 ||
     fastTemperature < 0 ||
     stopOnFirst.kind !== "firstOf" ||

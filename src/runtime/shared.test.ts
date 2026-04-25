@@ -17,8 +17,8 @@ describe("shared protocol", () => {
     expect(result.output).toBe(
       [
         "state-initializer:agent-1 => state-initializer:agent-1 initialized the shared state.",
-        "state-reviewer:agent-2 => state-reviewer:agent-2 improved the shared state.",
-        "state-synthesizer:agent-3 => state-synthesizer:agent-3 improved the shared state."
+        "state-reviewer:agent-2 => state-reviewer:agent-2 initialized the shared state.",
+        "state-synthesizer:agent-3 => state-synthesizer:agent-3 initialized the shared state."
       ].join("\n")
     );
     expect(result.trace.protocol).toBe("shared");
@@ -92,8 +92,10 @@ describe("shared protocol", () => {
     }
 
     expect(requests[0]?.messages.find((message) => message.role === "user")?.content).toContain("(empty)");
-    expect(requests[1]?.messages.find((message) => message.role === "user")?.content).toContain(
-      "state-initializer:agent-1 => state-initializer:agent-1 wrote shared turn 1."
+    expect(requests[1]?.messages.find((message) => message.role === "user")?.content).toContain("(empty)");
+    expect(requests[2]?.messages.find((message) => message.role === "user")?.content).toContain("(empty)");
+    expect(requests[1]?.messages.find((message) => message.role === "user")?.content).not.toContain(
+      "state-initializer:agent-1 =>"
     );
     expect(result.output).toBe(
       [
@@ -121,8 +123,8 @@ describe("shared protocol", () => {
 
     const expectedOutput = [
       "state-initializer:agent-1 => state-initializer:agent-1 initialized the shared state.",
-      "state-reviewer:agent-2 => state-reviewer:agent-2 improved the shared state.",
-      "state-synthesizer:agent-3 => state-synthesizer:agent-3 improved the shared state."
+      "state-reviewer:agent-2 => state-reviewer:agent-2 initialized the shared state.",
+      "state-synthesizer:agent-3 => state-synthesizer:agent-3 initialized the shared state."
     ].join("\n");
 
     expect(result.output).toBe(expectedOutput);
@@ -148,18 +150,52 @@ describe("shared protocol", () => {
         agentId: "agent-2",
         role: "state-reviewer",
         input:
-          "Mission: Decide whether the shared protocol can support portable replay.\nShared turn 2: read the shared state and return an improved shared-state update.\n\nShared state:\nstate-initializer:agent-1 => state-initializer:agent-1 initialized the shared state.",
-        output: "state-reviewer:agent-2 improved the shared state."
+          "Mission: Decide whether the shared protocol can support portable replay.\nShared turn 2: read the shared state and return an improved shared-state update.\n\nShared state:\n(empty)",
+        output: "state-reviewer:agent-2 initialized the shared state."
       },
       {
         agentId: "agent-3",
         role: "state-synthesizer",
         input:
-          "Mission: Decide whether the shared protocol can support portable replay.\nShared turn 3: read the shared state and return an improved shared-state update.\n\nShared state:\nstate-initializer:agent-1 => state-initializer:agent-1 initialized the shared state.\nstate-reviewer:agent-2 => state-reviewer:agent-2 improved the shared state.",
-        output: "state-synthesizer:agent-3 improved the shared state."
+          "Mission: Decide whether the shared protocol can support portable replay.\nShared turn 3: read the shared state and return an improved shared-state update.\n\nShared state:\n(empty)",
+        output: "state-synthesizer:agent-3 initialized the shared state."
       }
     ]);
     expect(result.trace.transcript).toEqual(result.transcript);
+  });
+
+  it("gives every shared agent the same organizational memory snapshot", async () => {
+    const requests: ModelRequest[] = [];
+    const model: ConfiguredModelProvider = {
+      id: "shared-memory-snapshot-model",
+      async generate(request) {
+        requests.push(request);
+        return { text: `output-${String(request.metadata.agentId)}` };
+      }
+    };
+
+    await run({
+      intent: "Coordinate from historical organization memory.",
+      protocol: {
+        kind: "shared",
+        maxTurns: 2,
+        organizationalMemory: "Prior task memory: uploader and verifier roles were useful."
+      },
+      tier: "fast",
+      model,
+      agents: [
+        { id: "agent-a", role: "autonomous-agent" },
+        { id: "agent-b", role: "autonomous-agent" }
+      ]
+    });
+
+    expect(requests).toHaveLength(2);
+    const userPrompts = requests.map((request) => request.messages.find((message) => message.role === "user")?.content);
+    expect(userPrompts).toEqual([
+      "Mission: Coordinate from historical organization memory.\nShared turn 1: read the shared state and return an improved shared-state update.\n\nShared state:\nPrior task memory: uploader and verifier roles were useful.",
+      "Mission: Coordinate from historical organization memory.\nShared turn 2: read the shared state and return an improved shared-state update.\n\nShared state:\nPrior task memory: uploader and verifier roles were useful."
+    ]);
+    expect(userPrompts[1]).not.toContain("output-agent-a");
   });
 
   it("threads runtime tool availability through every shared model turn", async () => {

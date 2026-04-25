@@ -36,7 +36,7 @@ export function normalizeProtocol(protocol: Protocol | ProtocolConfig): Protocol
     case "coordinator":
       return { kind: "coordinator", maxTurns: 3 };
     case "broadcast":
-      return { kind: "broadcast", maxRounds: 1 };
+      return { kind: "broadcast", maxRounds: 2 };
     case "shared":
       return { kind: "shared", maxTurns: 3 };
   }

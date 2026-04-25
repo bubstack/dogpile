@@ -214,7 +214,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *
  * Passing a string protocol uses the SDK defaults from {@link ProtocolConfig}:
  * `maxTurns: 3` for `coordinator`, `sequential`, and `shared`, and
- * `maxRounds: 1` for `broadcast`.
+ * `maxRounds: 2` for `broadcast`.
  */
 export type Protocol = "coordinator" | "sequential" | "broadcast" | "shared";
 
@@ -281,12 +281,12 @@ export interface CoordinatorProtocolConfig {
  *
  * Agents independently answer the same mission before a merge/synthesis step.
  * Default when `protocol: "broadcast"` is supplied: `{ kind: "broadcast",
- * maxRounds: 1 }`.
+ * maxRounds: 2 }`.
  */
 export interface BroadcastProtocolConfig {
   /** Discriminant for exhaustive protocol handling. */
   readonly kind: "broadcast";
-  /** Maximum number of broadcast/merge rounds to execute; defaults to `1` for named protocols. */
+  /** Maximum number of broadcast/merge rounds to execute; defaults to `2` for named protocols. */
   readonly maxRounds?: number;
 }
 
@@ -302,6 +302,8 @@ export interface SharedProtocolConfig {
   readonly kind: "shared";
   /** Maximum number of shared-state turns to execute; defaults to `3` for named protocols. */
   readonly maxTurns?: number;
+  /** Optional organizational memory snapshot visible to every shared agent. */
+  readonly organizationalMemory?: string;
 }
 
 /**
@@ -1835,6 +1837,32 @@ export interface ToolResultEvent {
 }
 
 /**
+ * Provider-normalized participation decision parsed from paper-style agent output.
+ *
+ * @remarks
+ * Dogpile preserves the raw model text on transcript entries and events. When
+ * a model emits the labeled fields `role_selected`, `participation`,
+ * `rationale`, and `contribution`, protocols also attach this structured
+ * metadata so reproduction harnesses can distinguish contribution from
+ * voluntary abstention without reparsing raw text.
+ */
+export interface AgentDecision {
+  /** Task-specific role selected by the agent for this turn. */
+  readonly selectedRole: string;
+  /** Whether the agent contributed or voluntarily abstained. */
+  readonly participation: AgentParticipation;
+  /** Agent-provided rationale for the selected role and participation choice. */
+  readonly rationale: string;
+  /** Agent-provided contribution text, or abstention explanation. */
+  readonly contribution: string;
+}
+
+/**
+ * Agent participation state for a paper-style turn decision.
+ */
+export type AgentParticipation = "contribute" | "abstain";
+
+/**
  * Event emitted after one agent contributes a model turn.
  *
  * @remarks
@@ -1873,6 +1901,8 @@ export interface TurnEvent {
   readonly input: string;
   /** Model output produced by the agent. */
   readonly output: string;
+  /** Optional structured role/participation decision parsed from model output. */
+  readonly decision?: AgentDecision;
   /** Cumulative cost after this turn. */
   readonly cost: CostSummary;
 }
@@ -1900,6 +1930,8 @@ export interface BroadcastContribution {
   readonly role: string;
   /** Independent model output produced for the shared mission. */
   readonly output: string;
+  /** Optional structured role/participation decision parsed from model output. */
+  readonly decision?: AgentDecision;
 }
 
 /**
@@ -2183,6 +2215,8 @@ export interface TranscriptEntry {
   readonly input: string;
   /** Text produced by the agent. */
   readonly output: string;
+  /** Optional structured role/participation decision parsed from model output. */
+  readonly decision?: AgentDecision;
   /** Ordered runtime tool calls and results requested during this turn. */
   readonly toolCalls?: readonly TranscriptToolCall[];
 }
@@ -2529,7 +2563,7 @@ export interface DogpileOptions extends BudgetCostTierOptions {
    *
    * Supported names are `coordinator`, `sequential`, `broadcast`, and `shared`.
    * Named protocols use default configs: `maxTurns: 3` for coordinator,
-   * sequential, and shared; `maxRounds: 1` for broadcast.
+   * sequential, and shared; `maxRounds: 2` for broadcast.
    */
   readonly protocol?: ProtocolSelection;
   /** Caller-configured model provider, typically backed by the Vercel AI SDK. */
@@ -2582,7 +2616,7 @@ export interface EngineOptions {
    *
    * Supported names are `coordinator`, `sequential`, `broadcast`, and `shared`.
    * Named protocols use default configs: `maxTurns: 3` for coordinator,
-   * sequential, and shared; `maxRounds: 1` for broadcast.
+   * sequential, and shared; `maxRounds: 2` for broadcast.
    */
   readonly protocol: ProtocolSelection;
   /**

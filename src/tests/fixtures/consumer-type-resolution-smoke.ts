@@ -6,6 +6,8 @@ import {
 } from "@dogpile/sdk";
 import { createEngine as createEngineFromSubpath } from "@dogpile/sdk/runtime/engine";
 import type {
+  AgentDecision,
+  AgentParticipation,
   Budget,
   BudgetTier,
   ConfiguredModelProvider,
@@ -15,10 +17,14 @@ import type {
   ProtocolName,
   RunEvent,
   RunResult,
+  SharedProtocolConfig,
   StreamHandle,
   Trace
 } from "@dogpile/sdk";
-import type { ProtocolConfig as ProtocolConfigFromTypesSubpath } from "@dogpile/sdk/types";
+import type {
+  AgentDecision as AgentDecisionFromTypesSubpath,
+  ProtocolConfig as ProtocolConfigFromTypesSubpath
+} from "@dogpile/sdk/types";
 
 function createConsumerSmokeProvider(id: string): ConfiguredModelProvider {
   return {
@@ -44,6 +50,19 @@ const tier: BudgetTier = "fast";
 const budget: Budget = { tier, maxTokens: 1_000, qualityWeight: 0.2 };
 const protocol: ProtocolConfig = { kind: protocolName, maxTurns: 1 };
 const protocolFromTypesSubpath: ProtocolConfigFromTypesSubpath = { kind: "broadcast", maxRounds: 1 };
+const sharedProtocol: SharedProtocolConfig = {
+  kind: "shared",
+  maxTurns: 2,
+  organizationalMemory: "prior organizational memory"
+};
+const agentDecision: AgentDecision = {
+  selectedRole: "consumer smoke reviewer",
+  participation: "contribute",
+  rationale: "The public package should expose structured agent decisions.",
+  contribution: "Verify AgentDecision resolves from the package root."
+};
+const participation: AgentParticipation = agentDecision.participation;
+const agentDecisionFromTypesSubpath: AgentDecisionFromTypesSubpath = agentDecision;
 
 const options: DogpileOptions = {
   intent: "Verify Dogpile consumer package types resolve.",
@@ -101,6 +120,13 @@ export async function consumerTypeResolutionSmoke(): Promise<Trace> {
 
   if (firstEvent) {
     recordEvent(firstEvent);
+  }
+  if (
+    sharedProtocol.organizationalMemory !== "prior organizational memory" ||
+    participation !== "contribute" ||
+    agentDecisionFromTypesSubpath.selectedRole !== agentDecision.selectedRole
+  ) {
+    throw new Error("Consumer type smoke should expose public structured decision types.");
   }
 
   return result.trace;

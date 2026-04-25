@@ -933,7 +933,7 @@ describe("package exports", () => {
     expect(markedBlock).toContain('console.log("Dogpile quickstart complete");');
     expect(markedBlock).toContain("console.log(`protocol=${result.metadata.protocol}`);");
     expect(markedBlock).toContain("console.log(`costUsd=${result.usage.usd}`);");
-    expect(readme).toContain("save this complete script as\n`quickstart.mjs`");
+    expect(readme).toContain("Save this complete script as `quickstart.mjs`");
     expect(readme).toContain("node quickstart.mjs");
     expect(readme).toContain("Expected observable output:");
     expect(readme).toContain("costUsd=<estimated from provider token usage and your pricing table>");

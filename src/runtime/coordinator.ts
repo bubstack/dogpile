@@ -36,6 +36,7 @@ import {
   nextProviderCallId
 } from "./defaults.js";
 import { throwIfAborted } from "./cancellation.js";
+import { parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
 import { evaluateTerminationStop } from "./termination.js";
 import { createRuntimeToolExecutor, executeModelResponseToolRequests, runtimeToolAvailability } from "./tools.js";
@@ -131,26 +132,59 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
       stopIfNeeded();
     }
 
-    for (const agent of activeAgents.slice(1)) {
-      if (stopIfNeeded()) {
-        break;
-      }
+    if (!stopIfNeeded()) {
+      const workers = activeAgents.slice(1);
+      const providerCallSlots: ReplayTraceProviderCall[] = [];
+      const planTranscript = [...transcript];
+      const workerResults = await Promise.all(
+        workers.map((agent, index) =>
+          runCoordinatorWorkerTurn({
+            agent,
+            coordinator,
+            input: buildWorkerInput(options.intent, planTranscript, coordinator),
+            options,
+            runId,
+            turn: transcript.length + index + 1,
+            providerCallId: providerCallIdFor(runId, providerCalls.length + index + 1),
+            providerCallIndex: index,
+            providerCallSlots,
+            toolExecutor,
+            toolAvailability,
+            emit
+          })
+        )
+      );
+      providerCalls.push(...providerCallSlots.filter((call): call is ReplayTraceProviderCall => call !== undefined));
 
-      totalCost = await runCoordinatorTurn({
-        agent,
-        coordinator,
-        input: buildWorkerInput(options.intent, transcript, coordinator),
-        phase: "worker",
-        options,
-        runId,
-        transcript,
-        totalCost,
-        providerCalls,
-        toolExecutor,
-        toolAvailability,
-        emit,
-        recordProtocolDecision
-      });
+      for (const result of workerResults) {
+        totalCost = addCost(totalCost, result.turnCost);
+        transcript.push({
+          agentId: result.agent.id,
+          role: result.agent.role,
+          input: result.input,
+          output: result.response.text,
+          ...(result.decision !== undefined ? { decision: result.decision } : {}),
+          ...(result.toolCalls.length > 0 ? { toolCalls: result.toolCalls } : {})
+        });
+
+        const event: RunEvent = {
+          type: "agent-turn",
+          runId,
+          at: new Date().toISOString(),
+          agentId: result.agent.id,
+          role: result.agent.role,
+          input: result.input,
+          output: result.response.text,
+          ...(result.decision !== undefined ? { decision: result.decision } : {}),
+          cost: totalCost
+        };
+        emit(event);
+        recordProtocolDecision(event, {
+          turn: transcript.length,
+          phase: "worker",
+          transcriptEntryCount: transcript.length
+        });
+      }
       stopIfNeeded();
     }
 
@@ -355,6 +389,7 @@ async function runCoordinatorTurn(turn: CoordinatorTurnOptions): Promise<CostSum
       turn.providerCalls.push(call);
     }
   });
+  const decision = parseAgentDecision(response.text);
   const totalCost = addCost(turn.totalCost, responseCost(response));
   const toolCalls = await executeModelResponseToolRequests({
     response,
@@ -373,6 +408,7 @@ async function runCoordinatorTurn(turn: CoordinatorTurnOptions): Promise<CostSum
     role: turn.agent.role,
     input: turn.input,
     output: response.text,
+    ...(decision !== undefined ? { decision } : {}),
     ...(toolCalls.length > 0 ? { toolCalls } : {})
   });
 
@@ -384,6 +420,7 @@ async function runCoordinatorTurn(turn: CoordinatorTurnOptions): Promise<CostSum
     role: turn.agent.role,
     input: turn.input,
     output: response.text,
+    ...(decision !== undefined ? { decision } : {}),
     cost: totalCost
   };
   turn.emit(event);
@@ -394,6 +431,92 @@ async function runCoordinatorTurn(turn: CoordinatorTurnOptions): Promise<CostSum
   });
 
   return totalCost;
+}
+
+interface CoordinatorWorkerTurnOptions {
+  readonly agent: AgentSpec;
+  readonly coordinator: AgentSpec;
+  readonly input: string;
+  readonly options: CoordinatorRunOptions;
+  readonly runId: string;
+  readonly turn: number;
+  readonly providerCallId: string;
+  readonly providerCallIndex: number;
+  readonly providerCallSlots: ReplayTraceProviderCall[];
+  readonly toolExecutor: RuntimeToolExecutor;
+  readonly toolAvailability: JsonObject;
+  readonly emit: (event: RunEvent) => void;
+}
+
+interface CoordinatorWorkerTurnResult {
+  readonly agent: AgentSpec;
+  readonly input: string;
+  readonly response: ModelResponse;
+  readonly decision: ReturnType<typeof parseAgentDecision>;
+  readonly toolCalls: Awaited<ReturnType<typeof executeModelResponseToolRequests>>;
+  readonly turnCost: CostSummary;
+}
+
+async function runCoordinatorWorkerTurn(turn: CoordinatorWorkerTurnOptions): Promise<CoordinatorWorkerTurnResult> {
+  throwIfAborted(turn.options.signal, turn.options.model.id);
+
+  const request: ModelRequest = {
+    temperature: turn.options.temperature,
+    ...(turn.options.signal !== undefined ? { signal: turn.options.signal } : {}),
+    metadata: {
+      runId: turn.runId,
+      protocol: "coordinator",
+      agentId: turn.agent.id,
+      role: turn.agent.role,
+      coordinatorAgentId: turn.coordinator.id,
+      tier: turn.options.tier,
+      phase: "worker",
+      ...turn.toolAvailability
+    },
+    messages: [
+      {
+        role: "system",
+        content: buildSystemPrompt(turn.agent, turn.coordinator)
+      },
+      {
+        role: "user",
+        content: turn.input
+      }
+    ]
+  };
+  const response = await generateModelTurn({
+    model: turn.options.model,
+    request,
+    runId: turn.runId,
+    agent: turn.agent,
+    input: turn.input,
+    emit: turn.emit,
+    callId: turn.providerCallId,
+    onProviderCall(call): void {
+      turn.providerCallSlots[turn.providerCallIndex] = call;
+    }
+  });
+  const decision = parseAgentDecision(response.text);
+  const toolCalls = await executeModelResponseToolRequests({
+    response,
+    executor: turn.toolExecutor,
+    agentId: turn.agent.id,
+    role: turn.agent.role,
+    turn: turn.turn,
+    metadata: {
+      phase: "worker"
+    }
+  });
+  throwIfAborted(turn.options.signal, turn.options.model.id);
+
+  return {
+    agent: turn.agent,
+    input: turn.input,
+    response,
+    decision,
+    toolCalls,
+    turnCost: responseCost(response)
+  };
 }
 
 function buildSystemPrompt(agent: AgentSpec, coordinator: AgentSpec | undefined): string {
@@ -451,4 +574,8 @@ function nowMs(): number {
 
 function elapsedMs(startedAtMs: number): number {
   return Math.max(0, nowMs() - startedAtMs);
+}
+
+function providerCallIdFor(runId: string, oneBasedIndex: number): string {
+  return `${runId}:provider-call:${oneBasedIndex}`;
 }

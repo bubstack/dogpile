@@ -72,6 +72,8 @@ export {
 } from "./runtime/termination.js";
 export type {
   AgentSpec,
+  AgentDecision,
+  AgentParticipation,
   BroadcastContribution,
   BroadcastEvent,
   BroadcastProtocolConfig,

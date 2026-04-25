@@ -530,7 +530,7 @@ The required inputs are:
 
 Optional inputs refine the run without changing the core contract:
 
-- `protocol`: `"coordinator"`, `"sequential"`, `"broadcast"`, or `"shared"`, or an explicit protocol config such as `{ kind: "broadcast", maxRounds: 2 }`; omitted protocols default to `"sequential"`.
+- `protocol`: `"coordinator"`, `"sequential"`, `"broadcast"`, or `"shared"`, or an explicit protocol config such as `{ kind: "broadcast", maxRounds: 2 }`; omitted protocols default to `"sequential"`. Named broadcast runs default to two rounds: an intention broadcast followed by final decisions. Shared runs may include `organizationalMemory` so every agent sees the same prior-memory snapshot without seeing current-run peer updates.
 - `tier`: `"fast"`, `"balanced"`, or `"quality"`; omitted tiers default to `"balanced"`.
 - `budget`: hard caps layered over the tier, for example `{ maxUsd: 0.25, maxTokens: 20_000, timeoutMs: 60_000, qualityWeight: 0.7 }`. When `timeoutMs` expires, Dogpile aborts the active provider-facing request and rejects with `DogpileError` code `"timeout"`.
 - `agents`: an explicit roster of `{ id, role, instructions? }` participants.
@@ -564,8 +564,8 @@ type RunResult = {
 - `output` is the final synthesized answer.
 - `eventLog` is the complete non-streaming event log with ordered event types, count, and events.
 - `trace` is a JSON-serializable replay artifact containing the run id, protocol, tier, model provider id, agents used, ordered event log, and transcript.
-- `trace.events` is the full event log for coordination moments: `role-assignment`, `agent-turn`, `broadcast`, and `final`.
-- `transcript` is the ordered list of model-visible agent turns with `agentId`, `role`, `input`, and `output`; it matches `trace.transcript` for ergonomic access.
+- `trace.events` is the full event log for coordination moments: `role-assignment`, `agent-turn`, `broadcast`, and `final`. Agent-turn and broadcast records include `decision` when model output follows Dogpile's structured `role_selected`, `participation`, `rationale`, and `contribution` labels.
+- `transcript` is the ordered list of model-visible agent turns with `agentId`, `role`, `input`, `output`, and optional parsed `decision`; it matches `trace.transcript` for ergonomic access.
 - `usage` reports aggregate USD and token accounting.
 - `metadata` exposes run id, protocol, tier, model provider id, participating agents, and start/completion timestamps.
 - `accounting` bundles the selected tier, optional budget caps, termination policy, final usage/cost, budget state snapshots, and cap utilization.

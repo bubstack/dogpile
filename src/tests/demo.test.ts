@@ -103,13 +103,16 @@ describe("demo app streaming attachment", () => {
       "role-assignment",
       "model-output-chunk",
       "model-output-chunk",
+      "model-output-chunk",
+      "model-output-chunk",
       "agent-turn",
-      "budget-stop",
+      "agent-turn",
       "broadcast",
+      "budget-stop",
       "final"
     ]);
     expect(result.eventLog.eventTypes).toEqual(result.trace.events.map((event) => event.type));
-    expect(result.trace.transcript).toHaveLength(1);
+    expect(result.trace.transcript).toHaveLength(2);
     expect(snapshot.requiredTraceEventTypes).toEqual(requiredDemoTraceEventTypes);
     expect(snapshot.capturedRequiredTraceEventTypes).toEqual(requiredDemoTraceEventTypes);
     expect(snapshot.missingRequiredTraceEventTypes).toEqual([]);
@@ -126,18 +129,18 @@ describe("demo app streaming attachment", () => {
         chunkIndex: 0
       }
     });
-    expect(snapshot.traceEventList[5]).toMatchObject({
+    expect(snapshot.traceEventList[9]).toMatchObject({
       eventType: "budget-stop",
       visualSection: "activity-log",
       visualState: "budget-stopped",
       metadata: {
         type: "budget-stop",
         reason: "tokens",
-        iteration: 1
+        iteration: 2
       }
     });
-    expect(snapshot.broadcastSection.items).toEqual([snapshot.traceEventList[6]]);
-    expect(snapshot.finalOutputSection.items).toEqual([snapshot.traceEventList[7]]);
+    expect(snapshot.broadcastSection.items).toEqual([snapshot.traceEventList[8]]);
+    expect(snapshot.finalOutputSection.items).toEqual([snapshot.traceEventList[10]]);
   });
 
   it("starts a demo run through the SDK subscription API and records live events", async () => {

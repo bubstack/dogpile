@@ -169,6 +169,9 @@ function validateProtocolConfig(value: ProtocolConfig, path: string): void {
     case "sequential":
     case "shared":
       validateOptionalPositiveInteger(record.maxTurns, `${path}.maxTurns`);
+      if (kind === "shared") {
+        validateOptionalString(record.organizationalMemory, `${path}.organizationalMemory`);
+      }
       return;
     case "broadcast":
       validateOptionalPositiveInteger(record.maxRounds, `${path}.maxRounds`);

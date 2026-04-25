@@ -25,12 +25,12 @@ describe("convergence-first stop behavior", () => {
         model
       });
 
-      expect(requests).toHaveLength(2);
-      expect(result.transcript).toHaveLength(2);
-      expect(result.transcript.map((entry) => entry.output)).toEqual([
-        "stable release decision",
-        "stable release decision"
-      ]);
+      const expectedTurnCount = _name === "sequential" ? 2 : 3;
+      expect(requests).toHaveLength(expectedTurnCount);
+      expect(result.transcript).toHaveLength(expectedTurnCount);
+      expect(result.transcript.map((entry) => entry.output)).toEqual(
+        Array.from({ length: expectedTurnCount }, () => "stable release decision")
+      );
       expect(result.trace.events.map((event) => event.type)).not.toContain("budget-stop");
 
       const finalEvent = result.trace.events.at(-1);

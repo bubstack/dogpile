@@ -31,10 +31,10 @@ import {
   createRunMetadata,
   createRunUsage,
   createTranscriptLink,
-  emptyCost,
-  nextProviderCallId
+  emptyCost
 } from "./defaults.js";
 import { throwIfAborted } from "./cancellation.js";
+import { parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
 import { evaluateTerminationStop } from "./termination.js";
 import { createRuntimeToolExecutor, executeModelResponseToolRequests, runtimeToolAvailability } from "./tools.js";
@@ -61,7 +61,7 @@ export async function runShared(options: SharedRunOptions): Promise<RunResult> {
   const protocolDecisions: ReplayTraceProtocolDecision[] = [];
   const providerCalls: ReplayTraceProviderCall[] = [];
   let totalCost = emptyCost();
-  let sharedState = "";
+  const sharedState = options.protocol.organizationalMemory ?? "";
   const maxTurns = options.protocol.maxTurns ?? options.agents.length;
   const activeAgents = options.agents.slice(0, maxTurns);
   const startedAtMs = nowMs();
@@ -108,90 +108,102 @@ export async function runShared(options: SharedRunOptions): Promise<RunResult> {
     recordProtocolDecision(event);
   }
 
-  for (const [index, agent] of activeAgents.entries()) {
-    if (stopIfNeeded()) {
-      break;
-    }
+  if (!stopIfNeeded()) {
+    const providerCallSlots: ReplayTraceProviderCall[] = [];
+    const turnResults = await Promise.all(
+      activeAgents.map(async (agent, index) => {
+        const turn = index + 1;
+        const input = buildSharedInput(options.intent, sharedState, turn);
+        const request: ModelRequest = {
+          temperature: options.temperature,
+          ...(options.signal !== undefined ? { signal: options.signal } : {}),
+          metadata: {
+            runId,
+            protocol: "shared",
+            agentId: agent.id,
+            role: agent.role,
+            tier: options.tier,
+            turn,
+            ...toolAvailability
+          },
+          messages: [
+            {
+              role: "system",
+              content: buildSystemPrompt(agent)
+            },
+            {
+              role: "user",
+              content: input
+            }
+          ]
+        };
+        const response = await generateModelTurn({
+          model: options.model,
+          request,
+          runId,
+          agent,
+          input,
+          emit,
+          callId: providerCallIdFor(runId, providerCalls.length + index + 1),
+          onProviderCall(call): void {
+            providerCallSlots[index] = call;
+          }
+        });
+        const decision = parseAgentDecision(response.text);
+        const toolCalls = await executeModelResponseToolRequests({
+          response,
+          executor: toolExecutor,
+          agentId: agent.id,
+          role: agent.role,
+          turn
+        });
+        throwIfAborted(options.signal, options.model.id);
 
-    const turn = index + 1;
-    const input = buildSharedInput(options.intent, sharedState, turn);
-    const request: ModelRequest = {
-      temperature: options.temperature,
-      ...(options.signal !== undefined ? { signal: options.signal } : {}),
-      metadata: {
+        return {
+          agent,
+          turn,
+          input,
+          response,
+          decision,
+          toolCalls,
+          turnCost: responseCost(response)
+        };
+      })
+    );
+    providerCalls.push(...providerCallSlots.filter((call): call is ReplayTraceProviderCall => call !== undefined));
+
+    for (const result of turnResults) {
+      totalCost = addCost(totalCost, result.turnCost);
+      transcript.push({
+        agentId: result.agent.id,
+        role: result.agent.role,
+        input: result.input,
+        output: result.response.text,
+        ...(result.decision !== undefined ? { decision: result.decision } : {}),
+        ...(result.toolCalls.length > 0 ? { toolCalls: result.toolCalls } : {})
+      });
+
+      const event: RunEvent = {
+        type: "agent-turn",
         runId,
-        protocol: "shared",
-        agentId: agent.id,
-        role: agent.role,
-        tier: options.tier,
-        turn,
-        ...toolAvailability
-      },
-      messages: [
-        {
-          role: "system",
-          content: buildSystemPrompt(agent)
-        },
-        {
-          role: "user",
-          content: input
-        }
-      ]
-    };
-    const response = await generateModelTurn({
-      model: options.model,
-      request,
-      runId,
-      agent,
-      input,
-      emit,
-      callId: nextProviderCallId(runId, providerCalls),
-      onProviderCall(call): void {
-        providerCalls.push(call);
-      }
-    });
-    const turnCost = responseCost(response);
-    totalCost = addCost(totalCost, turnCost);
-    const toolCalls = await executeModelResponseToolRequests({
-      response,
-      executor: toolExecutor,
-      agentId: agent.id,
-      role: agent.role,
-      turn
-    });
-    throwIfAborted(options.signal, options.model.id);
-    sharedState = appendSharedState(sharedState, agent, response.text);
-
-    transcript.push({
-      agentId: agent.id,
-      role: agent.role,
-      input,
-      output: response.text,
-      ...(toolCalls.length > 0 ? { toolCalls } : {})
-    });
-
-    const event: RunEvent = {
-      type: "agent-turn",
-      runId,
-      at: new Date().toISOString(),
-      agentId: agent.id,
-      role: agent.role,
-      input,
-      output: response.text,
-      cost: totalCost
-    };
-    emit(event);
-    recordProtocolDecision(event, {
-      turn,
-      transcriptEntryCount: transcript.length
-    });
-
-    if (stopIfNeeded()) {
-      break;
+        at: new Date().toISOString(),
+        agentId: result.agent.id,
+        role: result.agent.role,
+        input: result.input,
+        output: result.response.text,
+        ...(result.decision !== undefined ? { decision: result.decision } : {}),
+        cost: totalCost
+      };
+      emit(event);
+      recordProtocolDecision(event, {
+        turn: result.turn,
+        transcriptEntryCount: transcript.length
+      });
     }
+    stopIfNeeded();
   }
 
-  const output = sharedState;
+  const output = synthesizeSharedOutput(transcript);
   throwIfAborted(options.signal, options.model.id);
   const final: RunEvent = {
     type: "final",
@@ -324,9 +336,8 @@ function buildSharedInput(intent: string, sharedState: string, turn: number): st
   return `Mission: ${intent}\nShared turn ${turn}: read the shared state and return an improved shared-state update.\n\nShared state:\n${state}`;
 }
 
-function appendSharedState(sharedState: string, agent: AgentSpec, output: string): string {
-  const entry = `${agent.role}:${agent.id} => ${output}`;
-  return sharedState ? `${sharedState}\n${entry}` : entry;
+function synthesizeSharedOutput(transcript: readonly TranscriptEntry[]): string {
+  return transcript.map((entry) => `${entry.role}:${entry.agentId} => ${entry.output}`).join("\n");
 }
 
 function responseCost(response: ModelResponse): CostSummary {
@@ -349,4 +360,8 @@ function nowMs(): number {
 
 function elapsedMs(startedAtMs: number): number {
   return Math.max(0, nowMs() - startedAtMs);
+}
+
+function providerCallIdFor(runId: string, oneBasedIndex: number): string {
+  return `${runId}:provider-call:${oneBasedIndex}`;
 }

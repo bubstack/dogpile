@@ -559,7 +559,11 @@ describe("SDK streaming API", () => {
     expect((await iterator.next()).value?.type).toBe("role-assignment");
 
     await waitForRequest(releaseGate);
+    await waitForRequest(paperGate);
+    expect(resultState.settled).toBe(false);
+
     releaseGate.resolve("release output");
+    paperGate.resolve("paper output");
     const releaseTurn = await iterator.next();
     expect(releaseTurn.value).toMatchObject({
       type: "agent-turn",
@@ -568,8 +572,6 @@ describe("SDK streaming API", () => {
     });
     expect(resultState.settled).toBe(false);
 
-    await waitForRequest(paperGate);
-    paperGate.resolve("paper output");
     const paperTurn = await iterator.next();
     expect(paperTurn.value).toMatchObject({
       type: "agent-turn",
