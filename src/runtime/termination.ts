@@ -1,7 +1,9 @@
 import type {
+  BroadcastProtocolConfig,
   BudgetStopReason,
   BudgetTerminationCondition,
   ConvergenceTerminationCondition,
+  CoordinatorProtocolConfig,
   FirstOfTerminationCondition,
   FirstOfTerminationConditions,
   FirstOfTerminationOutput,
@@ -10,6 +12,9 @@ import type {
   JudgeTerminationCondition,
   JsonObject,
   NormalizedStopReason,
+  ProtocolConfig,
+  SequentialProtocolConfig,
+  SharedProtocolConfig,
   TerminationStopRecord,
   StopTerminationDecision,
   TerminationCondition,
@@ -85,6 +90,10 @@ export function evaluateTermination(
   condition: TerminationCondition,
   context: TerminationEvaluationContext
 ): TerminationDecision {
+  if (isTerminationFloorBlocked(condition, context)) {
+    return { type: "continue", condition };
+  }
+
   switch (condition.kind) {
     case "budget":
       return evaluateBudget(condition, context);
@@ -164,6 +173,30 @@ export function evaluateTerminationStop(
   }
 
   return stopRecord(condition, decision);
+}
+
+/**
+ * Warn when a protocol-level termination floor cannot be satisfied because a
+ * lower iteration cap will stop the run first.
+ */
+export function warnOnProtocolTerminationMisconfiguration(
+  protocol: ProtocolConfig,
+  terminate: TerminationCondition | undefined,
+  warn: (message: string) => void = console.warn
+): void {
+  const minTurns = protocolMinTurns(protocol);
+  if (minTurns === undefined || !terminate) {
+    return;
+  }
+
+  const limitingIterationBudget = smallestIterationBudget(terminate);
+  if (limitingIterationBudget === undefined || limitingIterationBudget >= minTurns) {
+    return;
+  }
+
+  warn(
+    `[dogpile] protocol.minTurns (${minTurns}) exceeds terminate budget maxIterations (${limitingIterationBudget}); maxIterations will win.`
+  );
 }
 
 /**
@@ -382,6 +415,73 @@ function stopPrecedence(reason: NormalizedStopReason): number {
   }
 
   return 2;
+}
+
+function isTerminationFloorBlocked(condition: TerminationCondition, context: TerminationEvaluationContext): boolean {
+  if (condition.kind !== "convergence" && condition.kind !== "judge") {
+    return false;
+  }
+
+  const floor = protocolTerminationFloor(context.protocolConfig);
+  if (floor === undefined || floor <= 0) {
+    return false;
+  }
+
+  const progress = protocolProgress(context);
+  return progress < floor;
+}
+
+function protocolTerminationFloor(protocol: ProtocolConfig | undefined): number | undefined {
+  if (!protocol) {
+    return undefined;
+  }
+
+  switch (protocol.kind) {
+    case "broadcast":
+      return protocol.minRounds;
+    case "coordinator":
+    case "sequential":
+    case "shared":
+      return protocol.minTurns;
+  }
+}
+
+function protocolProgress(context: TerminationEvaluationContext): number {
+  return context.protocolIteration ?? context.iteration ?? context.transcript.length;
+}
+
+function protocolMinTurns(
+  protocol: ProtocolConfig
+): SequentialProtocolConfig["minTurns"] | CoordinatorProtocolConfig["minTurns"] | SharedProtocolConfig["minTurns"] {
+  switch (protocol.kind) {
+    case "broadcast":
+      return undefined;
+    case "coordinator":
+    case "sequential":
+    case "shared":
+      return protocol.minTurns;
+  }
+}
+
+function smallestIterationBudget(condition: TerminationCondition): number | undefined {
+  switch (condition.kind) {
+    case "budget":
+      return condition.maxIterations;
+    case "convergence":
+    case "judge":
+      return undefined;
+    case "firstOf": {
+      let smallest: number | undefined;
+      for (const child of condition.conditions) {
+        const budget = smallestIterationBudget(child);
+        if (budget === undefined) {
+          continue;
+        }
+        smallest = smallest === undefined ? budget : Math.min(smallest, budget);
+      }
+      return smallest;
+    }
+  }
 }
 
 function judgeStopDetail(decision: JudgeEvaluationDecision, minScore?: number): JsonObject {

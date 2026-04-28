@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0
+
+- Prepared the protocol-floor release identity for `@dogpile/sdk@0.5.0` and `dogpile-sdk-0.5.0.tgz`.
+- Added protocol-level `minTurns` / `minRounds` floors so convergence and judge termination cannot fire before the configured minimum progress.
+
 ## 0.4.0
 
 - Prepared the wrap-up hint release identity for `@dogpile/sdk@0.4.0` and `dogpile-sdk-0.4.0.tgz`.

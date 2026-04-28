@@ -38,7 +38,7 @@ import {
 import { throwIfAborted } from "./cancellation.js";
 import { parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
-import { evaluateTerminationStop } from "./termination.js";
+import { evaluateTerminationStop, warnOnProtocolTerminationMisconfiguration } from "./termination.js";
 import { createRuntimeToolExecutor, executeModelResponseToolRequests, runtimeToolAvailability } from "./tools.js";
 import { createWrapUpHintController } from "./wrap-up.js";
 
@@ -78,6 +78,8 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
     ...(options.terminate ? { terminate: options.terminate } : {}),
     ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {})
   });
+
+  warnOnProtocolTerminationMisconfiguration(options.protocol, options.terminate);
 
   const emit = (event: RunEvent): void => {
     events.push(event);
@@ -315,6 +317,8 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
       wrapUpHint.context({
         runId,
         protocol: "coordinator",
+        protocolConfig: options.protocol,
+        protocolIteration: transcript.length,
         cost: totalCost,
         events,
         transcript,

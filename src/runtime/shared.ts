@@ -36,7 +36,7 @@ import {
 import { throwIfAborted } from "./cancellation.js";
 import { parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
-import { evaluateTerminationStop } from "./termination.js";
+import { evaluateTerminationStop, warnOnProtocolTerminationMisconfiguration } from "./termination.js";
 import { createRuntimeToolExecutor, executeModelResponseToolRequests, runtimeToolAvailability } from "./tools.js";
 import { createWrapUpHintController } from "./wrap-up.js";
 
@@ -76,6 +76,8 @@ export async function runShared(options: SharedRunOptions): Promise<RunResult> {
     ...(options.terminate ? { terminate: options.terminate } : {}),
     ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {})
   });
+
+  warnOnProtocolTerminationMisconfiguration(options.protocol, options.terminate);
 
   const emit = (event: RunEvent): void => {
     events.push(event);
@@ -310,6 +312,8 @@ export async function runShared(options: SharedRunOptions): Promise<RunResult> {
       wrapUpHint.context({
         runId,
         protocol: "shared",
+        protocolConfig: options.protocol,
+        protocolIteration: transcript.length,
         cost: totalCost,
         events,
         transcript,

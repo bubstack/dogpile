@@ -24,10 +24,12 @@ interface WrapUpControllerOptions {
 interface WrapUpContextOptions {
   readonly runId: string;
   readonly protocol: Protocol;
+  readonly protocolConfig?: ProtocolConfig;
   readonly cost: TerminationEvaluationContext["cost"];
   readonly events: readonly RunEvent[];
   readonly transcript: readonly TranscriptEntry[];
   readonly iteration?: number;
+  readonly protocolIteration?: number;
   readonly elapsedMs?: number;
   readonly metadata?: JsonObject;
 }
@@ -86,7 +88,9 @@ function wrapUpEvaluationContext(
     cost: options.cost,
     events: options.events,
     transcript: options.transcript,
+    ...(options.protocolConfig !== undefined ? { protocolConfig: options.protocolConfig } : {}),
     ...(iteration !== undefined ? { iteration } : {}),
+    ...(options.protocolIteration !== undefined ? { protocolIteration: options.protocolIteration } : {}),
     ...(elapsedMs !== undefined ? { elapsedMs } : {}),
     ...(options.budget !== undefined ? { budget: options.budget } : {}),
     ...(options.budget !== undefined
