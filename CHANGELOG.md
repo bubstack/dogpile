@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+
+- Prepared the wrap-up hint release identity for `@dogpile/sdk@0.4.0` and `dogpile-sdk-0.4.0.tgz`.
+- Added one-shot `wrapUpHint` support so the next model turn can package work before hard iteration or timeout caps terminate the run.
+
 ## 0.2.2
 
 - Prepared the documentation refresh release identity for `@dogpile/sdk@0.2.2` and `dogpile-sdk-0.2.2.tgz`.

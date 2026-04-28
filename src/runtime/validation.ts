@@ -65,6 +65,7 @@ export function validateDogpileOptions(options: DogpileOptions): void {
   validateOptionalTemperature(options.temperature, "temperature");
   validateOptionalBudgetCaps(options.budget, "budget");
   validateOptionalTerminationCondition(options.terminate, "terminate");
+  validateOptionalWrapUpHint(options.wrapUpHint, "wrapUpHint");
   validateOptionalFunction(options.evaluate, "evaluate");
   validateOptionalSeed(options.seed, "seed");
   validateOptionalAbortSignal(options.signal, "signal");
@@ -87,6 +88,7 @@ export function validateEngineOptions(options: EngineOptions): void {
   validateOptionalTemperature(options.temperature, "temperature");
   validateOptionalBudgetCaps(options.budget, "budget");
   validateOptionalTerminationCondition(options.terminate, "terminate");
+  validateOptionalWrapUpHint(options.wrapUpHint, "wrapUpHint");
   validateOptionalFunction(options.evaluate, "evaluate");
   validateOptionalSeed(options.seed, "seed");
   validateOptionalAbortSignal(options.signal, "signal");
@@ -407,6 +409,27 @@ function validateJudgeRubric(value: unknown, path: string): void {
 
 function validateOptionalTemperature(value: number | undefined, path: string): void {
   validateOptionalNumberInRange(value, path, 0, 2);
+}
+
+function validateOptionalWrapUpHint(value: unknown, path: string): void {
+  if (value === undefined) {
+    return;
+  }
+
+  const record = requireRecord(value, path);
+  validateOptionalNonNegativeInteger(record.atIteration, `${path}.atIteration`);
+  validateOptionalNumberInRange(record.atFraction, `${path}.atFraction`, 0, 1);
+  validateOptionalFunction(record.inject, `${path}.inject`);
+
+  if (record.atIteration === undefined && record.atFraction === undefined) {
+    invalidConfiguration({
+      path,
+      rule: "object",
+      message: "wrapUpHint must configure atIteration or atFraction.",
+      expected: "WrapUpHintConfig with atIteration or atFraction",
+      actual: value
+    });
+  }
 }
 
 function validateOptionalSeed(value: string | number | undefined, path: string): void {

@@ -1,6 +1,6 @@
 {
   "name": "@dogpile/sdk",
-  "version": "0.2.2",
+  "version": "0.4.0",
   "description": "TypeScript SDK for running multi-agent LLM coordination protocols.",
   "license": "Apache-2.0",
   "type": "module",
@@ -132,6 +132,7 @@
     "src/runtime/shared.ts",
     "src/runtime/termination.ts",
     "src/runtime/tools.ts",
+    "src/runtime/wrap-up.ts",
     "src/runtime/validation.ts",
     "README.md",
     "CHANGELOG.md",
