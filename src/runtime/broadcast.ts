@@ -39,6 +39,7 @@ import { parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
 import { evaluateTerminationStop } from "./termination.js";
 import { createRuntimeToolExecutor, executeModelResponseToolRequests, runtimeToolAvailability } from "./tools.js";
+import { createWrapUpHintController } from "./wrap-up.js";
 
 interface BroadcastRunOptions {
   readonly intent: string;
@@ -52,6 +53,7 @@ interface BroadcastRunOptions {
   readonly seed?: string | number;
   readonly signal?: AbortSignal;
   readonly terminate?: TerminationCondition;
+  readonly wrapUpHint?: DogpileOptions["wrapUpHint"];
   readonly emit?: (event: RunEvent) => void;
 }
 
@@ -68,6 +70,13 @@ export async function runBroadcast(options: BroadcastRunOptions): Promise<RunRes
   const startedAtMs = nowMs();
   let stopped = false;
   let termination: TerminationStopRecord | undefined;
+  const wrapUpHint = createWrapUpHintController({
+    protocol: options.protocol,
+    tier: options.tier,
+    ...(options.budget ? { budget: options.budget } : {}),
+    ...(options.terminate ? { terminate: options.terminate } : {}),
+    ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {})
+  });
 
   const emit = (event: RunEvent): void => {
     events.push(event);
@@ -133,16 +142,27 @@ export async function runBroadcast(options: BroadcastRunOptions): Promise<RunRes
             round,
             ...toolAvailability
           },
-          messages: [
+          messages: wrapUpHint.inject(
+            [
+              {
+                role: "system",
+                content: buildSystemPrompt(agent)
+              },
+              {
+                role: "user",
+                content: input
+              }
+            ],
             {
-              role: "system",
-              content: buildSystemPrompt(agent)
-            },
-            {
-              role: "user",
-              content: input
+              runId,
+              protocol: "broadcast",
+              cost: totalCost,
+              events,
+              transcript,
+              iteration: transcript.length,
+              elapsedMs: elapsedMs(startedAtMs)
             }
-          ]
+          )
         };
         const response = await generateModelTurn({
           model: options.model,
@@ -332,16 +352,18 @@ export async function runBroadcast(options: BroadcastRunOptions): Promise<RunRes
       return stopped;
     }
 
-    const stopRecord = evaluateTerminationStop(options.terminate, {
-      runId,
-      protocol: "broadcast",
-      tier: options.tier,
-      cost: totalCost,
-      events,
-      transcript,
-      iteration: transcript.length,
-      elapsedMs: elapsedMs(startedAtMs)
-    });
+    const stopRecord = evaluateTerminationStop(
+      options.terminate,
+      wrapUpHint.context({
+        runId,
+        protocol: "broadcast",
+        cost: totalCost,
+        events,
+        transcript,
+        iteration: transcript.length,
+        elapsedMs: elapsedMs(startedAtMs)
+      })
+    );
 
     if (!stopRecord) {
       return false;

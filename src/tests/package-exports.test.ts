@@ -1130,6 +1130,7 @@ describe("package exports", () => {
       "src/runtime/shared.ts",
       "src/runtime/termination.ts",
       "src/runtime/tools.ts",
+      "src/runtime/wrap-up.ts",
       "src/runtime/validation.ts",
       "README.md",
       "CHANGELOG.md",
@@ -1201,6 +1202,7 @@ describe("package exports", () => {
     expect(packedPathSet.has("dist/runtime/cancellation.js")).toBe(true);
     expect(packedPathSet.has("dist/runtime/validation.js")).toBe(true);
     expect(packedPathSet.has("src/runtime/cancellation.ts")).toBe(true);
+    expect(packedPathSet.has("src/runtime/wrap-up.ts")).toBe(true);
     expect(packedPathSet.has("src/runtime/validation.ts")).toBe(true);
     expect(packedPaths.every((path) => !path.startsWith("test/"))).toBe(true);
     expect(packedPaths.every((path) => !path.startsWith("benchmark-fixtures/"))).toBe(true);

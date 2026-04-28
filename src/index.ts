@@ -136,6 +136,7 @@ export type {
   ReplayTraceRunInputs,
   ReplayTraceSchemaVersion,
   ReplayTraceSeed,
+  RemainingBudget,
   RoleAssignmentEvent,
   RunAccounting,
   RunEvaluation,
@@ -191,5 +192,6 @@ export type {
   Transcript,
   TranscriptEntry,
   TranscriptLink,
-  TurnEvent
+  TurnEvent,
+  WrapUpHintConfig
 } from "./types.js";

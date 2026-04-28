@@ -538,12 +538,30 @@ export interface TerminationEvaluationContext {
   readonly iteration?: number;
   /** Elapsed runtime in milliseconds at the evaluation point. */
   readonly elapsedMs?: number;
+  /** Effective hard caps visible to this evaluation point. */
+  readonly budget?: BudgetCaps;
+  /** Remaining headroom computed from the effective hard caps at this evaluation point. */
+  readonly remainingBudget?: RemainingBudget;
   /** Optional normalized judge or quality score in the inclusive range `0..1`. */
   readonly quality?: NormalizedQualityScore;
   /** Optional caller-owned judge decision for judge termination checks. */
   readonly judgeDecision?: JudgeEvaluationDecision;
   /** Additional serializable evaluator metadata. */
   readonly metadata?: JsonObject;
+}
+
+/**
+ * Remaining budget headroom derived from the current evaluation context.
+ */
+export interface RemainingBudget {
+  /** Remaining turn iterations before an iteration cap is reached. */
+  readonly iterations?: number;
+  /** Remaining elapsed milliseconds before a timeout cap is reached. */
+  readonly timeoutMs?: number;
+  /** Remaining spend in US dollars before a cost cap is reached. */
+  readonly usd?: number;
+  /** Remaining total tokens before a token cap is reached. */
+  readonly tokens?: number;
 }
 
 /**
@@ -2548,6 +2566,26 @@ export interface BudgetCostTierOptions {
 }
 
 /**
+ * Advisory wrap-up hint injected into the next model turn near a hard cap.
+ */
+export interface WrapUpHintConfig {
+  /** Absolute completed model-turn iteration at which to inject the hint once. */
+  readonly atIteration?: number;
+  /**
+   * Fraction of `maxIterations` or `timeoutMs` at which to inject the hint once.
+   *
+   * `0.8` means the next turn after reaching 80% of a supported cap receives
+   * the wrap-up hint.
+   */
+  readonly atFraction?: number;
+  /**
+   * Optional custom hint builder. When omitted, the SDK injects a default
+   * message that describes the remaining turn and/or time budget.
+   */
+  readonly inject?: (context: TerminationEvaluationContext) => string;
+}
+
+/**
  * Options accepted by the high-level single-call workflow APIs.
  *
  * Provide an `intent` and configure a model provider. The high-level surface
@@ -2576,6 +2614,8 @@ export interface DogpileOptions extends BudgetCostTierOptions {
   readonly temperature?: number;
   /** Optional composable termination policy for budget, convergence, judge, or firstOf stop conditions. */
   readonly terminate?: TerminationCondition;
+  /** Optional one-shot advisory hint injected into the next model turn near a hard cap. */
+  readonly wrapUpHint?: WrapUpHintConfig;
   /** Optional caller-owned evaluator that supplies quality and evaluation data. */
   readonly evaluate?: RunEvaluator;
   /** Optional deterministic seed recorded in the replay trace. */
@@ -2638,6 +2678,8 @@ export interface EngineOptions {
   readonly budget?: Omit<Budget, "tier">;
   /** Optional composable termination policy for budget, convergence, judge, or firstOf stop conditions. */
   readonly terminate?: TerminationCondition;
+  /** Optional one-shot advisory hint injected into the next model turn near a hard cap. */
+  readonly wrapUpHint?: WrapUpHintConfig;
   /** Optional caller-owned evaluator that supplies quality and evaluation data. */
   readonly evaluate?: RunEvaluator;
   /** Optional deterministic seed recorded in the replay trace. */

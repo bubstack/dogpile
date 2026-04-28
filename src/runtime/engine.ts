@@ -84,6 +84,7 @@ export function createEngine(options: EngineOptions): Engine {
         ...(options.seed !== undefined ? { seed: options.seed } : {}),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(terminate ? { terminate } : {}),
+        ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
         ...(options.evaluate ? { evaluate: options.evaluate } : {})
       });
     },
@@ -516,6 +517,7 @@ interface RunProtocolOptions {
   readonly seed?: EngineOptions["seed"];
   readonly signal?: EngineOptions["signal"];
   readonly terminate?: EngineOptions["terminate"];
+  readonly wrapUpHint?: EngineOptions["wrapUpHint"];
   readonly emit?: (event: RunEvent) => void;
 }
 
@@ -618,6 +620,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.seed !== undefined ? { seed: options.seed } : {}),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
+        ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
         ...(options.emit ? { emit: options.emit } : {})
       });
     case "broadcast":
@@ -633,6 +636,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.seed !== undefined ? { seed: options.seed } : {}),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
+        ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
         ...(options.emit ? { emit: options.emit } : {})
       });
     case "coordinator":
@@ -648,6 +652,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.seed !== undefined ? { seed: options.seed } : {}),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
+        ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
         ...(options.emit ? { emit: options.emit } : {})
       });
     case "shared":
@@ -663,6 +668,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.seed !== undefined ? { seed: options.seed } : {}),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
+        ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
         ...(options.emit ? { emit: options.emit } : {})
       });
   }

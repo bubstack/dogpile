@@ -40,6 +40,7 @@ import { parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
 import { evaluateTerminationStop } from "./termination.js";
 import { createRuntimeToolExecutor, executeModelResponseToolRequests, runtimeToolAvailability } from "./tools.js";
+import { createWrapUpHintController } from "./wrap-up.js";
 
 interface CoordinatorRunOptions {
   readonly intent: string;
@@ -53,6 +54,7 @@ interface CoordinatorRunOptions {
   readonly seed?: string | number;
   readonly signal?: AbortSignal;
   readonly terminate?: TerminationCondition;
+  readonly wrapUpHint?: DogpileOptions["wrapUpHint"];
   readonly emit?: (event: RunEvent) => void;
 }
 
@@ -69,6 +71,13 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
   const startedAtMs = nowMs();
   let stopped = false;
   let termination: TerminationStopRecord | undefined;
+  const wrapUpHint = createWrapUpHintController({
+    protocol: options.protocol,
+    tier: options.tier,
+    ...(options.budget ? { budget: options.budget } : {}),
+    ...(options.terminate ? { terminate: options.terminate } : {}),
+    ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {})
+  });
 
   const emit = (event: RunEvent): void => {
     events.push(event);
@@ -126,6 +135,9 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
         providerCalls,
         toolExecutor,
         toolAvailability,
+        events,
+        startedAtMs,
+        wrapUpHint,
         emit,
         recordProtocolDecision
       });
@@ -150,6 +162,11 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
             providerCallSlots,
             toolExecutor,
             toolAvailability,
+            totalCost,
+            events,
+            transcript: planTranscript,
+            startedAtMs,
+            wrapUpHint,
             emit
           })
         )
@@ -201,6 +218,9 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
         providerCalls,
         toolExecutor,
         toolAvailability,
+        events,
+        startedAtMs,
+        wrapUpHint,
         emit,
         recordProtocolDecision
       });
@@ -290,16 +310,18 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
       return stopped;
     }
 
-    const stopRecord = evaluateTerminationStop(options.terminate, {
-      runId,
-      protocol: "coordinator",
-      tier: options.tier,
-      cost: totalCost,
-      events,
-      transcript,
-      iteration: transcript.length,
-      elapsedMs: elapsedMs(startedAtMs)
-    });
+    const stopRecord = evaluateTerminationStop(
+      options.terminate,
+      wrapUpHint.context({
+        runId,
+        protocol: "coordinator",
+        cost: totalCost,
+        events,
+        transcript,
+        iteration: transcript.length,
+        elapsedMs: elapsedMs(startedAtMs)
+      })
+    );
 
     if (!stopRecord) {
       return false;
@@ -343,6 +365,9 @@ interface CoordinatorTurnOptions {
   readonly providerCalls: ReplayTraceProviderCall[];
   readonly toolExecutor: RuntimeToolExecutor;
   readonly toolAvailability: JsonObject;
+  readonly events: RunEvent[];
+  readonly startedAtMs: number;
+  readonly wrapUpHint: ReturnType<typeof createWrapUpHintController>;
   readonly emit: (event: RunEvent) => void;
   readonly recordProtocolDecision: (
     event: RunEvent,
@@ -366,16 +391,27 @@ async function runCoordinatorTurn(turn: CoordinatorTurnOptions): Promise<CostSum
       phase: turn.phase,
       ...turn.toolAvailability
     },
-    messages: [
+    messages: turn.wrapUpHint.inject(
+      [
+        {
+          role: "system",
+          content: buildSystemPrompt(turn.agent, turn.coordinator)
+        },
+        {
+          role: "user",
+          content: turn.input
+        }
+      ],
       {
-        role: "system",
-        content: buildSystemPrompt(turn.agent, turn.coordinator)
-      },
-      {
-        role: "user",
-        content: turn.input
+        runId: turn.runId,
+        protocol: "coordinator",
+        cost: turn.totalCost,
+        events: turn.events,
+        transcript: turn.transcript,
+        iteration: turn.transcript.length,
+        elapsedMs: elapsedMs(turn.startedAtMs)
       }
-    ]
+    )
   };
   const response = await generateModelTurn({
     model: turn.options.model,
@@ -445,6 +481,11 @@ interface CoordinatorWorkerTurnOptions {
   readonly providerCallSlots: ReplayTraceProviderCall[];
   readonly toolExecutor: RuntimeToolExecutor;
   readonly toolAvailability: JsonObject;
+  readonly totalCost: CostSummary;
+  readonly events: RunEvent[];
+  readonly transcript: readonly TranscriptEntry[];
+  readonly startedAtMs: number;
+  readonly wrapUpHint: ReturnType<typeof createWrapUpHintController>;
   readonly emit: (event: RunEvent) => void;
 }
 
@@ -473,16 +514,27 @@ async function runCoordinatorWorkerTurn(turn: CoordinatorWorkerTurnOptions): Pro
       phase: "worker",
       ...turn.toolAvailability
     },
-    messages: [
+    messages: turn.wrapUpHint.inject(
+      [
+        {
+          role: "system",
+          content: buildSystemPrompt(turn.agent, turn.coordinator)
+        },
+        {
+          role: "user",
+          content: turn.input
+        }
+      ],
       {
-        role: "system",
-        content: buildSystemPrompt(turn.agent, turn.coordinator)
-      },
-      {
-        role: "user",
-        content: turn.input
+        runId: turn.runId,
+        protocol: "coordinator",
+        cost: turn.totalCost,
+        events: turn.events,
+        transcript: turn.transcript,
+        iteration: turn.turn - 1,
+        elapsedMs: elapsedMs(turn.startedAtMs)
       }
-    ]
+    )
   };
   const response = await generateModelTurn({
     model: turn.options.model,
