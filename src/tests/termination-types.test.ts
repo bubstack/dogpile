@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createDeterministicModelProvider } from "../internal.js";
 import type {
   BudgetStopReason,
@@ -243,6 +243,98 @@ describe("termination public types", () => {
     expect(output.reason).toBe("convergence");
     expect(output.normalizedReason).toBe("convergence");
     expect(output.condition).toBe(convergenceCondition);
+  });
+
+  it("prevents convergence from firing before protocol minTurns", () => {
+    const condition = convergence({ stableTurns: 2, minSimilarity: 1 });
+    const decision = evaluateTermination(
+      condition,
+      terminationContext({
+        iteration: 2,
+        protocolIteration: 2,
+        protocolConfig: { kind: "sequential", minTurns: 3 },
+        transcript: [
+          transcriptEntry("planner", "stable answer"),
+          transcriptEntry("critic", "stable answer")
+        ]
+      })
+    );
+
+    expect(decision).toEqual({ type: "continue", condition });
+  });
+
+  it("allows convergence to fire once protocol minTurns is reached", () => {
+    const condition = convergence({ stableTurns: 2, minSimilarity: 1 });
+    const decision = evaluateTermination(
+      condition,
+      terminationContext({
+        iteration: 3,
+        protocolIteration: 3,
+        protocolConfig: { kind: "sequential", minTurns: 3 },
+        transcript: [
+          transcriptEntry("planner", "stable answer"),
+          transcriptEntry("critic", "stable answer")
+        ]
+      })
+    );
+
+    expect(decision.type).toBe("stop");
+    if (decision.type !== "stop") {
+      throw new Error("expected convergence stop at minTurns floor");
+    }
+    expect(decision.reason).toBe("convergence");
+  });
+
+  it("prevents judge termination from firing before protocol minTurns", () => {
+    const condition = judge({ rubric: "Accept complete answers.", minScore: 0.8 });
+    const decision = evaluateTermination(
+      condition,
+      terminationContext({
+        iteration: 2,
+        protocolIteration: 2,
+        protocolConfig: { kind: "shared", minTurns: 4 },
+        quality: 0.95
+      })
+    );
+
+    expect(decision).toEqual({ type: "continue", condition });
+  });
+
+  it("allows judge termination to fire once protocol minTurns is reached", () => {
+    const condition = judge({ rubric: "Accept complete answers.", minScore: 0.8 });
+    const decision = evaluateTermination(
+      condition,
+      terminationContext({
+        iteration: 4,
+        protocolIteration: 4,
+        protocolConfig: { kind: "shared", minTurns: 4 },
+        quality: 0.95
+      })
+    );
+
+    expect(decision.type).toBe("stop");
+    if (decision.type !== "stop") {
+      throw new Error("expected judge stop at minTurns floor");
+    }
+    expect(decision.reason).toBe("judge");
+  });
+
+  it("leaves budget termination unaffected by protocol minTurns", () => {
+    const condition = budget({ maxIterations: 2 });
+    const decision = evaluateTermination(
+      condition,
+      terminationContext({
+        iteration: 2,
+        protocolIteration: 0,
+        protocolConfig: { kind: "sequential", minTurns: 7 }
+      })
+    );
+
+    expect(decision.type).toBe("stop");
+    if (decision.type !== "stop") {
+      throw new Error("expected budget stop despite minTurns floor");
+    }
+    expect(decision.reason).toBe("budget");
   });
 
   it("records the first firstOf child that fired with the concrete stop condition", () => {
@@ -568,13 +660,42 @@ describe("termination public types", () => {
       }
     });
   });
+
+  it("logs a warning when protocol minTurns exceeds a budget maxIterations cap", async () => {
+    const provider = createConstantModelProvider("warning-provider", "pass");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await run({
+        intent: "Warn on conflicting minTurns and iteration budget.",
+        protocol: { kind: "sequential", maxTurns: 3, minTurns: 7 },
+        tier: "fast",
+        model: provider,
+        terminate: budget({ maxIterations: 2 })
+      });
+
+      expect(warning).toHaveBeenCalledWith(
+        "[dogpile] protocol.minTurns (7) exceeds terminate budget maxIterations (2); maxIterations will win."
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
 });
 
 function terminationContext(
   overrides: Partial<
     Pick<
       TerminationEvaluationContext,
-      "cost" | "iteration" | "elapsedMs" | "quality" | "transcript" | "protocol" | "judgeDecision"
+      | "cost"
+      | "iteration"
+      | "protocolIteration"
+      | "elapsedMs"
+      | "quality"
+      | "transcript"
+      | "protocol"
+      | "protocolConfig"
+      | "judgeDecision"
     >
   > = {}
 ): TerminationEvaluationContext {
@@ -585,7 +706,9 @@ function terminationContext(
     cost: overrides.cost ?? { usd: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     events: [],
     transcript: overrides.transcript ?? [],
+    ...(overrides.protocolConfig !== undefined ? { protocolConfig: overrides.protocolConfig } : {}),
     ...(overrides.iteration !== undefined ? { iteration: overrides.iteration } : {}),
+    ...(overrides.protocolIteration !== undefined ? { protocolIteration: overrides.protocolIteration } : {}),
     ...(overrides.elapsedMs !== undefined ? { elapsedMs: overrides.elapsedMs } : {}),
     ...(overrides.quality !== undefined ? { quality: overrides.quality } : {}),
     ...(overrides.judgeDecision !== undefined ? { judgeDecision: overrides.judgeDecision } : {})

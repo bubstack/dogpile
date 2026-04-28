@@ -260,6 +260,12 @@ export interface SequentialProtocolConfig {
   readonly kind: "sequential";
   /** Maximum number of agent turns to execute; defaults to `3` for named protocols. */
   readonly maxTurns?: number;
+  /**
+   * Floor for convergence and judge termination checks.
+   *
+   * Budget caps still apply immediately. Defaults to `0` when omitted.
+   */
+  readonly minTurns?: number;
 }
 
 /**
@@ -274,6 +280,12 @@ export interface CoordinatorProtocolConfig {
   readonly kind: "coordinator";
   /** Maximum number of coordinator-managed turns to execute; defaults to `3` for named protocols. */
   readonly maxTurns?: number;
+  /**
+   * Floor for convergence and judge termination checks.
+   *
+   * Budget caps still apply immediately. Defaults to `0` when omitted.
+   */
+  readonly minTurns?: number;
 }
 
 /**
@@ -288,6 +300,12 @@ export interface BroadcastProtocolConfig {
   readonly kind: "broadcast";
   /** Maximum number of broadcast/merge rounds to execute; defaults to `2` for named protocols. */
   readonly maxRounds?: number;
+  /**
+   * Floor for convergence and judge termination checks.
+   *
+   * Budget caps still apply immediately. Defaults to `0` when omitted.
+   */
+  readonly minRounds?: number;
 }
 
 /**
@@ -302,6 +320,12 @@ export interface SharedProtocolConfig {
   readonly kind: "shared";
   /** Maximum number of shared-state turns to execute; defaults to `3` for named protocols. */
   readonly maxTurns?: number;
+  /**
+   * Floor for convergence and judge termination checks.
+   *
+   * Budget caps still apply immediately. Defaults to `0` when omitted.
+   */
+  readonly minTurns?: number;
   /** Optional organizational memory snapshot visible to every shared agent. */
   readonly organizationalMemory?: string;
 }
@@ -526,6 +550,8 @@ export interface TerminationEvaluationContext {
   readonly runId: string;
   /** Protocol currently executing. */
   readonly protocol: Protocol;
+  /** Exact normalized protocol configuration when the evaluator needs protocol-specific limits. */
+  readonly protocolConfig?: ProtocolConfig;
   /** Cost/quality tier selected for the run. */
   readonly tier: BudgetTier;
   /** Current accumulated cost and token usage. */
@@ -536,6 +562,8 @@ export interface TerminationEvaluationContext {
   readonly transcript: readonly TranscriptEntry[];
   /** Completed model-turn iterations at the evaluation point. */
   readonly iteration?: number;
+  /** Protocol-native progress count: turns for sequential/coordinator/shared, rounds for broadcast. */
+  readonly protocolIteration?: number;
   /** Elapsed runtime in milliseconds at the evaluation point. */
   readonly elapsedMs?: number;
   /** Effective hard caps visible to this evaluation point. */

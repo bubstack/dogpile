@@ -37,7 +37,7 @@ import {
 import { throwIfAborted } from "./cancellation.js";
 import { parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
-import { evaluateTerminationStop } from "./termination.js";
+import { evaluateTerminationStop, warnOnProtocolTerminationMisconfiguration } from "./termination.js";
 import { createRuntimeToolExecutor, executeModelResponseToolRequests, runtimeToolAvailability } from "./tools.js";
 import { createWrapUpHintController } from "./wrap-up.js";
 
@@ -77,6 +77,8 @@ export async function runBroadcast(options: BroadcastRunOptions): Promise<RunRes
     ...(options.terminate ? { terminate: options.terminate } : {}),
     ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {})
   });
+
+  warnOnProtocolTerminationMisconfiguration(options.protocol, options.terminate);
 
   const emit = (event: RunEvent): void => {
     events.push(event);
@@ -357,6 +359,8 @@ export async function runBroadcast(options: BroadcastRunOptions): Promise<RunRes
       wrapUpHint.context({
         runId,
         protocol: "broadcast",
+        protocolConfig: options.protocol,
+        protocolIteration: broadcastRoundsCompleted(events),
         cost: totalCost,
         events,
         transcript,
@@ -393,6 +397,10 @@ export async function runBroadcast(options: BroadcastRunOptions): Promise<RunRes
       transcriptEntryCount: transcript.length
     });
   }
+}
+
+function broadcastRoundsCompleted(events: readonly RunEvent[]): number {
+  return events.filter((event) => event.type === "broadcast").length;
 }
 
 function buildSystemPrompt(agent: AgentSpec): string {

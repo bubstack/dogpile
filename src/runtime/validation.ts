@@ -171,12 +171,14 @@ function validateProtocolConfig(value: ProtocolConfig, path: string): void {
     case "sequential":
     case "shared":
       validateOptionalPositiveInteger(record.maxTurns, `${path}.maxTurns`);
+      validateOptionalNonNegativeInteger(record.minTurns, `${path}.minTurns`);
       if (kind === "shared") {
         validateOptionalString(record.organizationalMemory, `${path}.organizationalMemory`);
       }
       return;
     case "broadcast":
       validateOptionalPositiveInteger(record.maxRounds, `${path}.maxRounds`);
+      validateOptionalNonNegativeInteger(record.minRounds, `${path}.minRounds`);
       return;
   }
 }
