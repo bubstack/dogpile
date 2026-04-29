@@ -1127,6 +1127,7 @@ describe("package exports", () => {
       "src/runtime/engine.ts",
       "src/runtime/ids.ts",
       "src/runtime/model.ts",
+      "src/runtime/retry.ts",
       "src/runtime/sequential.ts",
       "src/runtime/shared.ts",
       "src/runtime/termination.ts",
@@ -1270,6 +1271,11 @@ describe("package exports", () => {
         types: "./dist/providers/openai-compatible.d.ts",
         import: "./dist/providers/openai-compatible.js",
         default: "./dist/providers/openai-compatible.js"
+      },
+      "./runtime/retry": {
+        types: "./dist/runtime/retry.d.ts",
+        import: "./dist/runtime/retry.js",
+        default: "./dist/runtime/retry.js"
       },
       "./runtime/sequential": {
         types: "./dist/runtime/sequential.d.ts",

@@ -8,6 +8,8 @@
  */
 export { Dogpile, createEngine, replay, replayStream, run, stream } from "./runtime/engine.js";
 export { createOpenAICompatibleProvider } from "./providers/openai-compatible.js";
+export { DEFAULT_RETRYABLE_DOGPILE_CODES, withRetry } from "./runtime/retry.js";
+export type { RetryAttemptInfo, RetryJitterMode, RetryPolicy } from "./runtime/retry.js";
 export { DogpileError } from "./types.js";
 export type {
   OpenAICompatibleChatCompletionChoice,

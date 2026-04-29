@@ -429,6 +429,51 @@ Common application branches:
 - `provider-authentication`, `provider-not-found`, `provider-unsupported`: fix
   credentials, model id, or feature choice.
 
+## Retrying Provider Failures
+
+`withRetry` wraps any `ConfiguredModelProvider` with a transient-failure retry
+policy. The wrapper preserves provider neutrality — it is opt-in, has no peer
+dependencies, and never inspects the underlying SDK.
+
+```ts
+import { createOpenAICompatibleProvider, Dogpile, withRetry } from "@dogpile/sdk";
+
+const rawProvider = createOpenAICompatibleProvider({
+  baseURL: "https://api.openai.com/v1",
+  apiKey: process.env.OPENAI_API_KEY!,
+  defaultModel: "gpt-4o-mini"
+});
+
+const robustProvider = withRetry(rawProvider, {
+  maxAttempts: 4,
+  baseDelayMs: 500,
+  maxDelayMs: 8_000,
+  jitter: "full",
+  onRetry: ({ attempt, delayMs, error, providerId }) => {
+    console.warn(`provider ${providerId} retry #${attempt} in ${delayMs}ms`, error);
+  }
+});
+
+await Dogpile.pile({ intent: "Summarize the release.", model: robustProvider });
+```
+
+By default, `withRetry`:
+
+- Retries `DogpileError` codes `provider-rate-limited`, `provider-timeout`,
+  and `provider-unavailable`. Never retries `aborted` or
+  `invalid-configuration`.
+- Treats `TypeError` (the typical fetch network-failure shape) as retryable.
+- Honors `error.detail.retryAfterMs` from `DogpileError` when no policy
+  override is supplied — useful when your adapter surfaces upstream
+  `Retry-After` headers.
+- Short-circuits immediately when the request `AbortSignal` is aborted, both
+  before each attempt and during the backoff sleep. Cancellation always wins.
+- Forwards `provider.stream()` through unchanged. Streaming retries are not
+  automated because partial chunks may already have been observed.
+
+Pass a custom `retryOn` predicate to retry on adapter-specific error shapes,
+or `delayForError` to honor a non-Dogpile `Retry-After` style hint.
+
 ## Browser Usage
 
 Browser-aware bundlers can import from the package root and use the `browser`

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added `withRetry(provider, policy)` and the `@dogpile/sdk/runtime/retry` subpath. Wraps any `ConfiguredModelProvider` with a transient-failure retry policy — preserves provider neutrality (opt-in, no peer deps), retries `provider-rate-limited` / `provider-timeout` / `provider-unavailable` by default, honors `error.detail.retryAfterMs`, and short-circuits on `AbortSignal`. Streaming calls are forwarded unchanged.
 - Internalized the Vercel AI provider adapter. `src/providers/vercel-ai.ts` moved to `src/internal/vercel-ai.ts`; it was never listed in `package.json#exports` or `package.json#files` and remains repo-internal so `ai` does not become a peer dependency. No behavior change for consumers.
 - `createRunId` no longer falls back to a `Date.now`-based id when `globalThis.crypto.randomUUID` is unavailable; it now throws `DogpileError({ code: "invalid-configuration" })`. Node 22+, Bun latest, and modern browser ESM environments all expose `crypto.randomUUID`.
 - Three previously plain `Error` throws in `src/runtime/tools.ts` now throw `DogpileError` with stable codes (`invalid-configuration` / `provider-invalid-response`), so `DogpileError.isInstance` catches them as the typed-error contract requires.
