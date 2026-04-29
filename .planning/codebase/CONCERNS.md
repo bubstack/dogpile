@@ -28,8 +28,6 @@
 - Impact: Callers catching by `DogpileError.isInstance` or by error code will miss these. They surface as untyped `Error` in traces.
 - Fix approach: Convert to `DogpileError` with codes such as `registration-error` / `vercel-ai-tool-error`.
 
-**[DEFERRED 2026-04-29]** Phase 4 splits below intentionally deferred. The Phase 1 guardrail tests (no-node-builtins, esm-extension-discipline, public-import-graph, replay-version-skew) now lock the invariants these large files put at risk, so the regression cost of leaving them is bounded. Splits remain valuable for review ergonomics; revisit when a concrete change is hard to make in the current shape.
-
 **`src/types.ts` is 2,799 lines:**
 - Issue: A single types file holds the entire public type surface, including event shapes, protocol configs, runtime tool types, replay trace types, and provider contracts.
 - Files: `src/types.ts`
