@@ -321,6 +321,38 @@ const codeExec = createCodeExecToolAdapter({
 Use `validateInput` on custom `RuntimeTool` objects for deterministic,
 side-effect-free checks that should run before `execute()`.
 
+### Web Search Adapter Threat Model
+
+The built-in `webSearch` adapter forwards caller-supplied `endpoint`/headers
+together with a model-generated `query`. That combination creates two risks
+that callers must address — Dogpile does not enforce any of them by default:
+
+- **Host allowlist.** If `endpoint` or a custom `WebSearchFetchRequestBuilder`
+  ever reads from caller-controlled state (user input, model output, env), a
+  confused-deputy issue can redirect requests. Constrain the allowed hosts
+  explicitly inside your `WebSearchFetch` implementation, and reject any URL
+  outside the list before issuing the network call.
+- **Header redaction.** Auth tokens or upstream credentials threaded through
+  request headers will land in the trace if they appear in
+  `RuntimeToolCallEvent.input` or `RuntimeToolResultEvent.output`. Strip them
+  inside your `WebSearchFetchRequestBuilder` and your `parseResponse`.
+- **Response size cap.** A malicious or misbehaving search backend can return
+  a response large enough to inflate the trace and the event log. Enforce a
+  byte cap inside `parseResponse` (read with a size-bounded reader, or check
+  `Content-Length`) and surface a typed error rather than passing the payload
+  through.
+
+### OpenAI-Compatible Provider And SSRF
+
+`createOpenAICompatibleProvider({ baseURL })` is a thin HTTP adapter — Dogpile
+does not allowlist hosts because doing so would violate provider neutrality.
+If a downstream consumer ever reflects user input into `baseURL`, the SDK will
+happily talk to internal addresses.
+
+When the consumer cannot statically pin `baseURL`, validate it before passing
+it in: parse with `URL`, reject anything that resolves to private/loopback
+ranges, and allowlist the known providers your application actually supports.
+
 ## Replay And Persistence
 
 Dogpile does not store anything for you. Persist the artifact your application
@@ -346,6 +378,25 @@ console.log(replayed.transcript.length);
 
 Replay never calls a provider. It reconstructs the public result shape from the
 trace you already saved.
+
+### Replay Determinism Rules
+
+Traces must be JSON-serializable end-to-end so saved traces survive cold
+storage and round-trip through `replay()`. When you extend events, results,
+or trace artifacts (in your own forks or with caller-supplied
+`metadata`/`detail`), keep the values JSON-primitive:
+
+- Use ISO-8601 strings, not `Date` instances.
+- Use plain `Record<string, JsonValue>`, not `Map` or `Set`.
+- Avoid `bigint` — they do not survive `JSON.stringify`.
+- Avoid sparse arrays and `undefined` slots — `JSON.stringify` drops them
+  silently and `replay()` will not reconstruct them.
+- Avoid functions, class instances, or circular references.
+
+The `src/tests/result-contract.test.ts` and
+`src/tests/replay-version-skew.test.ts` gates assert this contract. A frozen
+v0.3 trace fixture lives at `src/tests/fixtures/replay-trace-v0_3.json` and
+must round-trip through every published `replay()`.
 
 ## Error Handling
 

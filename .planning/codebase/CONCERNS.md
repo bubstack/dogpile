@@ -28,6 +28,8 @@
 - Impact: Callers catching by `DogpileError.isInstance` or by error code will miss these. They surface as untyped `Error` in traces.
 - Fix approach: Convert to `DogpileError` with codes such as `registration-error` / `vercel-ai-tool-error`.
 
+**[DEFERRED 2026-04-29]** Phase 4 splits below intentionally deferred. The Phase 1 guardrail tests (no-node-builtins, esm-extension-discipline, public-import-graph, replay-version-skew) now lock the invariants these large files put at risk, so the regression cost of leaving them is bounded. Splits remain valuable for review ergonomics; revisit when a concrete change is hard to make in the current shape.
+
 **`src/types.ts` is 2,799 lines:**
 - Issue: A single types file holds the entire public type surface, including event shapes, protocol configs, runtime tool types, replay trace types, and provider contracts.
 - Files: `src/types.ts`
@@ -77,6 +79,10 @@
 - Recommendations: When adding a new runtime file, update all three locations atomically. The `dist/runtime/*.js` glob in `files` is broad — anything matching it ships, so do not put repo-only output under `dist/runtime/`.
 
 ## Performance Bottlenecks
+
+**[DEFERRED 2026-04-29]** Both items below are conditional on profiler evidence ("If hot"). Real workloads are dominated by provider-network latency (100ms–10s per call); per-event timestamp formatting and small-object canonicalization are unlikely to register. Revisit if a user reports measured run-loop latency. Replay-determinism (`src/tests/result-contract.test.ts`) and event-shape (`src/tests/event-schema.test.ts`) gates remain the constraints any future optimization must satisfy.
+
+
 
 **`canonicalizeSerializable` recursively walks every result on every run:**
 - Problem: Final result construction calls `canonicalizeSerializable` on `cost`, `evaluation`, `metadata`, `quality`, and `usage` (and `stableJsonStringify` walks again).
