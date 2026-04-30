@@ -15,14 +15,19 @@ import type {
   ModelResponseEvent,
   RoleAssignmentEvent,
   RunEvent,
+  RunResult,
   StreamCompletionEvent,
   StreamErrorEvent,
   StreamEvent,
   StreamLifecycleEvent,
   StreamOutputEvent,
+  SubRunCompletedEvent,
+  SubRunFailedEvent,
+  SubRunStartedEvent,
   ToolActivityEvent,
   ToolCallEvent,
   ToolResultEvent,
+  Trace,
   Transcript,
   TurnEvent
 } from "../index.js";
@@ -36,6 +41,9 @@ const expectedEventTypes = [
   "tool-result",
   "agent-turn",
   "broadcast",
+  "sub-run-started",
+  "sub-run-completed",
+  "sub-run-failed",
   "budget-stop",
   "final"
 ] as const satisfies readonly RunEvent["type"][];
@@ -53,6 +61,9 @@ describe("trace event schema", () => {
       "tool-result",
       "agent-turn",
       "broadcast",
+      "sub-run-started",
+      "sub-run-completed",
+      "sub-run-failed",
       "budget-stop",
       "final"
     ]);
@@ -326,6 +337,133 @@ describe("trace event schema", () => {
     expect(errorEvent.message).toBe("provider unavailable during streamed run");
     expectIsoTimestamp(errorEvent.at);
     await expect(handle.result).rejects.toThrow(failure);
+  });
+
+  it("locks the sub-run-started event payload shape and JSON round-trip", () => {
+    const fixture: SubRunStartedEvent = {
+      type: "sub-run-started",
+      runId: "run-parent-sub-run-started",
+      at: "2026-04-30T00:00:00.000Z",
+      childRunId: "run-child-sub-run-started",
+      parentRunId: "run-parent-sub-run-started",
+      parentDecisionId: "decision-1",
+      protocol: "coordinator",
+      intent: "Investigate constraint violations.",
+      depth: 1,
+      recursive: true
+    };
+    const variant: RunEvent = fixture;
+
+    expect(variant.type).toBe("sub-run-started");
+    expect(sortedKeys(fixture)).toEqual([
+      "at",
+      "childRunId",
+      "depth",
+      "intent",
+      "parentDecisionId",
+      "parentRunId",
+      "protocol",
+      "recursive",
+      "runId",
+      "type"
+    ]);
+    expect(fixture.runId).toBe(fixture.parentRunId);
+    expectIsoTimestamp(fixture.at);
+    expect(JSON.parse(JSON.stringify(fixture))).toEqual(fixture);
+  });
+
+  it("locks the sub-run-completed event payload shape and embeds the full child RunResult", async () => {
+    const child = await run({
+      intent: "Produce a deterministic child sub-run for embedding.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: createDeterministicModelProvider("event-schema-sub-run-child")
+    });
+
+    const fixture: SubRunCompletedEvent = {
+      type: "sub-run-completed",
+      runId: "run-parent-sub-run-completed",
+      at: "2026-04-30T00:00:01.000Z",
+      childRunId: child.trace.runId,
+      parentRunId: "run-parent-sub-run-completed",
+      parentDecisionId: "decision-2",
+      subResult: child
+    };
+    const variant: RunEvent = fixture;
+
+    expect(variant.type).toBe("sub-run-completed");
+    expect(sortedKeys(fixture)).toEqual([
+      "at",
+      "childRunId",
+      "parentDecisionId",
+      "parentRunId",
+      "runId",
+      "subResult",
+      "type"
+    ]);
+    expectIsoTimestamp(fixture.at);
+    expect(fixture.subResult.trace.runId).toBe(child.trace.runId);
+    expect(fixture.subResult.output).toBe(child.output);
+
+    const roundTripped = JSON.parse(JSON.stringify(fixture)) as SubRunCompletedEvent;
+    expect(roundTripped).toEqual(fixture);
+    expect(roundTripped.subResult.trace.events).toEqual(child.trace.events);
+    expect(roundTripped.subResult.accounting).toEqual(child.accounting);
+    expect(roundTripped.subResult.output).toBe(child.output);
+  });
+
+  it("locks the sub-run-failed event payload shape and partialTrace round-trip", async () => {
+    const child = await run({
+      intent: "Capture a partial trace shape for sub-run-failed embedding.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: createDeterministicModelProvider("event-schema-sub-run-failed-fixture")
+    });
+    const partialTrace: Trace = child.trace;
+
+    const fixture: SubRunFailedEvent = {
+      type: "sub-run-failed",
+      runId: "run-parent-sub-run-failed",
+      at: "2026-04-30T00:00:02.000Z",
+      childRunId: child.trace.runId,
+      parentRunId: "run-parent-sub-run-failed",
+      parentDecisionId: "decision-3",
+      error: {
+        code: "aborted",
+        message: "Child run aborted before completion.",
+        providerId: "event-schema-sub-run-failed-fixture",
+        detail: {
+          reason: "depth-overflow",
+          failedDecision: {
+            type: "delegate",
+            protocol: "coordinator",
+            intent: "Recurse beyond maxDepth."
+          }
+        }
+      },
+      partialTrace
+    };
+    const variant: RunEvent = fixture;
+
+    expect(variant.type).toBe("sub-run-failed");
+    expect(sortedKeys(fixture)).toEqual([
+      "at",
+      "childRunId",
+      "error",
+      "parentDecisionId",
+      "parentRunId",
+      "partialTrace",
+      "runId",
+      "type"
+    ]);
+    expectIsoTimestamp(fixture.at);
+    expect(fixture.error.code).toBe("aborted");
+    expect(fixture.partialTrace.runId).toBe(child.trace.runId);
+
+    const roundTripped = JSON.parse(JSON.stringify(fixture)) as SubRunFailedEvent;
+    expect(roundTripped).toEqual(fixture);
+    expect(roundTripped.error.detail).toEqual(fixture.error.detail);
+    expect(roundTripped.partialTrace.events).toEqual(partialTrace.events);
   });
 });
 

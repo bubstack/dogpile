@@ -27,10 +27,12 @@ import type {
   ReplayTraceSeed,
   RunAccounting,
   RunEventLog,
+  RunEvent,
   RunMetadata,
   RunResult,
   RunUsage,
   StreamEvent,
+  SubRunCompletedEvent,
   Trace,
   TranscriptEntry
 } from "../index.js";
@@ -869,6 +871,50 @@ describe("single-call result contract", () => {
       })
     ).rejects.toBe(failure);
     expect(calls).toBe(1);
+  });
+
+  it("embeds a sub-run-completed event with a full child RunResult that round-trips through JSON", async () => {
+    const child = await run({
+      intent: "Produce an embeddable child RunResult for the parent trace.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: createDeterministicModelProvider("result-contract-sub-run-child")
+    });
+    const parent = await run({
+      intent: "Wrap a sub-run-completed event in the parent trace.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: createDeterministicModelProvider("result-contract-sub-run-parent")
+    });
+
+    const subRunCompleted: SubRunCompletedEvent = {
+      type: "sub-run-completed",
+      runId: parent.trace.runId,
+      at: "2026-04-30T00:00:00.000Z",
+      childRunId: child.trace.runId,
+      parentRunId: parent.trace.runId,
+      parentDecisionId: `${parent.trace.runId}:decision:1`,
+      subResult: child
+    };
+    const parentEvents: readonly RunEvent[] = [...parent.trace.events, subRunCompleted];
+    const parentResult: RunResult = {
+      ...parent,
+      trace: { ...parent.trace, events: parentEvents }
+    };
+
+    const roundTripped = JSON.parse(JSON.stringify(parentResult)) as RunResult;
+    const embedded = roundTripped.trace.events.find((event) => event.type === "sub-run-completed");
+
+    expect(embedded?.type).toBe("sub-run-completed");
+    if (embedded?.type !== "sub-run-completed") {
+      throw new Error("missing embedded sub-run-completed event");
+    }
+    expect(embedded.subResult.trace.events).toEqual(child.trace.events);
+    expect(embedded.subResult.accounting).toEqual(child.accounting);
+    expect(embedded.subResult.output).toBe(child.output);
+    expect(embedded.subResult.transcript).toEqual(child.transcript);
+    expect(embedded.parentRunId).toBe(parent.trace.runId);
+    expect(embedded.childRunId).toBe(child.trace.runId);
   });
 });
 
