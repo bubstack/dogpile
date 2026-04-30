@@ -49,7 +49,11 @@ requirements_total: 27
   3. Parent `accounting.costUsd`, `usage.inputTokens`, and `usage.outputTokens` equal the sum of parent's own provider calls plus all children's accounting, recursive across depth.
   4. Parent termination policies (`budget`, `convergence`, `judge`, `firstOf`) evaluate over parent-level events only; `minTurns`/`minRounds` floors apply per-protocol-instance and do not propagate into children.
 **Key files**: `src/runtime/coordinator.ts`, `src/runtime/engine.ts`, `src/runtime/cancellation.ts`, `src/runtime/termination.ts`, `src/runtime/defaults.ts`, `src/runtime/coordinator.test.ts`, `src/tests/cancellation-contract.test.ts`, `src/tests/budget-first-stop.test.ts`
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 02-01-PLAN.md — BUDGET-01 cancellation propagation (per-child AbortController, parent-aborted detail.reason, post-completion abort marker)
+- [ ] 02-02-PLAN.md — BUDGET-02 timeout/deadline propagation (parentDeadlineMs, sub-run-budget-clamped event, defaultSubRunTimeoutMs option, timeout detail.reason)
+- [ ] 02-03-PLAN.md — BUDGET-03 cost & token roll-up + replay parity (partialCost on sub-run-failed, parent-rollup-drift)
+- [ ] 02-04-PLAN.md — BUDGET-04 termination floors lock (parent-events isolation, per-instance minTurns/minRounds)
 
 ### Phase 3: Provider Locality & Bounded Concurrency
 **Goal**: Providers can declare `local` vs `remote`; coordinator runs delegated decisions in parallel up to a bound, auto-clamping to 1 when any local provider is in the active tree.
@@ -93,7 +97,7 @@ requirements_total: 27
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Delegate Decision & Sub-Run Traces | 0/5 | Planned | - |
-| 2. Budget, Cancellation, Cost Roll-Up | 0/0 | Not started | - |
+| 2. Budget, Cancellation, Cost Roll-Up | 0/4 | Planned | - |
 | 3. Provider Locality & Bounded Concurrency | 0/0 | Not started | - |
 | 4. Streaming & Child Error Escalation | 0/0 | Not started | - |
 | 5. Documentation & Changelog | 0/0 | Not started | - |
