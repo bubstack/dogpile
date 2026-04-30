@@ -1,11 +1,11 @@
 ---
 milestone: v0.4.0
 name: Recursive Coordination
-status: planning
+status: in-progress
 progress:
-  phases_completed: 0
+  phases_completed: 1
   phases_total: 5
-  requirements_completed: 0
+  requirements_completed: 8
   requirements_total: 27
 ---
 
@@ -19,18 +19,18 @@ progress:
 
 ## Current Position
 
-Phase: 1 — Delegate Decision & Sub-Run Traces (not started)
+Phase: 1 — Delegate Decision & Sub-Run Traces (complete)
 Plan: —
-Status: Roadmap drafted; awaiting user approval before plan-phase
-Last activity: 2026-04-30 — Roadmap created (5 phases, 27 requirements mapped)
+Status: Phase 1 shipped; ready for Phase 2 plan-phase
+Last activity: 2026-04-30 — Phase 1 executed (5 plans), `pnpm verify` green (489 tests)
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 0 / 5 |
-| Requirements complete | 0 / 27 |
-| Plans complete | 0 / 0 |
+| Phases complete | 1 / 5 |
+| Requirements complete | 8 / 27 |
+| Plans complete | 5 / 5 |
 
 ## Accumulated Context
 
@@ -39,10 +39,15 @@ Last activity: 2026-04-30 — Roadmap created (5 phases, 27 requirements mapped)
 - **Phase numbering starts at 1.** Project pre-dates GSD phase tracking; no prior `.planning/phases/` directory exists.
 - **5 phases, dependency-ordered.** DELEGATE+TRACE grouped (same surface), then BUDGET, then PROVIDER+CONCURRENCY (locality is prerequisite for clamp), then STREAM+ERROR, then DOCS last.
 - **Public-surface invariants must move together.** Every event/result/exports change updates `src/tests/event-schema.test.ts`, `src/tests/result-contract.test.ts`, `src/tests/package-exports.test.ts`, `package.json` `exports`/`files`, and `CHANGELOG.md`.
+- **Phase 1 — AgentDecision is a discriminated union.** `ParticipateAgentDecision | DelegateAgentDecision`, discriminated on `type`. Consumers must narrow on `decision.type === "participate"` before reading paper-style fields.
+- **Phase 1 — Sub-run events.** `RunEvent` union extended with `sub-run-started`, `sub-run-completed`, `sub-run-failed`. `sub-run-completed.subResult` carries the child `RunResult` inline. `recursive: true` flag on `sub-run-started` when both parent and child protocol are `coordinator` (D-16).
+- **Phase 1 — maxDepth dual gate.** Default 4; per-run can only LOWER the engine value (`effectiveMaxDepth = min(engine ?? 4, run ?? Infinity)`). Overflow throws `DogpileError({ code: "invalid-configuration", detail: { kind: "delegate-validation", reason: "depth-overflow" } })` at BOTH parse time AND dispatch time.
+- **Phase 1 — Replay walks trace verbatim.** `recomputeAccountingFromTrace` recurses into `sub-run-completed.subResult`; mismatch throws with `reason: "trace-accounting-mismatch"`. No child-event bubbling in Phase 1 (deferred to Phase 4 per D-09).
+- **Phase 1 — Provider inheritance.** Child sub-runs inherit the parent provider object verbatim (D-11); cost-cap not propagated; child timeoutMs default = `parent.deadline - now` (or undefined if parent uncapped, per planner-resolved Q3).
 
 ### Todos
 
-(empty — to be populated by plan-phase)
+(empty — Phase 2 not yet planned)
 
 ### Blockers
 
@@ -50,8 +55,8 @@ Last activity: 2026-04-30 — Roadmap created (5 phases, 27 requirements mapped)
 
 ## Session Continuity
 
-**Next action:** User reviews `.planning/ROADMAP.md`. On approval, run `/gsd-plan-phase 1` to decompose Phase 1 (Delegate Decision & Sub-Run Traces) into executable plans.
+**Next action:** Run `/gsd-plan-phase 2` to decompose Phase 2 (Budget, Cancellation, Cost Roll-Up) into executable plans.
 
 ---
 
-*Last updated: 2026-04-30 — roadmap drafted.*
+*Last updated: 2026-04-30 — Phase 1 complete; 8/27 requirements shipped; verify green.*

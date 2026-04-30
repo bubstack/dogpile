@@ -13,7 +13,7 @@ requirements_total: 27
 
 ## Phases
 
-- [ ] **Phase 1: Delegate Decision & Sub-Run Traces** — `delegate` decision on `coordinator`; embedded child traces; replay-without-re-execute; event-shape locks.
+- [x] **Phase 1: Delegate Decision & Sub-Run Traces** — `delegate` decision on `coordinator`; embedded child traces; replay-without-re-execute; event-shape locks.
 - [ ] **Phase 2: Budget, Cancellation, Cost Roll-Up** — Parent abort + timeout propagation; recursive cost/token roll-up; per-instance termination floors.
 - [ ] **Phase 3: Provider Locality & Bounded Concurrency** — `locality` field on `ConfiguredModelProvider`; OpenAI-compatible auto-detect; `maxConcurrentChildren` with local auto-clamp.
 - [ ] **Phase 4: Streaming & Child Error Escalation** — Child events wrapped on parent stream; cancel propagation; child failure surfaced through coordinator decision context.
@@ -33,11 +33,11 @@ requirements_total: 27
   5. `src/tests/event-schema.test.ts` and `src/tests/result-contract.test.ts` lock the new event variants and result-shape additions.
 **Key files**: `src/runtime/coordinator.ts`, `src/runtime/engine.ts`, `src/runtime/decisions.ts`, `src/runtime/validation.ts`, `src/runtime/defaults.ts`, `src/types.ts`, `src/tests/event-schema.test.ts`, `src/tests/result-contract.test.ts`, `src/runtime/coordinator.test.ts`
 **Plans**: 5 plans
-- [ ] 01-01-agent-decision-union-and-delegate-parsing-PLAN.md — discriminated AgentDecision union + fenced-JSON delegate parsing
-- [ ] 01-02-sub-run-event-types-and-transcript-role-PLAN.md — sub-run-* event types, RunEvent union, public-surface lock
-- [ ] 01-03-coordinator-delegate-dispatch-loop-PLAN.md — coordinator plan-turn delegate dispatch + sub-run event emission
-- [ ] 01-04-max-depth-option-and-overflow-validation-PLAN.md — maxDepth option + dual parse/dispatch overflow enforcement
-- [ ] 01-05-replay-recursion-and-accounting-recompute-PLAN.md — replay walks sub-runs, recomputes accounting, CHANGELOG entry
+- [x] 01-01-agent-decision-union-and-delegate-parsing-PLAN.md — discriminated AgentDecision union + fenced-JSON delegate parsing
+- [x] 01-02-sub-run-event-types-and-transcript-role-PLAN.md — sub-run-* event types, RunEvent union, public-surface lock
+- [x] 01-03-coordinator-delegate-dispatch-loop-PLAN.md — coordinator plan-turn delegate dispatch + sub-run event emission
+- [x] 01-04-max-depth-option-and-overflow-validation-PLAN.md — maxDepth option + dual parse/dispatch overflow enforcement
+- [x] 01-05-replay-recursion-and-accounting-recompute-PLAN.md — replay walks sub-runs, recomputes accounting, CHANGELOG entry
 
 ### Phase 2: Budget, Cancellation, Cost Roll-Up
 **Goal**: Parent abort, timeout, and cost accounting compose cleanly across the recursive tree; termination floors stay scoped per-protocol-instance.

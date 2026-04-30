@@ -10,17 +10,17 @@ REQ-ID format: `[CATEGORY]-[NN]`. Numbering restarts per milestone (no prior REQ
 
 ### DELEGATE — `delegate` decision shape on `coordinator`
 
-- [ ] **DELEGATE-01** — Coordinator agents can return decision `{ type: "delegate", protocol, intent, model?, budget? }` where `protocol ∈ { sequential, broadcast, shared, coordinator }`.
-- [ ] **DELEGATE-02** — Runtime executes a delegated decision as a full sub-run; sub-run `result` returns to the coordinator's next decision context. Defaults: child model = parent model if omitted; child budget = parent's remaining if omitted.
-- [ ] **DELEGATE-03** — Invalid `delegate` payload (unknown protocol, missing `intent`) throws `DogpileError({ code: "invalid-configuration", detail.path })`.
-- [ ] **DELEGATE-04** — Nesting works to depth `maxDepth` (default 4); exceeding it throws `DogpileError({ code: "invalid-configuration" })`.
+- [x] **DELEGATE-01** — Coordinator agents can return decision `{ type: "delegate", protocol, intent, model?, budget? }` where `protocol ∈ { sequential, broadcast, shared, coordinator }`.
+- [x] **DELEGATE-02** — Runtime executes a delegated decision as a full sub-run; sub-run `result` returns to the coordinator's next decision context. Defaults: child model = parent model if omitted; child budget = parent's remaining if omitted.
+- [x] **DELEGATE-03** — Invalid `delegate` payload (unknown protocol, missing `intent`) throws `DogpileError({ code: "invalid-configuration", detail.path })`.
+- [x] **DELEGATE-04** — Nesting works to depth `maxDepth` (default 4); exceeding it throws `DogpileError({ code: "invalid-configuration" })`.
 
 ### TRACE — sub-run events and replay
 
-- [ ] **TRACE-01** — Parent trace includes a `subRun.started` event (child `runId`, protocol, intent, parent decision id) when a delegated run begins.
-- [ ] **TRACE-02** — Parent trace includes a `subRun.completed` event with the child's full JSON-serializable trace inline (or `subRun.failed` with the child error).
-- [ ] **TRACE-03** — `Dogpile.replay(parentTrace)` replays embedded child traces without re-executing children; replayed parent returns identical `output`, `accounting`, and event sequence.
-- [ ] **TRACE-04** — `src/tests/event-schema.test.ts` and `src/tests/result-contract.test.ts` are updated to lock the new event shapes.
+- [x] **TRACE-01** — Parent trace includes a `subRun.started` event (child `runId`, protocol, intent, parent decision id) when a delegated run begins.
+- [x] **TRACE-02** — Parent trace includes a `subRun.completed` event with the child's full JSON-serializable trace inline (or `subRun.failed` with the child error).
+- [x] **TRACE-03** — `Dogpile.replay(parentTrace)` replays embedded child traces without re-executing children; replayed parent returns identical `output`, `accounting`, and event sequence.
+- [x] **TRACE-04** — `src/tests/event-schema.test.ts` and `src/tests/result-contract.test.ts` are updated to lock the new event shapes.
 
 ### BUDGET — cancellation, timeout, cost, floors
 
@@ -80,14 +80,14 @@ REQ-ID format: `[CATEGORY]-[NN]`. Numbering restarts per milestone (no prior REQ
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DELEGATE-01 | Phase 1 | Pending |
-| DELEGATE-02 | Phase 1 | Pending |
-| DELEGATE-03 | Phase 1 | Pending |
-| DELEGATE-04 | Phase 1 | Pending |
-| TRACE-01 | Phase 1 | Pending |
-| TRACE-02 | Phase 1 | Pending |
-| TRACE-03 | Phase 1 | Pending |
-| TRACE-04 | Phase 1 | Pending |
+| DELEGATE-01 | Phase 1 | Complete |
+| DELEGATE-02 | Phase 1 | Complete |
+| DELEGATE-03 | Phase 1 | Complete |
+| DELEGATE-04 | Phase 1 | Complete |
+| TRACE-01 | Phase 1 | Complete |
+| TRACE-02 | Phase 1 | Complete |
+| TRACE-03 | Phase 1 | Complete |
+| TRACE-04 | Phase 1 | Complete |
 | BUDGET-01 | Phase 2 | Pending |
 | BUDGET-02 | Phase 2 | Pending |
 | BUDGET-03 | Phase 2 | Pending |
