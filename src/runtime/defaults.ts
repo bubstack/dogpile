@@ -1,3 +1,4 @@
+import { DogpileError } from "../types.js";
 import type {
   AgentSpec,
   Budget,
@@ -19,6 +20,7 @@ import type {
   RunMetadata,
   RunUsage,
   Tier,
+  Trace,
   TranscriptEntry,
   TranscriptLink
 } from "../types.js";
@@ -537,6 +539,190 @@ export function canonicalizeRunResult(result: RunResult): RunResult {
 
 export function stableJsonStringify(value: unknown): string {
   return JSON.stringify(canonicalizeSerializable(value));
+}
+
+/**
+ * The eight numeric fields recursively verified by `recomputeAccountingFromTrace`.
+ *
+ * These are the only summable scalars on `RunAccounting`. Non-numeric fields
+ * (`kind`, `tier`, `budget`, `termination`, `budgetStateChanges`) and derived
+ * ratios (`usdCapUtilization`, `totalTokenCapUtilization`) are NOT in this set.
+ */
+const RECOMPUTE_FIELD_ORDER: readonly [
+  "cost.usd",
+  "cost.inputTokens",
+  "cost.outputTokens",
+  "cost.totalTokens",
+  "usage.usd",
+  "usage.inputTokens",
+  "usage.outputTokens",
+  "usage.totalTokens"
+] = [
+  "cost.usd",
+  "cost.inputTokens",
+  "cost.outputTokens",
+  "cost.totalTokens",
+  "usage.usd",
+  "usage.inputTokens",
+  "usage.outputTokens",
+  "usage.totalTokens"
+];
+
+const USD_FIELDS: ReadonlySet<string> = new Set(["cost.usd", "usage.usd"]);
+const FLOAT_EPSILON = 1e-9;
+
+function readNumericField(accounting: RunAccounting, field: (typeof RECOMPUTE_FIELD_ORDER)[number]): number {
+  switch (field) {
+    case "cost.usd":
+      return accounting.cost.usd;
+    case "cost.inputTokens":
+      return accounting.cost.inputTokens;
+    case "cost.outputTokens":
+      return accounting.cost.outputTokens;
+    case "cost.totalTokens":
+      return accounting.cost.totalTokens;
+    case "usage.usd":
+      return accounting.usage.usd;
+    case "usage.inputTokens":
+      return accounting.usage.inputTokens;
+    case "usage.outputTokens":
+      return accounting.usage.outputTokens;
+    case "usage.totalTokens":
+      return accounting.usage.totalTokens;
+  }
+}
+
+function fieldsEqual(field: (typeof RECOMPUTE_FIELD_ORDER)[number], a: number, b: number): boolean {
+  if (USD_FIELDS.has(field)) {
+    return Math.abs(a - b) < FLOAT_EPSILON;
+  }
+  return a === b;
+}
+
+function firstDifferingField(
+  recorded: RunAccounting,
+  recomputed: RunAccounting
+): { readonly field: (typeof RECOMPUTE_FIELD_ORDER)[number]; readonly recorded: number; readonly recomputed: number } | null {
+  for (const field of RECOMPUTE_FIELD_ORDER) {
+    const a = readNumericField(recorded, field);
+    const b = readNumericField(recomputed, field);
+    if (!fieldsEqual(field, a, b)) {
+      return { field, recorded: a, recomputed: b };
+    }
+  }
+  return null;
+}
+
+function buildLocalAccounting(trace: Trace): RunAccounting {
+  return createRunAccounting({
+    tier: trace.tier,
+    ...(trace.budget.caps ? { budget: trace.budget.caps } : {}),
+    ...(trace.budget.termination ? { termination: trace.budget.termination } : {}),
+    cost: trace.finalOutput.cost,
+    events: trace.events
+  });
+}
+
+function lastCostBearingEventCost(events: readonly RunEvent[]): CostSummary | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event === undefined) continue;
+    if (
+      event.type === "final" ||
+      event.type === "agent-turn" ||
+      event.type === "broadcast" ||
+      event.type === "budget-stop"
+    ) {
+      return event.cost;
+    }
+  }
+  return null;
+}
+
+/**
+ * Recompute a parent's `RunAccounting` from a saved `Trace` for replay-time
+ * tamper detection.
+ *
+ * @remarks
+ * Returns the parent's local `RunAccounting` (built the same way `replay()`
+ * builds it today, from `trace.finalOutput.cost` and `trace.events`). While
+ * walking events, every `sub-run-completed` is recursed into and the
+ * recomputed child accounting is compared field-by-field to the recorded
+ * `event.subResult.accounting`. A mismatch on any of the eight enumerated
+ * numeric fields throws `DogpileError({ code: "invalid-configuration" })`
+ * with `detail.reason: "trace-accounting-mismatch"` and a concrete
+ * `detail.field` identifying the first differing numeric.
+ *
+ * Pure: no provider calls, no I/O, no clock reads.
+ *
+ * Non-summed fields (`kind`, `tier`, `budget`, `termination`,
+ * `budgetStateChanges`) and derived ratios (`usdCapUtilization`,
+ * `totalTokenCapUtilization`) are not in the comparison set.
+ */
+export function recomputeAccountingFromTrace(trace: Trace): RunAccounting {
+  const local = buildLocalAccounting(trace);
+
+  // Parent-level integrity: the recorded `trace.finalOutput.cost` must match
+  // the cost on the last cost-bearing event. On a clean trace this holds by
+  // construction (every protocol writes `totalCost` into the final event).
+  // On a trace where `finalOutput.cost` was mutated without updating the
+  // events (or vice versa), this catches the drift.
+  const lastEventCost = lastCostBearingEventCost(trace.events);
+  if (lastEventCost !== null) {
+    const reconstructedFromEvents: RunAccounting = createRunAccounting({
+      tier: trace.tier,
+      ...(trace.budget.caps ? { budget: trace.budget.caps } : {}),
+      ...(trace.budget.termination ? { termination: trace.budget.termination } : {}),
+      cost: lastEventCost,
+      events: trace.events
+    });
+    const drift = firstDifferingField(local, reconstructedFromEvents);
+    if (drift !== null) {
+      throw new DogpileError({
+        code: "invalid-configuration",
+        message: `Trace accounting mismatch at parent run ${trace.runId}: field "${drift.field}" recorded ${drift.recorded}, recomputed ${drift.recomputed}.`,
+        retryable: false,
+        detail: {
+          kind: "trace-validation",
+          reason: "trace-accounting-mismatch",
+          eventIndex: -1,
+          childRunId: trace.runId,
+          field: drift.field,
+          recorded: drift.recorded,
+          recomputed: drift.recomputed
+        }
+      });
+    }
+  }
+
+  // Child-level integrity: recurse into every sub-run-completed and verify
+  // its recorded `subResult.accounting` matches what the child trace recomputes.
+  for (let eventIndex = 0; eventIndex < trace.events.length; eventIndex += 1) {
+    const event = trace.events[eventIndex];
+    if (event === undefined || event.type !== "sub-run-completed") continue;
+
+    const childRecomputed = recomputeAccountingFromTrace(event.subResult.trace);
+    const childRecorded = event.subResult.accounting;
+    const drift = firstDifferingField(childRecorded, childRecomputed);
+    if (drift !== null) {
+      throw new DogpileError({
+        code: "invalid-configuration",
+        message: `Trace accounting mismatch at sub-run ${event.childRunId}: field "${drift.field}" recorded ${drift.recorded}, recomputed ${drift.recomputed}.`,
+        retryable: false,
+        detail: {
+          kind: "trace-validation",
+          reason: "trace-accounting-mismatch",
+          eventIndex,
+          childRunId: event.childRunId,
+          field: drift.field,
+          recorded: drift.recorded,
+          recomputed: drift.recomputed
+        }
+      });
+    }
+  }
+
+  return local;
 }
 
 export function canonicalizeSerializable<T>(value: T): T {

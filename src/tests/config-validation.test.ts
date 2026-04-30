@@ -611,6 +611,7 @@ describe("maxDepth option", () => {
     const provider = createDelegateChainProvider("lower-ok-model");
     const engine = createEngine({
       ...validDogpileOptions,
+      tier: "fast",
       protocol: { kind: "coordinator", maxTurns: 2 },
       model: provider,
       agents: [
@@ -631,6 +632,7 @@ describe("maxDepth option", () => {
     const provider = createDelegateChainProvider("raise-clamped-model");
     const engine = createEngine({
       ...validDogpileOptions,
+      tier: "fast",
       protocol: { kind: "coordinator", maxTurns: 2 },
       model: provider,
       agents: [
