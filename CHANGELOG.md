@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased] — v0.4.0
+
+### Breaking
+
+- `AgentDecision` is now a discriminated union with required `type: "participate" | "delegate"`. Existing paper-style fields (`selectedRole`, `participation`, `rationale`, `contribution`) are preserved under the `participate` branch. Consumers must narrow on `decision.type === "participate"` before reading paper-style fields.
+
+### Added
+
+- Coordinator agents may emit `{ type: "delegate", protocol, intent, model?, budget? }` to dispatch a sub-mission as part of the plan turn. Phase 1 of v0.4.0 enables delegation from the coordinator's plan turn only; worker delegation and final-synthesis-turn delegation are rejected with `invalid-configuration`.
+- New `RunEvent` variants: `sub-run-started`, `sub-run-completed`, `sub-run-failed`. `sub-run-completed` carries the full child `RunResult` (including embedded `Trace`); `sub-run-failed` carries `error` and `partialTrace`. `sub-run-started` carries `{ childRunId, parentRunId, parentDecisionId, protocol, intent, depth }` plus `recursive: true` when the dispatching protocol and the delegated protocol are both `coordinator`.
+- Synthetic transcript entries record sub-run results with `agentId: "sub-run:<childRunId>"` and `role: "delegate-result"`. The next coordinator plan prompt receives a tagged `[sub-run <childRunId>]: <output>\n[sub-run <childRunId> stats]: turns=<N> costUsd=<X> durationMs=<Y>` block (D-17).
+- `maxDepth` option on `DogpileOptions` and `EngineOptions` (default `4`); `Engine.run` and `Engine.stream` accept an optional second-argument `RunCallOptions` that can only LOWER the engine ceiling — `effectiveMaxDepth = Math.min(engineMaxDepth, runOptions.maxDepth ?? Infinity)`. Depth overflow is enforced at both the parser (`parseDelegateDecision`) and the dispatcher (`dispatchDelegate`); both throw `invalid-configuration` with `detail.reason: "depth-overflow"` and `detail.path: "decision.protocol"`.
+- New public type `RunCallOptions` is re-exported through `@dogpile/sdk` and `@dogpile/sdk/types`.
+- Fenced-JSON delegate parsing convention added to `parseAgentDecision` (no new tool surface — delegate is a parser-level concern). Coordinator runs accept a `delegate:` prefix followed by a fenced ```json block.
+- `Dogpile.replay()` rehydrates embedded sub-run traces without provider invocation; the new `recomputeAccountingFromTrace` helper verifies recorded child `RunAccounting` against a per-child recompute and throws `invalid-configuration` with `detail.reason: "trace-accounting-mismatch"` and `detail.field` identifying the offending numeric field on tamper. The eight enumerated comparable numeric fields are `cost.usd`, `cost.inputTokens`, `cost.outputTokens`, `cost.totalTokens`, `usage.usd`, `usage.inputTokens`, `usage.outputTokens`, `usage.totalTokens`. Top-level parent drift is reported with `eventIndex: -1`; child drift is reported with the offending event's index plus `childRunId`.
+- New `ReplayTraceProtocolDecisionType` literals: `start-sub-run`, `complete-sub-run`, `fail-sub-run`.
+
+### Notes
+
+- No package `exports` / `files` change. All new public types ship through the existing `@dogpile/sdk` root entry. `recomputeAccountingFromTrace` and the depth-gate helpers (`assertDepthWithinLimit`, `depthOverflowError`) remain runtime-internal.
+- Phase 1 does not propagate cost caps, parent timeouts to children with no caller-set timeout, child-event bubbling into the parent stream, or worker-side delegation — those land in v0.4.0 Phases 2–4. Phase 1 leaves event ordering schema-stable for the future Phase 4 child-event-bubbling addition.
+
 ## 0.3.1
 
 - Prepared the patch release identity for `@dogpile/sdk@0.3.1` and `dogpile-sdk-0.3.1.tgz`.
