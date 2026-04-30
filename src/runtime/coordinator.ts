@@ -42,7 +42,7 @@ import {
   nextProviderCallId
 } from "./defaults.js";
 import { throwIfAborted } from "./cancellation.js";
-import { parseAgentDecision } from "./decisions.js";
+import { assertDepthWithinLimit, parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
 import { evaluateTerminationStop, warnOnProtocolTerminationMisconfiguration } from "./termination.js";
 import { createRuntimeToolExecutor, executeModelResponseToolRequests, runtimeToolAvailability } from "./tools.js";
@@ -545,7 +545,9 @@ async function runCoordinatorTurn(turn: CoordinatorTurnOptions): Promise<Coordin
     }
   });
   const decision = parseAgentDecision(response.text, {
-    parentProviderId: turn.options.model.id
+    parentProviderId: turn.options.model.id,
+    currentDepth: turn.options.currentDepth ?? 0,
+    maxDepth: turn.options.effectiveMaxDepth ?? Number.POSITIVE_INFINITY
   });
   const totalCost = addCost(turn.totalCost, responseCost(response));
   const toolCalls = await executeModelResponseToolRequests({
@@ -670,7 +672,9 @@ async function runCoordinatorWorkerTurn(turn: CoordinatorWorkerTurnOptions): Pro
     }
   });
   const decision = parseAgentDecision(response.text, {
-    parentProviderId: turn.options.model.id
+    parentProviderId: turn.options.model.id,
+    currentDepth: turn.options.currentDepth ?? 0,
+    maxDepth: turn.options.effectiveMaxDepth ?? Number.POSITIVE_INFINITY
   });
   if (decision?.type === "delegate") {
     throw new DogpileError({
@@ -782,6 +786,15 @@ interface DispatchDelegateResult {
  */
 async function dispatchDelegate(input: DispatchDelegateOptions): Promise<DispatchDelegateResult> {
   const { decision, options } = input;
+
+  // Dispatcher-time depth gate (D-14). Same error shape as the parser; this
+  // is the TOCTOU defense for any state mutation between parse and dispatch.
+  // Fires BEFORE sub-run-started is emitted so failed dispatches do not show
+  // up in the trace as half-started sub-runs.
+  if (options.effectiveMaxDepth !== undefined) {
+    assertDepthWithinLimit(input.parentDepth, options.effectiveMaxDepth);
+  }
+
   const childRunId = createRunId();
   const recursive = decision.protocol === "coordinator";
   const parentTimeoutMs = options.budget?.timeoutMs;

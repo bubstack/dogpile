@@ -170,7 +170,46 @@ function parseDelegateDecision(
     result.budget = parseDelegateBudget(record["budget"]);
   }
 
+  // Parse-time depth-overflow check (D-14). The dispatcher re-checks at
+  // dispatch time as a TOCTOU defense — see assertDepthWithinLimit.
+  if (context.currentDepth !== undefined && context.maxDepth !== undefined) {
+    if (context.currentDepth + 1 > context.maxDepth) {
+      throw depthOverflowError(context.currentDepth, context.maxDepth);
+    }
+  }
+
   return result;
+}
+
+/**
+ * Build the canonical depth-overflow `DogpileError`. Used by the parser (this
+ * file) and the coordinator dispatcher; kept here so both call sites produce
+ * the exact same error shape (D-14, D-15).
+ */
+export function depthOverflowError(currentDepth: number, maxDepth: number): DogpileError {
+  return new DogpileError({
+    code: "invalid-configuration",
+    message: `Depth overflow: cannot dispatch sub-run at depth ${currentDepth + 1} (maxDepth = ${maxDepth}).`,
+    retryable: false,
+    detail: {
+      kind: "delegate-validation",
+      path: "decision.protocol",
+      reason: "depth-overflow",
+      currentDepth,
+      maxDepth
+    }
+  });
+}
+
+/**
+ * Dispatcher-time depth gate. Throws the same error shape the parser uses; the
+ * dual gate (parser + dispatcher) defends against any TOCTOU window between
+ * decision parsing and child-run spin-up (D-14).
+ */
+export function assertDepthWithinLimit(currentDepth: number, maxDepth: number): void {
+  if (currentDepth + 1 > maxDepth) {
+    throw depthOverflowError(currentDepth, maxDepth);
+  }
 }
 
 function parseDelegateBudget(raw: unknown): BudgetCaps {

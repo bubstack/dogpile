@@ -2,12 +2,14 @@ import type { LanguageModel } from "ai";
 import { describe, expect, it } from "vitest";
 import { createEngine, createRuntimeToolExecutor, DogpileError, run, stream } from "../index.js";
 import { createVercelAIProvider } from "../internal/vercel-ai.js";
+import { assertDepthWithinLimit } from "../runtime/decisions.js";
 import type {
   ConfiguredModelProvider,
   DogpileOptions,
   EngineOptions,
   JsonObject,
   JsonValue,
+  ModelRequest,
   ModelResponse,
   RuntimeTool,
   RuntimeToolExecutionContext
@@ -559,6 +561,205 @@ describe("caller configuration validation", () => {
     ).not.toThrow();
   });
 });
+
+describe("maxDepth option", () => {
+  it("rejects negative maxDepth on createEngine with invalid-configuration at path maxDepth", () => {
+    expectInvalidConfiguration(
+      () =>
+        createEngine({
+          ...validDogpileOptions,
+          maxDepth: -1
+        } as EngineOptions),
+      "maxDepth"
+    );
+  });
+
+  it("rejects non-integer maxDepth", () => {
+    expectInvalidConfiguration(
+      () =>
+        createEngine({
+          ...validDogpileOptions,
+          maxDepth: 1.5
+        } as EngineOptions),
+      "maxDepth"
+    );
+  });
+
+  it("rejects non-number maxDepth", () => {
+    expectInvalidConfiguration(
+      () =>
+        createEngine({
+          ...validDogpileOptions,
+          maxDepth: "4" as unknown as number
+        } as EngineOptions),
+      "maxDepth"
+    );
+  });
+
+  it("rejects negative maxDepth on Dogpile.run at the high-level surface", () => {
+    expectInvalidConfiguration(
+      () =>
+        run({
+          ...validDogpileOptions,
+          maxDepth: -1
+        }),
+      "maxDepth"
+    );
+  });
+
+  it("uses engine value when per-run maxDepth lowers the ceiling (engine 4, run 2 -> effective 2)", async () => {
+    const provider = createDelegateChainProvider("lower-ok-model");
+    const engine = createEngine({
+      ...validDogpileOptions,
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxDepth: 4
+    });
+
+    // Per-run lowers to 2 — second-level dispatch must throw at depth 2 -> 3.
+    await expect(engine.run("Run a chain.", { maxDepth: 2 })).rejects.toMatchObject({
+      code: "invalid-configuration",
+      detail: { kind: "delegate-validation", reason: "depth-overflow", maxDepth: 2 }
+    });
+  });
+
+  it("clamps per-run maxDepth that tries to raise the engine ceiling (engine 2, run 5 -> effective 2)", async () => {
+    const provider = createDelegateChainProvider("raise-clamped-model");
+    const engine = createEngine({
+      ...validDogpileOptions,
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxDepth: 2
+    });
+
+    // Per-run claims 5, but engine ceiling 2 wins — overflow at depth 2 -> 3.
+    await expect(engine.run("Run a chain.", { maxDepth: 5 })).rejects.toMatchObject({
+      code: "invalid-configuration",
+      detail: { kind: "delegate-validation", reason: "depth-overflow", maxDepth: 2 }
+    });
+  });
+
+  it("end-to-end depth 1 throws when coordinator at depth 1 tries to delegate again", async () => {
+    const provider = createDelegateChainProvider("end-to-end-depth-1-model");
+
+    await expect(
+      run({
+        ...validDogpileOptions,
+        intent: "Recurse once.",
+        protocol: { kind: "coordinator", maxTurns: 2 },
+        model: provider,
+        agents: [
+          { id: "lead", role: "coordinator" },
+          { id: "worker-a", role: "worker" }
+        ],
+        maxDepth: 1
+      })
+    ).rejects.toMatchObject({
+      code: "invalid-configuration",
+      detail: {
+        kind: "delegate-validation",
+        path: "decision.protocol",
+        reason: "depth-overflow",
+        currentDepth: 1,
+        maxDepth: 1
+      }
+    });
+  });
+
+  it("default maxDepth = 4: 4 nested coordinator delegates succeed; the 5th throws", async () => {
+    const provider = createDelegateChainProvider("default-depth-4-model");
+
+    await expect(
+      run({
+        ...validDogpileOptions,
+        intent: "Recurse to the default cap.",
+        protocol: { kind: "coordinator", maxTurns: 2 },
+        model: provider,
+        agents: [
+          { id: "lead", role: "coordinator" },
+          { id: "worker-a", role: "worker" }
+        ]
+        // no maxDepth — should default to 4
+      })
+    ).rejects.toMatchObject({
+      code: "invalid-configuration",
+      detail: {
+        kind: "delegate-validation",
+        reason: "depth-overflow",
+        currentDepth: 4,
+        maxDepth: 4
+      }
+    });
+  });
+
+  // Behavioral dual-gate test (D-14 TOCTOU defense). Drives the extracted
+  // assertDepthWithinLimit helper directly so a regression in the dispatcher
+  // call site (or the parser call site) is detected by this test rather than
+  // by `grep`.
+  it("assertDepthWithinLimit throws depth-overflow when currentDepth + 1 > maxDepth", () => {
+    let thrown: unknown;
+    try {
+      assertDepthWithinLimit(2, 2);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(DogpileError.isInstance(thrown)).toBe(true);
+    if (!DogpileError.isInstance(thrown)) throw new Error("expected DogpileError");
+    expect(thrown.code).toBe("invalid-configuration");
+    expect(thrown.detail).toMatchObject({
+      kind: "delegate-validation",
+      path: "decision.protocol",
+      reason: "depth-overflow",
+      currentDepth: 2,
+      maxDepth: 2
+    });
+  });
+
+  it("assertDepthWithinLimit accepts currentDepth + 1 <= maxDepth (boundary)", () => {
+    expect(() => assertDepthWithinLimit(0, 1)).not.toThrow();
+    expect(() => assertDepthWithinLimit(3, 4)).not.toThrow();
+  });
+});
+
+/**
+ * Coordinator provider that always returns a delegate-to-coordinator decision
+ * on the plan turn, producing a chain of nested sub-runs until the depth gate
+ * trips. Worker and final-synthesis turns return safe text.
+ */
+function createDelegateChainProvider(id: string): ConfiguredModelProvider {
+  return {
+    id,
+    async generate(request: ModelRequest): Promise<ModelResponse> {
+      const phase = String(request.metadata.phase);
+      if (phase === "plan") {
+        return {
+          text: [
+            "delegate:",
+            "```json",
+            JSON.stringify({ protocol: "coordinator", intent: "go deeper" }),
+            "```",
+            ""
+          ].join("\n"),
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          costUsd: 0
+        };
+      }
+      return {
+        text: phase === "worker" ? "worker output" : "final output",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        costUsd: 0
+      };
+    }
+  };
+}
 
 function optionsWith(overrides: Record<string, unknown>): DogpileOptions {
   return {
