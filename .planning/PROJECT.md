@@ -8,6 +8,20 @@ A strict, provider-neutral TypeScript SDK that runs one mission through a multi-
 
 Coordinated, observable, replayable multi-agent runs with a strict boundary: Dogpile owns the coordination loop; the application owns credentials, pricing, storage, queues, UI, and tool side effects.
 
+## Current Milestone: v0.4.0 Recursive Coordination
+
+**Goal:** Let a `coordinator` run dispatch whole sub-missions (`sequential`, `broadcast`, `shared`, or another `coordinator`) as first-class agent decisions, with traces, costs, cancellation, and concurrency that compose cleanly. Agent-driven nesting only — caller-defined trees (`Dogpile.nest`) are deferred.
+
+**Target features:**
+- `delegate` decision on `coordinator` (no new protocol value)
+- Inline child traces; `replay()` replays embedded children
+- Budget / cancel / cost propagation parent → children
+- Bounded child concurrency with local-model auto-clamp
+- Provider `locality` hint (`local | remote`)
+- Streaming demux via wrapped child `runId`
+- Child error escalation through coordinator decision context
+- Docs page, example, README row
+
 ## Requirements
 
 ### Validated
@@ -34,9 +48,16 @@ Coordinated, observable, replayable multi-agent runs with a strict boundary: Dog
 
 ### Active
 
-<!-- Filled by the next /gsd-new-milestone run. -->
+<!-- Milestone v0.4.0: Recursive Coordination. See REQUIREMENTS.md for full REQ-IDs. -->
 
-(None — define via `/gsd-new-milestone`)
+- [ ] `delegate` decision on `coordinator` — agent-driven nesting, four-protocol list unchanged
+- [ ] Inline child traces with replay-embedded semantics
+- [ ] Parent → children propagation: abort, timeout ceiling + remaining budget, cost roll-up; floors stay per-instance
+- [ ] Bounded child concurrency (`maxConcurrentChildren`, default 4)
+- [ ] Provider `locality` hint; auto-clamp to concurrency 1 when local detected
+- [ ] Child events bubbled into parent stream (wrapped with child `runId`)
+- [ ] Child error escalation through coordinator decision context
+- [ ] `docs/recursive-coordination.md` + `examples/` entry + README row
 
 ### Out of Scope
 
@@ -87,5 +108,22 @@ Coordinated, observable, replayable multi-agent runs with a strict boundary: Dog
 | `costUsd` driven by caller-supplied `costEstimator`; no bundled pricing | SDK avoids stale pricing tables; caller owns vendor pricing | ✓ Good |
 | Deterministic paper-reproduction benchmark without making a perf claim | Allows protocol-loop baseline comparisons without overpromising | ✓ Good |
 
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
 ---
-*Last updated: 2026-04-30 after bootstrap from CLAUDE.md / README.md / CHANGELOG.md (no prior PROJECT.md).*
+*Last updated: 2026-04-30 after milestone v0.4.0 (Recursive Coordination) defined.*
