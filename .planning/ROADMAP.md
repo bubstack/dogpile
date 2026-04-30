@@ -32,7 +32,12 @@ requirements_total: 27
   4. `Dogpile.replay(parentTrace)` produces identical `output`, `accounting`, and event sequence to the original run without invoking any provider, including for nested children.
   5. `src/tests/event-schema.test.ts` and `src/tests/result-contract.test.ts` lock the new event variants and result-shape additions.
 **Key files**: `src/runtime/coordinator.ts`, `src/runtime/engine.ts`, `src/runtime/decisions.ts`, `src/runtime/validation.ts`, `src/runtime/defaults.ts`, `src/types.ts`, `src/tests/event-schema.test.ts`, `src/tests/result-contract.test.ts`, `src/runtime/coordinator.test.ts`
-**Plans**: TBD
+**Plans**: 5 plans
+- [ ] 01-01-agent-decision-union-and-delegate-parsing-PLAN.md — discriminated AgentDecision union + fenced-JSON delegate parsing
+- [ ] 01-02-sub-run-event-types-and-transcript-role-PLAN.md — sub-run-* event types, RunEvent union, public-surface lock
+- [ ] 01-03-coordinator-delegate-dispatch-loop-PLAN.md — coordinator plan-turn delegate dispatch + sub-run event emission
+- [ ] 01-04-max-depth-option-and-overflow-validation-PLAN.md — maxDepth option + dual parse/dispatch overflow enforcement
+- [ ] 01-05-replay-recursion-and-accounting-recompute-PLAN.md — replay walks sub-runs, recomputes accounting, CHANGELOG entry
 
 ### Phase 2: Budget, Cancellation, Cost Roll-Up
 **Goal**: Parent abort, timeout, and cost accounting compose cleanly across the recursive tree; termination floors stay scoped per-protocol-instance.
@@ -87,7 +92,7 @@ requirements_total: 27
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Delegate Decision & Sub-Run Traces | 0/0 | Not started | - |
+| 1. Delegate Decision & Sub-Run Traces | 0/5 | Planned | - |
 | 2. Budget, Cancellation, Cost Roll-Up | 0/0 | Not started | - |
 | 3. Provider Locality & Bounded Concurrency | 0/0 | Not started | - |
 | 4. Streaming & Child Error Escalation | 0/0 | Not started | - |
