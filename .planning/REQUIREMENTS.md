@@ -78,8 +78,38 @@ REQ-ID format: `[CATEGORY]-[NN]`. Numbering restarts per milestone (no prior REQ
 
 ## Traceability
 
-(Filled by roadmap step.)
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| DELEGATE-01 | Phase 1 | Pending |
+| DELEGATE-02 | Phase 1 | Pending |
+| DELEGATE-03 | Phase 1 | Pending |
+| DELEGATE-04 | Phase 1 | Pending |
+| TRACE-01 | Phase 1 | Pending |
+| TRACE-02 | Phase 1 | Pending |
+| TRACE-03 | Phase 1 | Pending |
+| TRACE-04 | Phase 1 | Pending |
+| BUDGET-01 | Phase 2 | Pending |
+| BUDGET-02 | Phase 2 | Pending |
+| BUDGET-03 | Phase 2 | Pending |
+| BUDGET-04 | Phase 2 | Pending |
+| PROVIDER-01 | Phase 3 | Pending |
+| PROVIDER-02 | Phase 3 | Pending |
+| PROVIDER-03 | Phase 3 | Pending |
+| CONCURRENCY-01 | Phase 3 | Pending |
+| CONCURRENCY-02 | Phase 3 | Pending |
+| STREAM-01 | Phase 4 | Pending |
+| STREAM-02 | Phase 4 | Pending |
+| STREAM-03 | Phase 4 | Pending |
+| ERROR-01 | Phase 4 | Pending |
+| ERROR-02 | Phase 4 | Pending |
+| ERROR-03 | Phase 4 | Pending |
+| DOCS-01 | Phase 5 | Pending |
+| DOCS-02 | Phase 5 | Pending |
+| DOCS-03 | Phase 5 | Pending |
+| DOCS-04 | Phase 5 | Pending |
+
+**Coverage:** 27/27 mapped, no orphans, no duplicates.
 
 ---
 
-*Last updated: 2026-04-30 — milestone v0.4.0 requirements drafted.*
+*Last updated: 2026-04-30 — traceability filled by roadmap step.*
