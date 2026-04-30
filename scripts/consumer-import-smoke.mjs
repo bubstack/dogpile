@@ -778,12 +778,14 @@ const sharedProtocol: SharedProtocolConfig = {
   organizationalMemory: "prior organizational memory"
 };
 const agentDecision: AgentDecision = {
+  type: "participate",
   selectedRole: "consumer smoke reviewer",
   participation: "contribute",
   rationale: "The public package should expose structured agent decisions.",
   contribution: "Verify AgentDecision resolves from the package root."
 };
-const participation: AgentParticipation = agentDecision.participation;
+const participation: AgentParticipation =
+  agentDecision.type === "participate" ? agentDecision.participation : "abstain";
 const agentDecisionFromTypesSubpath: TypesAgentDecision = agentDecision;
 const primitiveFromTypesSubpath: JsonPrimitive = "consumer-type-resolution";
 const options: DogpileOptions = {
@@ -871,6 +873,9 @@ function recordEvent(event: RunEvent): string {
     case "tool-call":
     case "tool-result":
     case "budget-stop":
+    case "sub-run-started":
+    case "sub-run-completed":
+    case "sub-run-failed":
     case "final":
       return event.type;
   }
@@ -912,6 +917,8 @@ export async function consumerTypeResolutionSmoke(): Promise<Trace> {
     primitiveFromTypesSubpath !== "consumer-type-resolution" ||
     sharedProtocol.organizationalMemory !== "prior organizational memory" ||
     participation !== "contribute" ||
+    agentDecision.type !== "participate" ||
+    agentDecisionFromTypesSubpath.type !== "participate" ||
     agentDecisionFromTypesSubpath.selectedRole !== agentDecision.selectedRole ||
     usage.totalTokens !== 2 ||
     fastTemperature < 0 ||
