@@ -45,6 +45,7 @@ The package also exposes runtime subpath exports (`@dogpile/sdk/runtime/*`, `/ty
 - **ESM with explicit `.js` extensions** in relative imports (TS resolves through `.js` even though source is `.ts`).
 - **Strict TS:** `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess` are on. Prefer `readonly` where existing APIs already do.
 - **Replayable trace contract:** completed runs return JSON-serializable traces (inputs, events, provider calls, transcript, accounting, output) that round-trip through `replay()`. Event-shape changes are public-API changes — update `src/tests/event-schema.test.ts`, `src/tests/result-contract.test.ts`, and the changelog.
+- **Recursive coordination public-surface mirror.** The `delegate` decision variant, `sub-run-*` event family, `RunCallOptions`, `parentRunIds` stream chain, `locality`, `maxConcurrentChildren`, and `maxDepth` are public surface. Changes propagate to `src/tests/event-schema.test.ts`, `src/tests/result-contract.test.ts`, `src/tests/package-exports.test.ts`, `package.json` `exports`/`files`, `CHANGELOG.md`, AND the two recursive-coordination doc pages (`docs/recursive-coordination.md` + `docs/recursive-coordination-reference.md`).
 - **Provider neutrality:** never assume an SDK or pricing table beyond `ConfiguredModelProvider`. The OpenAI-compatible adapter is the reference implementation, not a privileged path.
 
 ### Tests
