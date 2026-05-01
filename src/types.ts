@@ -884,6 +884,8 @@ export interface ModelOutputChunk {
 export interface ConfiguredModelProvider {
   /** Stable provider id recorded in traces. */
   readonly id: string;
+  /** Optional resolved model identifier. When set, provenance events carry this value; when absent, the SDK falls back to `id`. */
+  readonly modelId?: string;
   /** Generate a response for one protocol-managed model request. */
   generate(request: ModelRequest): Promise<ModelResponse>;
   /**

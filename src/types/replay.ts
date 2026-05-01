@@ -181,6 +181,8 @@ export interface ReplayTraceProviderCall {
   readonly callId: string;
   /** Configured model provider id. */
   readonly providerId: string;
+  /** Resolved model identifier (same fallback as provenance events). */
+  readonly modelId: string;
   /** ISO-8601 timestamp before the provider call started. */
   readonly startedAt: string;
   /** ISO-8601 timestamp after the provider call completed. */
