@@ -14,7 +14,7 @@ Coordinated, observable, replayable multi-agent runs with a strict boundary: Dog
 
 **Latest shipped milestone:** v0.4.0 Recursive Coordination.
 
-Dogpile now supports agent-driven recursive coordination and the first v0.5 observability slice. A `coordinator` agent can return a `delegate` decision that runs a real child mission, embeds the child trace, rolls up accounting, propagates abort/timeout budget ceilings, streams child events with ancestry, and surfaces child failures back into coordinator decision context. Phase 6 also added live model request/response provenance events, replay/replayStream provenance parity, and the `@dogpile/sdk/runtime/provenance` helper.
+Dogpile now supports agent-driven recursive coordination and the first v0.5 observability slices. A `coordinator` agent can return a `delegate` decision that runs a real child mission, embeds the child trace, rolls up accounting, propagates abort/timeout budget ceilings, streams child events with ancestry, and surfaces child failures back into coordinator decision context. Phase 6 added live model request/response provenance events, replay/replayStream provenance parity, and the `@dogpile/sdk/runtime/provenance` helper. Phase 7 added typed completed-trace event introspection, required `RunResult.health`, deterministic replay health parity, and the `@dogpile/sdk/runtime/introspection` and `@dogpile/sdk/runtime/health` helpers.
 
 **Validated v0.4.0 features:**
 - `delegate` decision on `coordinator` (no new protocol value)
@@ -27,6 +27,8 @@ Dogpile now supports agent-driven recursive coordination and the first v0.5 obse
 - Docs page, example, README row
 - Provenance annotations on model request/response events
 - Replay and replayStream provenance stability
+- Typed event introspection through `queryEvents(events, filter)`
+- Required `RunResult.health` summaries with deterministic replay parity
 
 ## Current Milestone: v0.5.0 Observability and Auditability
 
@@ -70,6 +72,8 @@ Dogpile now supports agent-driven recursive coordination and the first v0.5 obse
 - ✓ **Recursive coordination documentation and release artifacts** — concept docs, exhaustive reference, runnable example, README/examples links, changelog, GitHub Release, and npm package. — v0.4.0
 - ✓ **Model-call provenance annotations** — `model-request` / `model-response` events carry `modelId`, `providerId`, `callId`, and ISO timestamps; `replay()` / `replayStream()` preserve or synthesize provenance from provider calls. — Phase 6, v0.5.0
 - ✓ **Runtime provenance helper** — `@dogpile/sdk/runtime/provenance` exports `getProvenance()`, `ProvenanceRecord`, and `PartialProvenanceRecord`, backed by frozen shape fixtures and package export tests. — Phase 6, v0.5.0
+- ✓ **Structured event introspection** — `@dogpile/sdk/runtime/introspection` exports `queryEvents()` and `EventQueryFilter`; filters compose by event type, agent id, global turn range, and cost range while preserving discriminant narrowing. — Phase 7, v0.5.0
+- ✓ **Health diagnostics** — every `RunResult` includes required `health: RunHealthSummary`; `computeHealth()` is available through `@dogpile/sdk/runtime/health`, replay recomputes health deterministically, and anomaly shape is guarded by a frozen fixture. — Phase 7, v0.5.0
 
 ### Active
 
@@ -146,4 +150,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-01 — Phase 6 Provenance Annotations complete and verified.*
+*Last updated: 2026-05-01 — Phase 7 Structured Event Introspection + Health Diagnostics complete and verified.*
