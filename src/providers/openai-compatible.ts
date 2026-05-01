@@ -409,14 +409,17 @@ function responseMetadata(response: OpenAICompatibleChatCompletionResponse): Jso
 }
 
 function createProviderError(response: Response, payload: unknown, providerId: string): DogpileError {
+  const code = codeForStatus(response.status);
+  const timeoutSource = code === "provider-timeout" ? { source: "provider" as const } : {};
   return new DogpileError({
-    code: codeForStatus(response.status),
+    code,
     message: providerResponseErrorMessage(response, payload),
     retryable: response.status === 408 || response.status === 429 || response.status >= 500,
     providerId,
     detail: removeUndefined({
       statusCode: response.status,
       statusText: response.statusText,
+      ...timeoutSource,
       response: isJsonValue(payload) ? payload : undefined
     })
   });

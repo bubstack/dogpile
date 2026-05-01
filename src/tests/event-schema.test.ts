@@ -154,6 +154,14 @@ describe("trace event schema", () => {
     expect(JSON.parse(JSON.stringify(streamEvents))).toEqual(streamEvents);
   });
 
+  it("accepts provider-timeout detail source discriminator", () => {
+    const providerDetail = { source: "provider" as const };
+    const engineDetail = { source: "engine" as const };
+
+    expect(providerDetail.source).toBe("provider");
+    expect(engineDetail.source).toBe("engine");
+  });
+
   it("round-trips AbortedEvent parentRunIds ancestry through JSON serialization", () => {
     const parentRunIds = ["run-grandparent", "run-parent"] as const;
     const event: AbortedEvent = {

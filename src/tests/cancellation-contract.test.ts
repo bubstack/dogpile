@@ -5,10 +5,12 @@ import {
   type ModelRequest,
   type ModelResponse,
   type RunEvent,
+  createOpenAICompatibleProvider,
   run,
   stream,
   type StreamEvent
 } from "../index.js";
+import { classifyChildTimeoutSource } from "../runtime/cancellation.js";
 import {
   createVercelAIProvider,
   type VercelAIGenerateTextFunction,
@@ -29,6 +31,85 @@ function delegateBlock(payload: unknown): string {
 }
 
 describe("caller cancellation contract", () => {
+  it("provider HTTP timeout surfaces provider-timeout source provider", async () => {
+    const provider = createOpenAICompatibleProvider({
+      id: "openai-compatible-provider-timeout-source",
+      model: "test-model",
+      apiKey: "test-key",
+      fetch: async () =>
+        new Response(JSON.stringify({ error: { message: "gateway timed out" } }), {
+          status: 504,
+          statusText: "Gateway Timeout"
+        })
+    });
+
+    await expect(run({
+      intent: "Verify provider timeout source provider.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: provider,
+      agents: [{ id: "writer", role: "writer" }]
+    })).rejects.toMatchObject({
+      code: "provider-timeout",
+      detail: {
+        source: "provider",
+        statusCode: 504
+      }
+    });
+  });
+
+  it("provider timeout source engine is set when a child engine deadline expires", async () => {
+    let planCalls = 0;
+    const provider: ConfiguredModelProvider = {
+      id: "child-engine-deadline-source",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        if (request.metadata?.phase === "plan") {
+          planCalls += 1;
+          return {
+            text: planCalls === 1
+              ? delegateBlock({ protocol: "sequential", intent: "wait past child deadline" })
+              : participateOutput
+          };
+        }
+        await waitForAbort(request.signal ?? new AbortController().signal);
+        throw request.signal?.reason;
+      }
+    };
+
+    await expect(run({
+      intent: "Verify child engine deadline timeout source.",
+      protocol: { kind: "coordinator", maxTurns: 1 },
+      tier: "fast",
+      model: provider,
+      agents: [{ id: "lead", role: "coordinator" }],
+      defaultSubRunTimeoutMs: 1
+    })).rejects.toMatchObject({
+      code: "provider-timeout",
+      detail: {
+        source: "engine",
+        timeoutMs: 1
+      }
+    });
+  });
+
+  it("provider timeout source absence remains backwards-compatible as provider", () => {
+    const legacyDetail: { readonly source?: "provider" | "engine" } = {};
+    expect(legacyDetail.source ?? "provider").toBe("provider");
+  });
+
+  it("classifyChildTimeoutSource classifies provider and engine timeout sources", () => {
+    expect(classifyChildTimeoutSource(undefined, { isProviderError: true })).toBe("provider");
+    expect(classifyChildTimeoutSource(undefined, {
+      engineDefaultTimeoutMs: 5,
+      isProviderError: false
+    })).toBe("engine");
+    expect(classifyChildTimeoutSource(undefined, {
+      decisionTimeoutMs: 5,
+      isProviderError: false
+    })).toBe("engine");
+    expect(classifyChildTimeoutSource(undefined, { isProviderError: false })).toBe("provider");
+  });
+
   it("emits subRun.concurrencyClamped once with reason 'local-provider-detected' when a local provider is in the active tree (D-12)", async () => {
     let planIndex = 0;
     const provider: ConfiguredModelProvider = {

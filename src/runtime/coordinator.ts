@@ -46,7 +46,13 @@ import {
   lastCostBearingEventCost,
   nextProviderCallId
 } from "./defaults.js";
-import { classifyAbortReason, createAbortErrorFromSignal, throwIfAborted } from "./cancellation.js";
+import {
+  classifyAbortReason,
+  classifyChildTimeoutSource,
+  createAbortErrorFromSignal,
+  createEngineDeadlineTimeoutError,
+  throwIfAborted
+} from "./cancellation.js";
 import { assertDepthWithinLimit, parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
 import { evaluateTerminationStop, warnOnProtocolTerminationMisconfiguration } from "./termination.js";
@@ -1374,6 +1380,16 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
   input.dispatchedChild.removeParentListener = removeParentAbortListener;
   input.dispatchedChild.started = true;
   input.dispatchedChild.childTimeoutMs = childTimeoutMs;
+  const childDeadlineReason =
+    childTimeoutMs !== undefined && parentDeadlineMs === undefined
+      ? createEngineDeadlineTimeoutError(options.model.id, childTimeoutMs)
+      : undefined;
+  const childDeadlineTimer =
+    childDeadlineReason !== undefined
+      ? setTimeout(() => {
+        input.dispatchedChild.controller.abort(childDeadlineReason);
+      }, childTimeoutMs)
+      : undefined;
 
   const childOptions = {
     intent: decision.intent,
@@ -1405,6 +1421,9 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
   try {
     subResult = await options.runProtocol(childOptions);
   } catch (error) {
+    if (childDeadlineTimer !== undefined) {
+      clearTimeout(childDeadlineTimer);
+    }
     removeParentAbortListener?.();
     if (input.dispatchedChild.closed) {
       const enrichedError = enrichAbortErrorWithParentReason(error, parentSignal);
@@ -1442,9 +1461,17 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     // detail.status; we add detail.reason so consumers can discriminate
     // parent-aborted vs timeout regardless of which engine path produced the
     // abort error.
-    const enrichedError = enrichAbortErrorWithParentReason(error, parentSignal);
-    if (DogpileError.isInstance(error)) {
-      options.failureInstancesByChildRunId?.set(childRunId, error);
+    const enrichedError = enrichProviderTimeoutSource(
+      enrichAbortErrorWithParentReason(error, parentSignal),
+      {
+        ...(decisionTimeoutMs !== undefined ? { decisionTimeoutMs } : {}),
+        ...(options.defaultSubRunTimeoutMs !== undefined
+          ? { engineDefaultTimeoutMs: options.defaultSubRunTimeoutMs }
+          : {})
+      }
+    );
+    if (DogpileError.isInstance(enrichedError)) {
+      options.failureInstancesByChildRunId?.set(childRunId, enrichedError);
     }
     const errorPayload = errorPayloadFromUnknown(enrichedError, failedDecision);
     // BUDGET-03 / D-02: capture real provider spend before the throw and
@@ -1484,6 +1511,9 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     });
   }
 
+  if (childDeadlineTimer !== undefined) {
+    clearTimeout(childDeadlineTimer);
+  }
   removeParentAbortListener?.();
 
   // BUDGET-03 / D-01: roll child's full cost into the parent's totalCost
@@ -1671,6 +1701,34 @@ function enrichAbortErrorWithParentReason(error: unknown, parentSignal: AbortSig
     retryable: error.retryable ?? false,
     ...(error.providerId !== undefined ? { providerId: error.providerId } : {}),
     detail: { ...existingDetail, reason },
+    ...(error.cause !== undefined ? { cause: error.cause } : {})
+  });
+}
+
+function enrichProviderTimeoutSource(
+  error: unknown,
+  context: {
+    readonly decisionTimeoutMs?: number;
+    readonly engineDefaultTimeoutMs?: number;
+  }
+): unknown {
+  if (!DogpileError.isInstance(error) || error.code !== "provider-timeout") {
+    return error;
+  }
+  const existingDetail = error.detail ?? {};
+  if (existingDetail["source"] !== undefined) {
+    return error;
+  }
+  const source = classifyChildTimeoutSource(error, {
+    ...context,
+    isProviderError: true
+  });
+  return new DogpileError({
+    code: "provider-timeout",
+    message: error.message,
+    retryable: error.retryable ?? true,
+    ...(error.providerId !== undefined ? { providerId: error.providerId } : {}),
+    detail: { ...existingDetail, source },
     ...(error.cause !== undefined ? { cause: error.cause } : {})
   });
 }

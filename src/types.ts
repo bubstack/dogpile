@@ -87,6 +87,14 @@ export type DogpileProviderInvalidRequestError = DogpileErrorBase<"provider-inva
 export type DogpileProviderInvalidResponseError = DogpileErrorBase<"provider-invalid-response">;
 export type DogpileProviderNotFoundError = DogpileErrorBase<"provider-not-found">;
 export type DogpileProviderRateLimitedError = DogpileErrorBase<"provider-rate-limited">;
+/**
+ * Provider timeout errors may include `detail.source?: "provider" | "engine"`.
+ *
+ * Absence is backwards-compatible and should be interpreted as `"provider"`.
+ * `"engine"` means a child engine's own deadline expired before the provider
+ * returned; parent budget propagation remains `code: "aborted"` with
+ * `detail.reason: "timeout"`.
+ */
 export type DogpileProviderTimeoutError = DogpileErrorBase<"provider-timeout">;
 export type DogpileProviderUnavailableError = DogpileErrorBase<"provider-unavailable">;
 export type DogpileProviderUnsupportedError = DogpileErrorBase<"provider-unsupported">;

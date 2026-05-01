@@ -42,7 +42,12 @@ import {
 } from "./defaults.js";
 import { runSequential } from "./sequential.js";
 import { runShared } from "./shared.js";
-import { createAbortErrorFromSignal, createTimeoutError } from "./cancellation.js";
+import {
+  classifyChildTimeoutSource,
+  createAbortErrorFromSignal,
+  createEngineDeadlineTimeoutError,
+  createTimeoutError
+} from "./cancellation.js";
 import { budget as budgetCondition } from "./termination.js";
 import {
   validateDogpileOptions,
@@ -396,6 +401,7 @@ function createNonStreamingAbortLifecycle(options: {
   readonly callerSignal?: AbortSignal | undefined;
   readonly timeoutMs?: number | undefined;
   readonly providerId: string;
+  readonly timeoutErrorSource?: "runtime" | "engine";
 }): AbortLifecycle {
   if (options.timeoutMs === undefined) {
     return {
@@ -414,7 +420,8 @@ function createNonStreamingAbortLifecycle(options: {
   const timeoutLifecycle = createTimeoutAbortLifecycle({
     abortController,
     timeoutMs: options.timeoutMs,
-    providerId: options.providerId
+    providerId: options.providerId,
+    timeoutErrorSource: options.timeoutErrorSource ?? "runtime"
   });
   const abortRace = createAbortRace(abortController.signal, options.providerId);
   const removeCallerAbortListener = wireCallerAbortSignal(options.callerSignal, abortController, () => {
@@ -441,6 +448,7 @@ function createTimeoutAbortLifecycle(options: {
   readonly abortController: AbortController;
   readonly timeoutMs?: number | undefined;
   readonly providerId: string;
+  readonly timeoutErrorSource?: "runtime" | "engine";
 }): TimeoutAbortLifecycle {
   if (options.timeoutMs === undefined) {
     return {
@@ -451,7 +459,14 @@ function createTimeoutAbortLifecycle(options: {
     };
   }
 
-  const timeoutError = createTimeoutError(options.providerId, options.timeoutMs);
+  const timeoutSource = classifyChildTimeoutSource(undefined, {
+    ...(options.timeoutErrorSource === "engine" ? { engineDefaultTimeoutMs: options.timeoutMs } : {}),
+    isProviderError: false
+  });
+  const timeoutError =
+    options.timeoutErrorSource === "engine" && timeoutSource === "engine"
+      ? createEngineDeadlineTimeoutError(options.providerId, options.timeoutMs)
+      : createTimeoutError(options.providerId, options.timeoutMs);
   const timeoutId = setTimeout(() => {
     options.abortController.abort(timeoutError);
   }, options.timeoutMs);
@@ -670,7 +685,13 @@ async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Pr
   const abortLifecycle = createNonStreamingAbortLifecycle({
     callerSignal: options.signal,
     timeoutMs: runtimeTimeoutMs(options),
-    providerId: options.model.id
+    providerId: options.model.id,
+    timeoutErrorSource:
+      options.currentDepth !== undefined &&
+      options.currentDepth > 0 &&
+      options.parentDeadlineMs === undefined
+        ? "engine"
+        : "runtime"
   });
 
   try {
