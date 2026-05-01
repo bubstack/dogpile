@@ -304,18 +304,25 @@ expect(offenders).toEqual([]);
 ```typescript
 // In CALLER'S code — not in the SDK
 import { trace, context, SpanStatusCode } from '@opentelemetry/api';
+import type { Span as OtelSpan } from '@opentelemetry/api';
 import type { DogpileTracer, DogpileSpan, DogpileSpanOptions } from '@dogpile/sdk/runtime/tracing';
 
 const otelTracer = trace.getTracer('dogpile');
 
+// WeakMap maps each DogpileSpan wrapper back to its underlying OtelSpan.
+// This is necessary because DogpileSpan does not expose spanContext() —
+// parent linkage requires the raw OtelSpan to construct the parent context.
+const otelSpanFor = new WeakMap<DogpileSpan, OtelSpan>();
+
 function makeDogpileTracer(): DogpileTracer {
   return {
     startSpan(name: string, options?: DogpileSpanOptions): DogpileSpan {
-      const parentCtx = options?.parent
-        ? trace.setSpan(context.active(), options.parent as unknown as OtelSpan)
+      const parentOtelSpan = options?.parent ? otelSpanFor.get(options.parent) : undefined;
+      const parentCtx = parentOtelSpan
+        ? trace.setSpan(context.active(), parentOtelSpan)
         : context.active();
       const span = otelTracer.startSpan(name, { attributes: options?.attributes }, parentCtx);
-      return {
+      const wrapper: DogpileSpan = {
         end() { span.end(); },
         setAttribute(key, value) { span.setAttribute(key, value); },
         setStatus(code, message) {
@@ -325,6 +332,8 @@ function makeDogpileTracer(): DogpileTracer {
           });
         }
       };
+      otelSpanFor.set(wrapper, span);
+      return wrapper;
     }
   };
 }
@@ -438,7 +447,8 @@ emit(event: RunEvent): void {
       parent: subRunSpan ?? runSpan,
       attributes: {
         'dogpile.agent.id': event.agentId,
-        'dogpile.turn.number': event.turnNumber ?? 0,
+        // NOTE: TurnEvent has no turnNumber field — derive from per-agentId counter in emit closure
+        'dogpile.turn.number': agentTurnCounters.get(event.agentId) ?? 0,
         'dogpile.agent.role': event.role,
       }
     });
@@ -503,6 +513,11 @@ And in `files`:
    - What we know: Multiple agents may have concurrent turns in broadcast protocol.
    - What's unclear: Whether `agentId` alone is a stable enough key for concurrent turns, or whether `agentId + turnIndex` is needed.
    - Recommendation: Use a composite key or a per-agentId stack. The emit-based approach in CONTEXT.md specifics uses `agentId` — follow that.
+
+3. **Roadmap SC 4 is incompatible with locked D-01/D-03 — resolve before plan creation**
+   - What we know: ROADMAP.md Phase 9 Success Criterion 4 states: "The duck-typed `DogpileTracer` interface ... structurally satisfies any real `@opentelemetry/api@1.9.x` `Tracer` without a shared import." [VERIFIED: Context7 + opentelemetry-js-api/docs/tracing.md] The real `Tracer.startSpan(name, options, context)` passes parent via the third `context` argument; `DogpileSpanOptions.parent` is silently ignored if an OTEL `Tracer` is passed directly. Real `Span.setStatus({code, message?})` uses an object; `DogpileSpan.setStatus(code, message?)` uses positional args. **Structural compatibility fails on both parent linkage and setStatus.**
+   - What's unclear: Whether SC 4 should be reinterpreted as "a thin caller-side bridge (WeakMap pattern) structurally satisfies any real OTEL Tracer" — which is achievable — or whether D-03 needs to change `setStatus` signature to accept the OTEL object shape.
+   - Recommendation: **Flag to user before plan creation.** The WeakMap bridge approach (documented in Code Examples) fully achieves OTEL integration; SC 4's "without a shared import" is achievable via the bridge. The planner should treat SC 4 as meaning "bridge code does not require sharing internal SDK types" rather than "no bridge code needed at all."
 
 ---
 
