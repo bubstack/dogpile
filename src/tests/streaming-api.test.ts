@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { replayStream, run, stream } from "../index.js";
-import type { ConfiguredModelProvider, ModelOutputChunk, ModelRequest, ModelResponse, RunResult, StreamEvent } from "../index.js";
+import type {
+  ConfiguredModelProvider,
+  ModelOutputChunk,
+  ModelRequest,
+  ModelResponse,
+  RunEvent,
+  RunResult,
+  StreamEvent
+} from "../index.js";
 
 describe("SDK streaming API", () => {
   it("returns the same final output value as the equivalent non-streaming call", async () => {
@@ -155,8 +163,8 @@ describe("SDK streaming API", () => {
     expect(streamingResult.metadata).toEqual({
       ...nonStreamingResult.metadata,
       runId: streamingResult.trace.runId,
-      startedAt: streamingResult.trace.events[0]?.at,
-      completedAt: streamingFinalEvent?.at
+      startedAt: eventTimestamp(streamingResult.trace.events[0]),
+      completedAt: eventTimestamp(streamingFinalEvent)
     });
     expect(withoutDynamicTraceFields(streamingResult.eventLog)).toEqual(
       withoutDynamicTraceFields(nonStreamingResult.eventLog)
@@ -888,6 +896,11 @@ describe("SDK streaming API", () => {
     ]);
   });
 });
+
+function eventTimestamp(event: RunEvent | StreamEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  return "at" in event ? event.at : event.startedAt;
+}
 
 const output = "critic judged final output";
 const PARTICIPATE_OUTPUT = [

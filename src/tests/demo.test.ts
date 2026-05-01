@@ -8,7 +8,7 @@ import {
   startSampleWorkflow
 } from "../internal.js";
 import { stream } from "../index.js";
-import type { ConfiguredModelProvider, ModelOutputChunk, ModelRequest, ModelResponse, RunResult } from "../index.js";
+import type { ConfiguredModelProvider, ModelOutputChunk, ModelRequest, ModelResponse, RunEvent, RunResult } from "../index.js";
 
 describe("demo app streaming attachment", () => {
   it("defines a runnable sample workflow entrypoint from mission, protocol, and cost controls", async () => {
@@ -227,7 +227,7 @@ describe("demo app streaming attachment", () => {
       {
         order: 1,
         eventType: "role-assignment",
-        at: runningSnapshot.traceEvents[0]?.at,
+        at: eventTimestamp(runningSnapshot.traceEvents[0]),
         runId: runningSnapshot.traceEvents[0]?.runId,
         title: "Assigned incremental-runner",
         visualSection: "role-roster",
@@ -274,7 +274,7 @@ describe("demo app streaming attachment", () => {
     expect(completedSnapshot.traceEvents).toEqual(result.trace.events);
     expect(completedSnapshot.traceEventList.map((item) => item.order)).toEqual([1, 2, 3]);
     expect(completedSnapshot.traceEventList.map((item) => item.eventType)).toEqual(["role-assignment", "agent-turn", "final"]);
-    expect(completedSnapshot.traceEventList.map((item) => item.at)).toEqual(result.trace.events.map((event) => event.at));
+    expect(completedSnapshot.traceEventList.map((item) => item.at)).toEqual(result.trace.events.map(eventTimestamp));
     expect(completedSnapshot.traceEventList[1]).toMatchObject({
       order: 2,
       eventType: "agent-turn",
@@ -465,6 +465,11 @@ describe("demo app streaming attachment", () => {
     });
   });
 });
+
+function eventTimestamp(event: RunEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  return "at" in event ? event.at : event.startedAt;
+}
 
 interface ResponseGate {
   readonly requested: Promise<void>;

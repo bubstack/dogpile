@@ -461,13 +461,17 @@ function toTraceEventListItem(event: RunEvent, index: number): DemoTraceEventLis
   return {
     order,
     eventType: event.type,
-    at: event.at,
+    at: eventTimestamp(event),
     runId: event.runId,
     title: traceEventTitle(event),
     visualSection: traceEventVisualSection(event),
     visualState: traceEventVisualState(event),
     metadata: traceEventMetadata(event)
   };
+}
+
+function eventTimestamp(event: RunEvent): string {
+  return "at" in event ? event.at : event.startedAt;
 }
 
 function traceEventTitle(event: RunEvent): string {

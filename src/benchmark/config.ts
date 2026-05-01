@@ -73,8 +73,8 @@ export function createBenchmarkRunArtifact(
     kind: "benchmark-run",
     schemaVersion: "1.0",
     runId: result.trace.runId,
-    startedAt: firstEvent?.at ?? "",
-    completedAt: lastEvent?.at ?? "",
+    startedAt: eventTimestamp(firstEvent) ?? "",
+    completedAt: eventTimestamp(lastEvent) ?? "",
     reproducibility: {
       task: config.task,
       budget: config.budget,
@@ -95,6 +95,11 @@ export function createBenchmarkRunArtifact(
     cost: result.cost,
     ...(result.quality !== undefined ? { quality: result.quality } : {})
   };
+}
+
+function eventTimestamp(event: RunEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  return "at" in event ? event.at : event.startedAt;
 }
 
 /**

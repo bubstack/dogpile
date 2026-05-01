@@ -99,6 +99,7 @@ function recordProviderCall(
     kind: "replay-trace-provider-call",
     callId: options.callId,
     providerId: options.model.id,
+    modelId: options.model.modelId ?? options.model.id,
     startedAt,
     completedAt: new Date().toISOString(),
     agentId: options.agent.id,

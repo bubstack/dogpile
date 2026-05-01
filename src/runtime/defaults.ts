@@ -236,8 +236,8 @@ export function createRunMetadata(options: {
     tier: options.tier,
     modelProviderId: options.modelProviderId,
     agentsUsed: options.agentsUsed,
-    startedAt: firstEvent?.at ?? "",
-    completedAt: lastEvent?.at ?? ""
+    startedAt: eventTimestamp(firstEvent) ?? "",
+    completedAt: eventTimestamp(lastEvent) ?? ""
   };
 }
 
@@ -365,7 +365,7 @@ export function createReplayTraceProtocolDecision(
     eventType: event.type,
     protocol,
     decision: options.decision ?? defaultProtocolDecision(event),
-    at: event.at,
+    at: eventTimestamp(event),
     ...(options.turn !== undefined ? { turn: options.turn } : {}),
     ...(options.phase !== undefined ? { phase: options.phase } : {}),
     ...(options.round !== undefined ? { round: options.round } : {}),
@@ -550,13 +550,20 @@ export function createReplayTraceFinalOutput(output: string, event: RunEvent): R
     kind: "replay-trace-final-output",
     output,
     cost: emptyCost(),
-    completedAt: event.at,
+    completedAt: eventTimestamp(event),
     transcript: {
       kind: "trace-transcript",
       entryCount: 0,
       lastEntryIndex: null
     }
   };
+}
+
+function eventTimestamp(event: RunEvent): string;
+function eventTimestamp(event: RunEvent | undefined): string | undefined;
+function eventTimestamp(event: RunEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  return "at" in event ? event.at : event.startedAt;
 }
 
 export function nextProviderCallId(

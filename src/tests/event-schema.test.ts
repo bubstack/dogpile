@@ -291,9 +291,10 @@ describe("trace event schema", () => {
       {
         type: "model-request",
         runId: "run-child",
-        at: "2026-05-01T00:00:09.000Z",
+        startedAt: "2026-05-01T00:00:09.000Z",
         callId: "call-1",
         providerId: "provider",
+        modelId: "provider",
         agentId: "agent-1",
         role: "planner",
         request: {
@@ -306,9 +307,11 @@ describe("trace event schema", () => {
       {
         type: "model-response",
         runId: "run-child",
-        at: "2026-05-01T00:00:10.000Z",
+        startedAt: "2026-05-01T00:00:09.000Z",
+        completedAt: "2026-05-01T00:00:10.000Z",
         callId: "call-1",
         providerId: "provider",
+        modelId: "provider",
         agentId: "agent-1",
         role: "planner",
         response: { text: "ok" },
@@ -446,9 +449,10 @@ describe("trace event schema", () => {
     const modelRequestEvent: ModelRequestEvent = {
       type: "model-request",
       runId: "run-activity-contract",
-      at: "2026-04-24T00:00:00.000Z",
+      startedAt: "2026-04-24T00:00:00.000Z",
       callId: "run-activity-contract:provider-call:1",
       providerId: "deterministic-model",
+      modelId: "deterministic-model",
       agentId: "planner",
       role: "planner",
       request: {
@@ -463,9 +467,11 @@ describe("trace event schema", () => {
     const modelResponseEvent: ModelResponseEvent = {
       type: "model-response",
       runId: "run-activity-contract",
-      at: "2026-04-24T00:00:01.000Z",
+      startedAt: modelRequestEvent.startedAt,
+      completedAt: "2026-04-24T00:00:01.000Z",
       callId: modelRequestEvent.callId,
       providerId: modelRequestEvent.providerId,
+      modelId: modelRequestEvent.modelId,
       agentId: "planner",
       role: "planner",
       response: {

@@ -150,7 +150,7 @@ describe("single-call result contract", () => {
       tier: "fast",
       modelProviderId: "result-contract-model",
       agentsUsed: trace.agentsUsed,
-      startedAt: trace.events[0]?.at,
+      startedAt: eventTimestamp(trace.events[0]),
       completedAt: finalEvent.at
     });
     expect(finalEvent.transcript).toEqual({
@@ -235,7 +235,7 @@ describe("single-call result contract", () => {
         kind: "replay-trace-budget-state-change",
         eventIndex: 2,
         eventType: "agent-turn",
-        at: result.trace.events[2]?.at,
+        at: eventTimestamp(result.trace.events[2]),
         cost: {
           usd: 0.002,
           inputTokens: 5,
@@ -247,7 +247,7 @@ describe("single-call result contract", () => {
         kind: "replay-trace-budget-state-change",
         eventIndex: 3,
         eventType: "agent-turn",
-        at: result.trace.events[3]?.at,
+        at: eventTimestamp(result.trace.events[3]),
         cost: {
           usd: 0.004,
           inputTokens: 10,
@@ -259,7 +259,7 @@ describe("single-call result contract", () => {
         kind: "replay-trace-budget-state-change",
         eventIndex: 4,
         eventType: "final",
-        at: result.trace.events[4]?.at,
+        at: eventTimestamp(result.trace.events[4]),
         cost: result.cost
       }
     ]);
@@ -1160,6 +1160,11 @@ describe("single-call result contract", () => {
     expect(roundTripped.reason).toBe("local-provider-detected");
   });
 });
+
+function eventTimestamp(event: RunEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  return "at" in event ? event.at : event.startedAt;
+}
 
 function sortedKeys(value: object): string[] {
   return Object.keys(value).sort();

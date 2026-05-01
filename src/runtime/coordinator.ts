@@ -1614,8 +1614,8 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
 function renderSubRunResult(childRunId: string, subResult: RunResult): string {
   const turns = subResult.transcript.length;
   const costUsd = subResult.cost.usd ?? 0;
-  const startedAt = subResult.trace.events[0]?.at;
-  const endedAt = subResult.trace.events.at(-1)?.at;
+  const startedAt = eventTimestamp(subResult.trace.events[0]);
+  const endedAt = eventTimestamp(subResult.trace.events.at(-1));
   const durationMs =
     startedAt && endedAt
       ? Math.max(0, Date.parse(endedAt) - Date.parse(startedAt))
@@ -1624,6 +1624,11 @@ function renderSubRunResult(childRunId: string, subResult: RunResult): string {
     `[sub-run ${childRunId}]: ${subResult.output}`,
     `[sub-run ${childRunId} stats]: turns=${turns} costUsd=${costUsd} durationMs=${durationMs}`
   ].join("\n");
+}
+
+function eventTimestamp(event: RunEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  return "at" in event ? event.at : event.startedAt;
 }
 
 /**
