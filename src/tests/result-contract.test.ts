@@ -473,6 +473,83 @@ describe("single-call result contract", () => {
     expect(JSON.parse(JSON.stringify(replayed))).toEqual(replayed);
   });
 
+  it("synthesizes replay model provenance events from provider calls for legacy traces", async () => {
+    const result = await run({
+      intent: "Replay a saved trace that predates live model provenance events.",
+      protocol: { kind: "sequential", maxTurns: 2 },
+      tier: "fast",
+      model: createDeterministicModelProvider("legacy-replay-provenance-model"),
+      agents: [
+        { id: "agent-1", role: "planner" },
+        { id: "agent-2", role: "critic" }
+      ]
+    });
+    const savedTrace = JSON.parse(JSON.stringify(result.trace)) as Trace;
+    const legacyEvents = savedTrace.events.filter(
+      (event) => event.type !== "model-request" && event.type !== "model-response"
+    );
+    const legacyTrace: Trace = {
+      ...savedTrace,
+      events: legacyEvents
+    };
+
+    const replayed = replay(legacyTrace);
+
+    expect(legacyTrace.events).toBe(legacyEvents);
+    expect(replayed.trace.events).toBe(legacyEvents);
+    expect(replayed.eventLog.events).not.toBe(legacyEvents);
+    expect(legacyEvents.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "role-assignment",
+      "agent-turn",
+      "agent-turn",
+      "final"
+    ]);
+    expect(replayed.eventLog.eventTypes).toEqual([
+      "role-assignment",
+      "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
+
+    const firstRequest = replayed.eventLog.events[2];
+    const firstResponse = replayed.eventLog.events[3];
+    if (firstRequest?.type !== "model-request" || firstResponse?.type !== "model-response") {
+      throw new Error("expected synthesized model provenance events before first turn");
+    }
+
+    expect(firstRequest).toEqual({
+      type: "model-request",
+      runId: legacyTrace.runId,
+      callId: legacyTrace.providerCalls[0]?.callId,
+      providerId: legacyTrace.providerCalls[0]?.providerId,
+      modelId: legacyTrace.providerCalls[0]?.modelId,
+      startedAt: legacyTrace.providerCalls[0]?.startedAt,
+      agentId: legacyTrace.providerCalls[0]?.agentId,
+      role: legacyTrace.providerCalls[0]?.role,
+      request: legacyTrace.providerCalls[0]?.request
+    });
+    expect(firstResponse).toEqual({
+      type: "model-response",
+      runId: legacyTrace.runId,
+      callId: legacyTrace.providerCalls[0]?.callId,
+      providerId: legacyTrace.providerCalls[0]?.providerId,
+      modelId: legacyTrace.providerCalls[0]?.modelId,
+      startedAt: legacyTrace.providerCalls[0]?.startedAt,
+      completedAt: legacyTrace.providerCalls[0]?.completedAt,
+      agentId: legacyTrace.providerCalls[0]?.agentId,
+      role: legacyTrace.providerCalls[0]?.role,
+      response: legacyTrace.providerCalls[0]?.response
+    });
+    expect("parentRunIds" in firstRequest).toBe(false);
+    expect("parentRunIds" in firstResponse).toBe(false);
+  });
+
   it("replays a saved trace as streaming events, final output, and transcript while failing on any live provider call", async () => {
     let providerCalls = 0;
     let replayingSavedTrace = false;
