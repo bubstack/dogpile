@@ -23,7 +23,7 @@ last_completed: v0.4.0
 ## Phases
 
 - [x] **Phase 6: Provenance Annotations** — Event-shape foundation: structured metadata on model request/response events (completed 2026-05-01)
-- [ ] **Phase 7: Structured Event Introspection + Health Diagnostics** — Typed query API over trace events and per-run health summaries
+- [x] **Phase 7: Structured Event Introspection + Health Diagnostics** — Typed query API over trace events and per-run health summaries (completed 2026-05-01)
 - [ ] **Phase 8: Audit Event Schema** — Stable, versioned, independent audit record format for compliance
 - [ ] **Phase 9: OTEL Tracing Bridge** — Duck-typed tracer injection with span ancestry matching parentRunIds
 - [ ] **Phase 10: Metrics / Counters** — Named counter hook for token usage, cost, turn count, and duration
@@ -72,7 +72,7 @@ Plans:
 - [x] 07-02-PLAN.md — queryEvents implementation + unit tests (introspection)
 - [x] 07-03-PLAN.md — computeHealth implementation + unit tests (health diagnostics)
 - [x] 07-04-PLAN.md — Engine attach: result.health on run/replay paths + canonicalizeRunResult + contract tests
-- [ ] 07-05-PLAN.md — Public-surface lockstep: package.json subpaths + package-exports.test.ts + CHANGELOG + CLAUDE.md
+- [x] 07-05-PLAN.md — Public-surface lockstep: package.json subpaths + package-exports.test.ts + CHANGELOG + CLAUDE.md
 
 ### Phase 8: Audit Event Schema
 **Goal:** Callers can produce a stable, versioned audit record from any completed trace using a pure function; the record type is independent of `RunEvent` schema and its shape is protected by a frozen fixture test.
@@ -114,7 +114,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 6. Provenance Annotations | 6/6 | Complete | 2026-05-01 |
-| 7. Structured Event Introspection + Health Diagnostics | 4/5 | In Progress | — |
+| 7. Structured Event Introspection + Health Diagnostics | 5/5 | Complete | 2026-05-01 |
 | 8. Audit Event Schema | 0/3 | Not started | — |
 | 9. OTEL Tracing Bridge | 0/? | Not started | — |
 | 10. Metrics / Counters | 0/? | Not started | — |
@@ -134,4 +134,4 @@ Plans:
 
 ---
 
-*Last updated: 2026-05-01 — Phase 7 Plan 04 complete; engine health attachment verified.*
+*Last updated: 2026-05-01 — Phase 7 Plan 05 complete; public-surface lockstep verified.*

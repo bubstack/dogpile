@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.5.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-01T21:21:57.117Z"
-last_activity: 2026-05-01 -- Completed 07-04 engine health attachment + contract tests
+last_updated: "2026-05-01T21:25:23Z"
+last_activity: 2026-05-01 -- Completed 07-05 public-surface lockstep
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 14
-  completed_plans: 10
-  percent: 71
+  completed_plans: 11
+  percent: 79
 ---
 
 # State
@@ -19,26 +19,26 @@ progress:
 
 **Core value:** Coordinated, observable, replayable multi-agent runs with a strict boundary — Dogpile owns the coordination loop; the application owns credentials, pricing, storage, queues, UI, and tool side effects.
 
-**Current focus:** Phase 07 — Structured Event Introspection + Health Diagnostics
+**Current focus:** Phase 08 — Audit Event Schema
 
 ## Current Position
 
-Phase: 07 (structured-event-introspection-health-diagnostics) — EXECUTING
-Plan: 5 of 5
-Status: Executing Phase 07
-Last activity: 2026-05-01 -- Completed 07-04 engine health attachment + contract tests
+Phase: 08 (audit-event-schema) — READY
+Plan: 1 of 3
+Status: Ready for Phase 08
+Last activity: 2026-05-01 -- Completed 07-05 public-surface lockstep
 
 ```
-Progress [█████████-] 91% (10/11 milestone plans)
+Progress [████████--] 79% (11/14 milestone plans)
 ```
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 1 / 5 |
+| Phases complete | 2 / 5 |
 | Requirements complete | 6 / 13 |
-| Plans complete | 10 / 11 |
+| Plans complete | 11 / 14 |
 
 ## Accumulated Context
 
@@ -54,6 +54,7 @@ Progress [█████████-] 91% (10/11 milestone plans)
 - **computeHealth provider recovery is deferred.** `provider-error-recovered` remains in the anomaly union and fixture but is never emitted until a future event-shape change provides a trace signal.
 - **RunResult.health is required.** All public and embedded RunResult construction paths now compute health from trace data before returning or embedding results.
 - **Protocol-level health is part of the result contract.** Sequential, broadcast, shared, and coordinator constructors compute health so stream results and delegated child subResults satisfy the same required contract as top-level run and replay results.
+- **Phase 7 public surface is locked.** `AnomalyCode`, `HealthAnomaly`, and `RunHealthSummary` are root-exported; `@dogpile/sdk/runtime/health` and `@dogpile/sdk/runtime/introspection` are package subpaths with package export tests, source-map packaging coverage, changelog, and CLAUDE.md invariants.
 
 ### Todos
 
@@ -74,7 +75,7 @@ Progress [█████████-] 91% (10/11 milestone plans)
 
 ## Session Continuity
 
-**Next action:** Continue Phase 7 with 07-05 public-surface lockstep for runtime subpaths, package exports, changelog, and invariant docs.
+**Next action:** Start Phase 8 audit event schema execution.
 
 ---
 
