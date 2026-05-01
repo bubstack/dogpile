@@ -979,6 +979,60 @@ describe("single-call result contract", () => {
     expect(replayed.trace.events).toEqual(result.trace.events);
   });
 
+  it("keeps parent events isolation for parentRunIds on delegated runs", async () => {
+    const planResponses = [
+      [
+        "delegate:",
+        "```json",
+        JSON.stringify({ protocol: "sequential", intent: "child trace must stay chain-free" }),
+        "```",
+        ""
+      ].join("\n"),
+      [
+        "role_selected: coordinator",
+        "participation: contribute",
+        "rationale: synthesize after inspecting the child result",
+        "contribution:",
+        "parent synthesis"
+      ].join("\n")
+    ];
+    let planIndex = 0;
+    const provider: ConfiguredModelProvider = {
+      id: "result-contract-parentRunIds-isolation",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const text =
+          phase === "plan"
+            ? (planResponses[planIndex++] ?? planResponses[planResponses.length - 1]!)
+            : phase === "worker"
+              ? "child worker output"
+              : "parent final output";
+        return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const parent = await run({
+      intent: "Verify parent events isolation for parentRunIds.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+    const completed = parent.trace.events.find((event) => event.type === "sub-run-completed");
+
+    expect(completed?.type).toBe("sub-run-completed");
+    if (completed?.type !== "sub-run-completed") {
+      throw new Error("missing sub-run-completed event");
+    }
+    expect(parent.trace.events.find((event) => "parentRunIds" in event && event.parentRunIds !== undefined)).toBeUndefined();
+    expect(
+      completed.subResult.trace.events.find((event) => "parentRunIds" in event && event.parentRunIds !== undefined)
+    ).toBeUndefined();
+  });
+
   it("round-trips a sub-run-parent-aborted RunEvent variant through JSON serialization", () => {
     const fixture: SubRunParentAbortedEvent = {
       type: "sub-run-parent-aborted",

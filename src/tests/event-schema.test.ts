@@ -124,6 +124,267 @@ describe("trace event schema", () => {
     expect(JSON.parse(JSON.stringify(streamEvents))).toEqual(streamEvents);
   });
 
+  it("accepts optional parentRunIds on every stream lifecycle and output variant", () => {
+    const parentRunIds = ["run-root", "run-parent"] as const;
+    const child = minimalRunResult("run-child-parentRunIds-contract");
+    const lifecycleEvents = [
+      {
+        type: "role-assignment",
+        runId: "run-child",
+        at: "2026-05-01T00:00:00.000Z",
+        agentId: "agent-1",
+        role: "planner",
+        parentRunIds
+      },
+      {
+        type: "budget-stop",
+        runId: "run-child",
+        at: "2026-05-01T00:00:01.000Z",
+        reason: "cost",
+        cost: emptyCost(),
+        iteration: 1,
+        elapsedMs: 10,
+        detail: {},
+        parentRunIds
+      },
+      {
+        type: "sub-run-started",
+        runId: "run-child",
+        at: "2026-05-01T00:00:02.000Z",
+        childRunId: "run-grandchild-started",
+        parentRunId: "run-child",
+        parentDecisionId: "decision-1",
+        parentDecisionArrayIndex: 0,
+        protocol: "sequential",
+        intent: "Started child",
+        depth: 2,
+        parentRunIds
+      },
+      {
+        type: "sub-run-completed",
+        runId: "run-child",
+        at: "2026-05-01T00:00:03.000Z",
+        childRunId: child.trace.runId,
+        parentRunId: "run-child",
+        parentDecisionId: "decision-2",
+        parentDecisionArrayIndex: 0,
+        subResult: child,
+        parentRunIds
+      },
+      {
+        type: "sub-run-failed",
+        runId: "run-child",
+        at: "2026-05-01T00:00:04.000Z",
+        childRunId: child.trace.runId,
+        parentRunId: "run-child",
+        parentDecisionId: "decision-3",
+        parentDecisionArrayIndex: 0,
+        error: { code: "aborted", message: "failed" },
+        partialTrace: child.trace,
+        partialCost: emptyCost(),
+        parentRunIds
+      },
+      {
+        type: "sub-run-parent-aborted",
+        runId: "run-child",
+        at: "2026-05-01T00:00:05.000Z",
+        childRunId: "run-grandchild-parent-aborted",
+        parentRunId: "run-child",
+        reason: "parent-aborted",
+        parentRunIds
+      },
+      {
+        type: "sub-run-budget-clamped",
+        runId: "run-child",
+        at: "2026-05-01T00:00:06.000Z",
+        childRunId: "run-grandchild-budget-clamped",
+        parentRunId: "run-child",
+        parentDecisionId: "decision-4",
+        requestedTimeoutMs: 1000,
+        clampedTimeoutMs: 100,
+        reason: "exceeded-parent-remaining",
+        parentRunIds
+      },
+      {
+        type: "sub-run-queued",
+        runId: "run-child",
+        at: "2026-05-01T00:00:07.000Z",
+        childRunId: "run-grandchild-queued",
+        parentRunId: "run-child",
+        parentDecisionId: "decision-5",
+        parentDecisionArrayIndex: 1,
+        protocol: "shared",
+        intent: "Queued child",
+        depth: 2,
+        queuePosition: 0,
+        parentRunIds
+      },
+      {
+        type: "sub-run-concurrency-clamped",
+        runId: "run-child",
+        at: "2026-05-01T00:00:08.000Z",
+        requestedMax: 4,
+        effectiveMax: 1,
+        reason: "local-provider-detected",
+        providerId: "local-provider",
+        parentRunIds
+      }
+    ] as const satisfies readonly StreamLifecycleEvent[];
+    const outputEvents = [
+      {
+        type: "model-request",
+        runId: "run-child",
+        at: "2026-05-01T00:00:09.000Z",
+        callId: "call-1",
+        providerId: "provider",
+        agentId: "agent-1",
+        role: "planner",
+        request: {
+          messages: [{ role: "user", content: "Plan" }],
+          temperature: 0,
+          metadata: { runId: "run-child" }
+        },
+        parentRunIds
+      },
+      {
+        type: "model-response",
+        runId: "run-child",
+        at: "2026-05-01T00:00:10.000Z",
+        callId: "call-1",
+        providerId: "provider",
+        agentId: "agent-1",
+        role: "planner",
+        response: { text: "ok" },
+        parentRunIds
+      },
+      {
+        type: "model-output-chunk",
+        runId: "run-child",
+        at: "2026-05-01T00:00:11.000Z",
+        agentId: "agent-1",
+        role: "planner",
+        input: "Plan",
+        chunkIndex: 0,
+        text: "o",
+        output: "o",
+        parentRunIds
+      },
+      {
+        type: "tool-call",
+        runId: "run-child",
+        at: "2026-05-01T00:00:12.000Z",
+        toolCallId: "tool-1",
+        tool: { id: "lookup", name: "Lookup" },
+        input: {},
+        parentRunIds
+      },
+      {
+        type: "tool-result",
+        runId: "run-child",
+        at: "2026-05-01T00:00:13.000Z",
+        toolCallId: "tool-1",
+        tool: { id: "lookup", name: "Lookup" },
+        result: {
+          type: "success",
+          toolCallId: "tool-1",
+          tool: { id: "lookup", name: "Lookup" },
+          output: {}
+        },
+        parentRunIds
+      },
+      {
+        type: "agent-turn",
+        runId: "run-child",
+        at: "2026-05-01T00:00:14.000Z",
+        agentId: "agent-1",
+        role: "planner",
+        input: "Plan",
+        output: "Done",
+        cost: emptyCost(),
+        parentRunIds
+      },
+      {
+        type: "broadcast",
+        runId: "run-child",
+        at: "2026-05-01T00:00:15.000Z",
+        round: 1,
+        contributions: [{ agentId: "agent-1", role: "planner", output: "Done" }],
+        cost: emptyCost(),
+        parentRunIds
+      }
+    ] as const satisfies readonly StreamOutputEvent[];
+    const events: readonly (StreamLifecycleEvent | StreamOutputEvent)[] = [...lifecycleEvents, ...outputEvents];
+
+    expect(events).toHaveLength(16);
+    expect(events.every((event) => event.parentRunIds === parentRunIds)).toBe(true);
+    expect(JSON.parse(JSON.stringify(events))).toEqual(events);
+  });
+
+  it("keeps parent-emitted sub-run lifecycle events free of parentRunIds", () => {
+    const child = minimalRunResult("run-child-parent-emitted-sub-run-contract");
+    const events: readonly StreamLifecycleEvent[] = [
+      {
+        type: "sub-run-started",
+        runId: "run-parent",
+        at: "2026-05-01T01:00:00.000Z",
+        childRunId: "run-child-started",
+        parentRunId: "run-parent",
+        parentDecisionId: "decision-1",
+        parentDecisionArrayIndex: 0,
+        protocol: "sequential",
+        intent: "Started child",
+        depth: 1
+      },
+      {
+        type: "sub-run-completed",
+        runId: "run-parent",
+        at: "2026-05-01T01:00:01.000Z",
+        childRunId: child.trace.runId,
+        parentRunId: "run-parent",
+        parentDecisionId: "decision-2",
+        parentDecisionArrayIndex: 0,
+        subResult: child
+      },
+      {
+        type: "sub-run-failed",
+        runId: "run-parent",
+        at: "2026-05-01T01:00:02.000Z",
+        childRunId: child.trace.runId,
+        parentRunId: "run-parent",
+        parentDecisionId: "decision-3",
+        parentDecisionArrayIndex: 0,
+        error: { code: "aborted", message: "failed" },
+        partialTrace: child.trace,
+        partialCost: emptyCost()
+      },
+      {
+        type: "sub-run-queued",
+        runId: "run-parent",
+        at: "2026-05-01T01:00:03.000Z",
+        childRunId: "run-child-queued",
+        parentRunId: "run-parent",
+        parentDecisionId: "decision-4",
+        parentDecisionArrayIndex: 1,
+        protocol: "shared",
+        intent: "Queued child",
+        depth: 1,
+        queuePosition: 0
+      },
+      {
+        type: "sub-run-concurrency-clamped",
+        runId: "run-parent",
+        at: "2026-05-01T01:00:04.000Z",
+        requestedMax: 4,
+        effectiveMax: 1,
+        reason: "local-provider-detected",
+        providerId: "local-provider"
+      }
+    ];
+
+    expect(events.map((event) => event.parentRunIds)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    expect(JSON.parse(JSON.stringify(events))).toEqual(events);
+  });
+
   it("defines public model activity, tool activity, and transcript artifact shapes", () => {
     const modelRequestEvent: ModelRequestEvent = {
       type: "model-request",
@@ -703,6 +964,88 @@ function expectCostSummary(cost: CostSummary): void {
 
 function emptyCost(): CostSummary {
   return { usd: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+}
+
+function minimalRunResult(runId: string): RunResult {
+  const cost = emptyCost();
+  const final: FinalEvent = {
+    type: "final",
+    runId,
+    at: "2026-05-01T00:00:00.000Z",
+    output: "child output",
+    cost,
+    transcript: {
+      kind: "trace-transcript",
+      entryCount: 0,
+      lastEntryIndex: null
+    }
+  };
+  const trace: Trace = {
+    schemaVersion: "1.0",
+    runId,
+    protocol: "sequential",
+    tier: "fast",
+    modelProviderId: "minimal-provider",
+    agentsUsed: [],
+    inputs: {
+      kind: "replay-trace-run-inputs",
+      intent: "Minimal child result",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      modelProviderId: "minimal-provider",
+      agents: [],
+      temperature: 0
+    },
+    budget: {
+      kind: "replay-trace-budget",
+      tier: "fast"
+    },
+    budgetStateChanges: [],
+    seed: { kind: "replay-trace-seed", source: "none", value: null },
+    protocolDecisions: [],
+    providerCalls: [],
+    finalOutput: {
+      kind: "replay-trace-final-output",
+      output: "child output",
+      cost,
+      completedAt: final.at,
+      transcript: final.transcript
+    },
+    events: [final],
+    transcript: []
+  };
+
+  return {
+    output: "child output",
+    eventLog: {
+      kind: "run-event-log",
+      runId,
+      protocol: "sequential",
+      eventTypes: ["final"],
+      eventCount: 1,
+      events: trace.events
+    },
+    trace,
+    transcript: trace.transcript,
+    usage: cost,
+    metadata: {
+      runId,
+      protocol: "sequential",
+      tier: "fast",
+      modelProviderId: "minimal-provider",
+      agentsUsed: [],
+      startedAt: final.at,
+      completedAt: final.at
+    },
+    accounting: {
+      kind: "run-accounting",
+      tier: "fast",
+      usage: cost,
+      cost,
+      budgetStateChanges: []
+    },
+    cost
+  };
 }
 
 function expectIsoTimestamp(value: string): void {
