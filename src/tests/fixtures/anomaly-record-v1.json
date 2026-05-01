@@ -1,0 +1,29 @@
+[
+  {
+    "code": "budget-near-miss",
+    "severity": "warning",
+    "value": 87.5,
+    "threshold": 80
+  },
+  {
+    "code": "empty-contribution",
+    "severity": "error",
+    "value": 0,
+    "threshold": 0,
+    "agentId": "agent-1"
+  },
+  {
+    "code": "provider-error-recovered",
+    "severity": "warning",
+    "value": 1,
+    "threshold": 0,
+    "agentId": "agent-2"
+  },
+  {
+    "code": "runaway-turns",
+    "severity": "error",
+    "value": 12,
+    "threshold": 10,
+    "agentId": "agent-3"
+  }
+]
