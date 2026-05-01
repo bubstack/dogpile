@@ -16,8 +16,69 @@ import {
 } from "../internal/vercel-ai.js";
 
 const model = "openai/gpt-4.1-mini" as LanguageModel;
+const participateOutput = [
+  "role_selected: coordinator",
+  "participation: contribute",
+  "rationale: observed child outcomes",
+  "contribution:",
+  "synthesized child outcomes"
+].join("\n");
+
+function delegateBlock(payload: unknown): string {
+  return ["delegate:", "```json", JSON.stringify(payload), "```", ""].join("\n");
+}
 
 describe("caller cancellation contract", () => {
+  it("drains queued delegates with synthetic sibling-failed sub-run failures", async () => {
+    let planIndex = 0;
+    const provider: ConfiguredModelProvider = {
+      id: "sibling-failed-drain-model",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const protocol = String(request.metadata.protocol);
+        if (protocol === "sequential") {
+          throw new Error("first child failed");
+        }
+        if (String(request.metadata.phase) === "plan") {
+          const text =
+            planIndex === 0
+              ? delegateBlock([
+                { protocol: "sequential", intent: "child 0 fails" },
+                { protocol: "sequential", intent: "child 1 queued" },
+                { protocol: "sequential", intent: "child 2 queued" }
+              ])
+              : participateOutput;
+          planIndex += 1;
+          return { text };
+        }
+        return { text: "final" };
+      }
+    };
+
+    const result = await run({
+      intent: "Drain queued siblings after one child fails.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 1
+    });
+
+    const failed = result.trace.events.filter((event) => event.type === "sub-run-failed");
+    const synthetic = failed.filter(
+      (event) =>
+        event.type === "sub-run-failed" &&
+        event.error.code === "aborted" &&
+        event.error.detail?.["reason"] === "sibling-failed"
+    );
+
+    expect(synthetic).toHaveLength(2);
+    expect(synthetic.every((event) => event.type === "sub-run-failed" && event.partialCost.usd === 0)).toBe(true);
+    expect(result.trace.events.filter((event) => event.type === "sub-run-started")).toHaveLength(1);
+  });
+
   it("propagates run() caller AbortSignal into the in-flight provider fetch", async () => {
     const abortController = new AbortController();
     const fetchProbe = createAbortableFetchProbe();

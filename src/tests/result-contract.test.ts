@@ -36,6 +36,7 @@ import type {
   SubRunCompletedEvent,
   SubRunFailedEvent,
   SubRunParentAbortedEvent,
+  SubRunQueuedEvent,
   Trace,
   TranscriptEntry
 } from "../index.js";
@@ -1050,6 +1051,27 @@ describe("single-call result contract", () => {
     expect(roundTripped.reason).toBe("exceeded-parent-remaining");
     expect(roundTripped.requestedTimeoutMs).toBe(10_000);
     expect(roundTripped.clampedTimeoutMs).toBe(250);
+  });
+
+  it("round-trips a sub-run-queued RunEvent variant through JSON serialization", () => {
+    const fixture: SubRunQueuedEvent = {
+      type: "sub-run-queued",
+      runId: "run-parent-queued-roundtrip",
+      at: "2026-05-01T00:00:05.000Z",
+      childRunId: "run-child-queued-roundtrip",
+      parentRunId: "run-parent-queued-roundtrip",
+      parentDecisionId: "decision-10",
+      parentDecisionArrayIndex: 2,
+      protocol: "sequential",
+      intent: "Queued child.",
+      depth: 1,
+      queuePosition: 1
+    };
+    const variant: RunEvent = fixture;
+    expect(variant.type).toBe("sub-run-queued");
+    const roundTripped = JSON.parse(JSON.stringify(fixture)) as SubRunQueuedEvent;
+    expect(roundTripped).toEqual(fixture);
+    expect(roundTripped.parentDecisionArrayIndex).toBe(2);
   });
 });
 

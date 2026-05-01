@@ -25,6 +25,7 @@ import type {
   SubRunCompletedEvent,
   SubRunFailedEvent,
   SubRunParentAbortedEvent,
+  SubRunQueuedEvent,
   SubRunStartedEvent,
   ToolActivityEvent,
   ToolCallEvent,
@@ -48,6 +49,7 @@ const expectedEventTypes = [
   "sub-run-failed",
   "sub-run-parent-aborted",
   "sub-run-budget-clamped",
+  "sub-run-queued",
   "budget-stop",
   "final"
 ] as const satisfies readonly RunEvent["type"][];
@@ -70,6 +72,7 @@ describe("trace event schema", () => {
       "sub-run-failed",
       "sub-run-parent-aborted",
       "sub-run-budget-clamped",
+      "sub-run-queued",
       "budget-stop",
       "final"
     ]);
@@ -542,6 +545,39 @@ describe("trace event schema", () => {
     expect(fixture.reason).toBe("exceeded-parent-remaining");
     expect(fixture.clampedTimeoutMs).toBeLessThan(fixture.requestedTimeoutMs);
     expectIsoTimestamp(fixture.at);
+    expect(JSON.parse(JSON.stringify(fixture))).toEqual(fixture);
+  });
+
+  it("locks the sub-run-queued event payload shape and JSON round-trip", () => {
+    const fixture: SubRunQueuedEvent = {
+      type: "sub-run-queued",
+      runId: "run-parent-sub-run-queued",
+      at: "2026-05-01T00:00:00.000Z",
+      childRunId: "run-child-sub-run-queued",
+      parentRunId: "run-parent-sub-run-queued",
+      parentDecisionId: "decision-8",
+      parentDecisionArrayIndex: 1,
+      protocol: "sequential",
+      intent: "Wait for a bounded concurrency slot.",
+      depth: 1,
+      queuePosition: 0
+    };
+    const variant: RunEvent = fixture;
+
+    expect(variant.type).toBe("sub-run-queued");
+    expect(sortedKeys(fixture)).toEqual([
+      "at",
+      "childRunId",
+      "depth",
+      "intent",
+      "parentDecisionArrayIndex",
+      "parentDecisionId",
+      "parentRunId",
+      "protocol",
+      "queuePosition",
+      "runId",
+      "type"
+    ]);
     expect(JSON.parse(JSON.stringify(fixture))).toEqual(fixture);
   });
 });
