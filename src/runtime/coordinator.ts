@@ -71,6 +71,7 @@ export type RunProtocolFn = (input: {
   readonly emit?: (event: RunEvent) => void;
   readonly currentDepth?: number;
   readonly effectiveMaxDepth?: number;
+  readonly effectiveMaxConcurrentChildren?: number;
   /**
    * Root-run deadline (epoch ms). Children inherit `parentDeadlineMs - now()`
    * as their default timeout window so a depth-N child sees the ROOT's deadline,
@@ -108,6 +109,7 @@ interface CoordinatorRunOptions {
    * Plan 03 only plumbs the value.
    */
   readonly effectiveMaxDepth?: number;
+  readonly effectiveMaxConcurrentChildren?: number;
   /**
    * Engine `runProtocol` callback used by the delegate dispatch loop to
    * recursively run a child protocol. Optional so unit tests that exercise
@@ -233,7 +235,7 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
         });
         totalCost = turnOutcome.totalCost;
 
-        if (turnOutcome.decision?.type !== "delegate") {
+        if (turnOutcome.decision === undefined || Array.isArray(turnOutcome.decision) || turnOutcome.decision.type !== "delegate") {
           break;
         }
 
@@ -256,6 +258,7 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
         const dispatchResult = await dispatchDelegate({
           decision: turnOutcome.decision,
           parentDecisionId,
+          parentDecisionArrayIndex: 0,
           parentDepth: options.currentDepth ?? 0,
           parentRunId: runId,
           options,
@@ -358,7 +361,7 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
       });
       totalCost = synthesisOutcome.totalCost;
       // Phase 1: final-synthesis turn cannot delegate.
-      if (synthesisOutcome.decision?.type === "delegate") {
+      if (Array.isArray(synthesisOutcome.decision) || synthesisOutcome.decision?.type === "delegate") {
         throw new DogpileError({
           code: "invalid-configuration",
           message: "Coordinator final-synthesis turn cannot emit a delegate decision in Phase 1",
@@ -710,7 +713,7 @@ async function runCoordinatorWorkerTurn(turn: CoordinatorWorkerTurnOptions): Pro
     currentDepth: turn.options.currentDepth ?? 0,
     maxDepth: turn.options.effectiveMaxDepth ?? Number.POSITIVE_INFINITY
   });
-  if (decision?.type === "delegate") {
+  if (Array.isArray(decision) || decision?.type === "delegate") {
     throw new DogpileError({
       code: "invalid-configuration",
       message: "Workers cannot emit delegate decisions in Phase 1",
@@ -791,6 +794,7 @@ function responseCost(response: ModelResponse): CostSummary {
 interface DispatchDelegateOptions {
   readonly decision: DelegateAgentDecision;
   readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
   readonly parentDepth: number;
   readonly parentRunId: string;
   readonly options: CoordinatorRunOptions;
@@ -931,6 +935,7 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     childRunId,
     parentRunId: input.parentRunId,
     parentDecisionId: input.parentDecisionId,
+    parentDecisionArrayIndex: input.parentDecisionArrayIndex,
     protocol: decision.protocol,
     intent: decision.intent,
     depth: input.parentDepth + 1,
@@ -973,6 +978,9 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     emit: teedEmit,
     currentDepth: input.parentDepth + 1,
     ...(options.effectiveMaxDepth !== undefined ? { effectiveMaxDepth: options.effectiveMaxDepth } : {}),
+    ...(options.effectiveMaxConcurrentChildren !== undefined
+      ? { effectiveMaxConcurrentChildren: options.effectiveMaxConcurrentChildren }
+      : {}),
     // BUDGET-02 / D-12: forward the ROOT deadline so depth-N grandchildren
     // see the same `parentDeadlineMs` rather than a fresh per-level snapshot.
     ...(parentDeadlineMs !== undefined ? { parentDeadlineMs } : {}),
@@ -1028,6 +1036,7 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
       childRunId,
       parentRunId: input.parentRunId,
       parentDecisionId: input.parentDecisionId,
+      parentDecisionArrayIndex: input.parentDecisionArrayIndex,
       error: errorPayload,
       partialTrace,
       partialCost
@@ -1066,6 +1075,7 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     childRunId,
     parentRunId: input.parentRunId,
     parentDecisionId: input.parentDecisionId,
+    parentDecisionArrayIndex: input.parentDecisionArrayIndex,
     subResult
   };
   parentEmit(completedEvent);
@@ -1258,4 +1268,3 @@ function errorPayloadFromUnknown(error: unknown, failedDecision: JsonObject): Su
     detail: { failedDecision }
   };
 }
-

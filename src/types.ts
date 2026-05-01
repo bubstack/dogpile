@@ -1394,7 +1394,7 @@ export interface TranscriptEntry {
   /** Text produced by the agent. */
   readonly output: string;
   /** Optional structured role/participation decision parsed from model output. */
-  readonly decision?: AgentDecision;
+  readonly decision?: AgentDecision | readonly DelegateAgentDecision[];
   /** Ordered runtime tool calls and results requested during this turn. */
   readonly toolCalls?: readonly TranscriptToolCall[];
 }
@@ -1793,6 +1793,13 @@ export interface DogpileOptions extends BudgetCostTierOptions {
    */
   readonly maxDepth?: number;
   /**
+   * Maximum delegated child runs that may execute in parallel.
+   *
+   * Defaults to 4. Per-run and per-decision values can only lower the engine
+   * ceiling; the effective value is `min(engine, run ?? Infinity, decision ?? Infinity)`.
+   */
+  readonly maxConcurrentChildren?: number;
+  /**
    * Fallback timeout (milliseconds) applied to delegated sub-runs when neither
    * the parent's `budget.timeoutMs` nor the decision-level
    * `decision.budget.timeoutMs` specifies one (BUDGET-02 / D-14).
@@ -1878,6 +1885,13 @@ export interface EngineOptions {
    */
   readonly maxDepth?: number;
   /**
+   * Maximum delegated child runs that may execute in parallel.
+   *
+   * Defaults to 4. Per-run lowering happens at `engine.run` / `engine.stream`
+   * call sites via {@link RunCallOptions.maxConcurrentChildren}.
+   */
+  readonly maxConcurrentChildren?: number;
+  /**
    * Fallback timeout (milliseconds) applied to delegated sub-runs when neither
    * the parent's `budget.timeoutMs` nor the decision-level
    * `decision.budget.timeoutMs` specifies one (BUDGET-02 / D-14).
@@ -1896,7 +1910,7 @@ export interface EngineOptions {
  *
  * @remarks
  * Only fields that should be controllable per-mission live here. Today the
- * sole field is `maxDepth`, which can only LOWER the engine's ceiling.
+ * fields are controls that can only LOWER the engine's ceiling.
  */
 export interface RunCallOptions {
   /**
@@ -1904,6 +1918,11 @@ export interface RunCallOptions {
    * effective value is `Math.min(engine.maxDepth ?? 4, runOptions.maxDepth ?? Infinity)`.
    */
   readonly maxDepth?: number;
+  /**
+   * Per-run delegated child concurrency ceiling. Cannot raise the engine's
+   * ceiling.
+   */
+  readonly maxConcurrentChildren?: number;
 }
 
 /**

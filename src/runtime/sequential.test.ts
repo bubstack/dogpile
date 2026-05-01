@@ -124,9 +124,12 @@ describe("sequential protocol", () => {
       throw new Error("expected second turn event");
     }
     const secondDecision = turnEvents[1].decision;
-    expect(secondDecision?.type).toBe("participate");
-    if (secondDecision?.type === "participate") {
-      expect(secondDecision.participation).toBe("abstain");
+    const singleDecision = (
+      Array.isArray(secondDecision) ? undefined : secondDecision
+    ) as Exclude<typeof secondDecision, readonly unknown[]> | undefined;
+    expect(singleDecision?.type).toBe("participate");
+    if (singleDecision?.type === "participate") {
+      expect(singleDecision.participation).toBe("abstain");
     }
   });
 

@@ -93,7 +93,8 @@ export type DemoTraceEventMetadata =
   | DemoSubRunCompletedEventMetadata
   | DemoSubRunFailedEventMetadata
   | DemoSubRunParentAbortedEventMetadata
-  | DemoSubRunBudgetClampedEventMetadata;
+  | DemoSubRunBudgetClampedEventMetadata
+  | DemoSubRunQueuedEventMetadata;
 
 export interface DemoRoleAssignmentEventMetadata {
   readonly type: "role-assignment";
@@ -191,6 +192,7 @@ export interface DemoSubRunStartedEventMetadata {
   readonly childRunId: string;
   readonly parentRunId: string;
   readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
   readonly protocol: string;
   readonly intent: string;
   readonly depth: number;
@@ -202,6 +204,7 @@ export interface DemoSubRunCompletedEventMetadata {
   readonly childRunId: string;
   readonly parentRunId: string;
   readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
 }
 
 export interface DemoSubRunFailedEventMetadata {
@@ -209,6 +212,7 @@ export interface DemoSubRunFailedEventMetadata {
   readonly childRunId: string;
   readonly parentRunId: string;
   readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
   readonly errorCode: string;
   readonly errorMessage: string;
 }
@@ -228,6 +232,15 @@ export interface DemoSubRunBudgetClampedEventMetadata {
   readonly requestedTimeoutMs: number;
   readonly clampedTimeoutMs: number;
   readonly reason: "exceeded-parent-remaining";
+}
+
+export interface DemoSubRunQueuedEventMetadata {
+  readonly type: "sub-run-queued";
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
+  readonly queuePosition: number;
 }
 
 export interface DemoTraceEventListItem {
@@ -480,6 +493,8 @@ function traceEventTitle(event: RunEvent): string {
       return `Parent aborted after sub-run ${event.childRunId}`;
     case "sub-run-budget-clamped":
       return `Sub-run ${event.childRunId} budget clamped to ${event.clampedTimeoutMs}ms`;
+    case "sub-run-queued":
+      return `Sub-run ${event.childRunId} queued`;
   }
 
   return assertNever(event);
@@ -509,6 +524,7 @@ function traceEventVisualSection(event: RunEvent): DemoTraceEventVisualSection {
     case "sub-run-failed":
     case "sub-run-parent-aborted":
     case "sub-run-budget-clamped":
+    case "sub-run-queued":
       return "activity-log";
   }
 
@@ -539,6 +555,7 @@ function traceEventVisualState(event: RunEvent): DemoTraceEventVisualState {
     case "sub-run-failed":
     case "sub-run-parent-aborted":
     case "sub-run-budget-clamped":
+    case "sub-run-queued":
       return "turn-completed";
   }
 
@@ -644,6 +661,7 @@ function traceEventMetadata(event: RunEvent): DemoTraceEventMetadata {
         childRunId: event.childRunId,
         parentRunId: event.parentRunId,
         parentDecisionId: event.parentDecisionId,
+        parentDecisionArrayIndex: event.parentDecisionArrayIndex,
         protocol: event.protocol,
         intent: event.intent,
         depth: event.depth,
@@ -654,7 +672,8 @@ function traceEventMetadata(event: RunEvent): DemoTraceEventMetadata {
         type: event.type,
         childRunId: event.childRunId,
         parentRunId: event.parentRunId,
-        parentDecisionId: event.parentDecisionId
+        parentDecisionId: event.parentDecisionId,
+        parentDecisionArrayIndex: event.parentDecisionArrayIndex
       };
     case "sub-run-failed":
       return {
@@ -662,6 +681,7 @@ function traceEventMetadata(event: RunEvent): DemoTraceEventMetadata {
         childRunId: event.childRunId,
         parentRunId: event.parentRunId,
         parentDecisionId: event.parentDecisionId,
+        parentDecisionArrayIndex: event.parentDecisionArrayIndex,
         errorCode: event.error.code,
         errorMessage: event.error.message
       };
@@ -681,6 +701,15 @@ function traceEventMetadata(event: RunEvent): DemoTraceEventMetadata {
         requestedTimeoutMs: event.requestedTimeoutMs,
         clampedTimeoutMs: event.clampedTimeoutMs,
         reason: event.reason
+      };
+    case "sub-run-queued":
+      return {
+        type: event.type,
+        childRunId: event.childRunId,
+        parentRunId: event.parentRunId,
+        parentDecisionId: event.parentDecisionId,
+        parentDecisionArrayIndex: event.parentDecisionArrayIndex,
+        queuePosition: event.queuePosition
       };
   }
 

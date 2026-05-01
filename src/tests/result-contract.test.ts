@@ -897,6 +897,7 @@ describe("single-call result contract", () => {
       childRunId: child.trace.runId,
       parentRunId: parent.trace.runId,
       parentDecisionId: `${parent.trace.runId}:decision:1`,
+      parentDecisionArrayIndex: 0,
       subResult: child
     };
     const parentEvents: readonly RunEvent[] = [...parent.trace.events, subRunCompleted];
@@ -1013,6 +1014,7 @@ describe("single-call result contract", () => {
       childRunId: child.trace.runId,
       parentRunId: "run-parent-sub-run-failed-roundtrip",
       parentDecisionId: "decision-7",
+      parentDecisionArrayIndex: 0,
       error: {
         code: "provider-timeout",
         message: "Child timed out before completing.",

@@ -71,6 +71,7 @@ export function validateDogpileOptions(options: DogpileOptions): void {
   validateOptionalSeed(options.seed, "seed");
   validateOptionalAbortSignal(options.signal, "signal");
   validateOptionalNonNegativeInteger(options.maxDepth, "maxDepth");
+  validateOptionalPositiveInteger(options.maxConcurrentChildren, "maxConcurrentChildren");
   validateOptionalPositiveFiniteNumber(options.defaultSubRunTimeoutMs, "defaultSubRunTimeoutMs");
 }
 
@@ -87,6 +88,7 @@ export function validateRunCallOptions(options: unknown, path = "options"): void
   }
   const record = requireRecord(options, path);
   validateOptionalNonNegativeInteger(record.maxDepth, `${path}.maxDepth`);
+  validateOptionalPositiveInteger(record.maxConcurrentChildren, `${path}.maxConcurrentChildren`);
 }
 
 /**
@@ -107,6 +109,7 @@ export function validateEngineOptions(options: EngineOptions): void {
   validateOptionalSeed(options.seed, "seed");
   validateOptionalAbortSignal(options.signal, "signal");
   validateOptionalNonNegativeInteger(options.maxDepth, "maxDepth");
+  validateOptionalPositiveInteger(options.maxConcurrentChildren, "maxConcurrentChildren");
   validateOptionalPositiveFiniteNumber(options.defaultSubRunTimeoutMs, "defaultSubRunTimeoutMs");
 }
 

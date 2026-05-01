@@ -305,6 +305,7 @@ export function createReplayTraceBudgetStateChanges(
       case "sub-run-failed":
       case "sub-run-parent-aborted":
       case "sub-run-budget-clamped":
+      case "sub-run-queued":
         return [];
     }
   });
@@ -462,6 +463,12 @@ export function createReplayTraceProtocolDecision(
       return {
         ...base
       };
+    case "sub-run-queued":
+      return {
+        ...base,
+        childRunId: event.childRunId,
+        queuePosition: event.queuePosition
+      };
   }
 }
 
@@ -497,6 +504,8 @@ function defaultProtocolDecision(event: RunEvent): ReplayTraceProtocolDecisionTy
       return "mark-sub-run-parent-aborted";
     case "sub-run-budget-clamped":
       return "mark-sub-run-budget-clamped";
+    case "sub-run-queued":
+      return "queue-sub-run";
   }
 }
 

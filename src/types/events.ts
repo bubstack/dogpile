@@ -231,9 +231,7 @@ export interface ParticipateAgentDecision {
 /**
  * Decision emitted by a coordinator agent that delegates a sub-mission to a
  * coordination protocol rather than contributing directly. The runtime
- * dispatches a child run when this decision is returned (Phase 1+; Phase 1 only
- * accepts a single delegate per turn — array-of-delegates is reserved for
- * Phase 3).
+ * dispatches a child run when this decision is returned.
  */
 export interface DelegateAgentDecision {
   /** Discriminant marking this as a delegate-style decision. */
@@ -250,6 +248,11 @@ export interface DelegateAgentDecision {
   readonly model?: string;
   /** Optional per-decision budget caps applied to the child run. */
   readonly budget?: BudgetCaps;
+  /**
+   * Optional per-decision child concurrency ceiling. This can only lower the
+   * engine/run effective max for the current coordinator fan-out turn (D-05).
+   */
+  readonly maxConcurrentChildren?: number;
 }
 
 /**
@@ -310,7 +313,7 @@ export interface TurnEvent {
   /** Model output produced by the agent. */
   readonly output: string;
   /** Optional structured role/participation decision parsed from model output. */
-  readonly decision?: AgentDecision;
+  readonly decision?: AgentDecision | readonly DelegateAgentDecision[];
   /** Cumulative cost after this turn. */
   readonly cost: CostSummary;
 }
@@ -339,7 +342,7 @@ export interface BroadcastContribution {
   /** Independent model output produced for the shared mission. */
   readonly output: string;
   /** Optional structured role/participation decision parsed from model output. */
-  readonly decision?: AgentDecision;
+  readonly decision?: AgentDecision | readonly DelegateAgentDecision[];
 }
 
 /**
@@ -486,6 +489,13 @@ export interface SubRunStartedEvent {
   readonly parentRunId: string;
   /** Replay decision id of the parent decision that triggered this sub-run. */
   readonly parentDecisionId: string;
+  /**
+   * 0-indexed position of this delegate within the fan-out array of its
+   * originating coordinator plan-turn (Phase 3 D-10). Single-delegate turns
+   * use `0` for backward compatibility. Together with `parentDecisionId`, this
+   * uniquely identifies the delegate within a fan-out.
+   */
+  readonly parentDecisionArrayIndex: number;
   /** Coordination protocol the child run will execute. */
   readonly protocol: ProtocolName;
   /** Mission intent passed to the child run. */
@@ -521,6 +531,13 @@ export interface SubRunCompletedEvent {
   readonly parentRunId: string;
   /** Replay decision id of the parent decision that triggered the sub-run. */
   readonly parentDecisionId: string;
+  /**
+   * 0-indexed position of this delegate within the fan-out array of its
+   * originating coordinator plan-turn (Phase 3 D-10). Single-delegate turns
+   * use `0` for backward compatibility. Together with `parentDecisionId`, this
+   * uniquely identifies the delegate within a fan-out.
+   */
+  readonly parentDecisionArrayIndex: number;
   /** Full child {@link RunResult}, including the embedded child {@link Trace}. */
   readonly subResult: RunResult;
 }
@@ -547,6 +564,13 @@ export interface SubRunFailedEvent {
   readonly parentRunId: string;
   /** Replay decision id of the parent decision that triggered the sub-run. */
   readonly parentDecisionId: string;
+  /**
+   * 0-indexed position of this delegate within the fan-out array of its
+   * originating coordinator plan-turn (Phase 3 D-10). Single-delegate turns
+   * use `0` for backward compatibility. Together with `parentDecisionId`, this
+   * uniquely identifies the delegate within a fan-out.
+   */
+  readonly parentDecisionArrayIndex: number;
   /** Structured failure description. */
   readonly error: {
     /** Stable error code (matches DogpileError code shape). */
@@ -633,6 +657,30 @@ export interface SubRunBudgetClampedEvent {
 }
 
 /**
+ * Event emitted when a delegated sub-run is enqueued because the
+ * coordinator's effective `maxConcurrentChildren` budget is fully in flight
+ * (Phase 3 D-07). Emitted ONLY when the slot is not immediately free —
+ * no-pressure runs do NOT emit this event.
+ *
+ * Three-event timeline under pressure: sub-run-queued → sub-run-started →
+ * sub-run-completed (or sub-run-failed). Without pressure: sub-run-started
+ * → completion (no queued event).
+ */
+export interface SubRunQueuedEvent {
+  readonly type: "sub-run-queued";
+  readonly runId: string;
+  readonly at: string;
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
+  readonly protocol: ProtocolName;
+  readonly intent: string;
+  readonly depth: number;
+  readonly queuePosition: number;
+}
+
+/**
  * Successful coordination event emitted by Dogpile and persisted in traces.
  *
  * @remarks
@@ -651,6 +699,7 @@ export interface SubRunBudgetClampedEvent {
  * - `sub-run-started`: a delegated sub-run was dispatched.
  * - `sub-run-completed`: a delegated sub-run completed and embedded its full result.
  * - `sub-run-failed`: a delegated sub-run failed before completion.
+ * - `sub-run-queued`: a delegated sub-run waited for a concurrency slot.
  * - `budget-stop`: a configured budget cap halted further model turns.
  * - `final`: the run completed and produced the final output.
  *
@@ -686,6 +735,7 @@ export type RunEvent =
   | SubRunFailedEvent
   | SubRunParentAbortedEvent
   | SubRunBudgetClampedEvent
+  | SubRunQueuedEvent
   | BudgetStopEvent
   | FinalEvent;
 
@@ -716,7 +766,8 @@ export type StreamLifecycleEvent =
   | SubRunCompletedEvent
   | SubRunFailedEvent
   | SubRunParentAbortedEvent
-  | SubRunBudgetClampedEvent;
+  | SubRunBudgetClampedEvent
+  | SubRunQueuedEvent;
 
 /**
  * Output event yielded by `stream()`.
@@ -771,4 +822,3 @@ export type StreamCompletionEvent = FinalEvent;
  * {@link RunResult} trace to return.
  */
 export type StreamEvent = StreamLifecycleEvent | StreamOutputEvent | StreamErrorEvent | StreamCompletionEvent;
-

@@ -513,6 +513,7 @@ describe("BUDGET-03 cost & token roll-up across recursion", () => {
       childRunId: childEvent.childRunId,
       parentRunId: childEvent.parentRunId,
       parentDecisionId: childEvent.parentDecisionId,
+      parentDecisionArrayIndex: childEvent.parentDecisionArrayIndex,
       error: {
         code: "provider-timeout",
         message: "synthetic"

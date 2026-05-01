@@ -353,6 +353,7 @@ describe("trace event schema", () => {
       childRunId: "run-child-sub-run-started",
       parentRunId: "run-parent-sub-run-started",
       parentDecisionId: "decision-1",
+      parentDecisionArrayIndex: 0,
       protocol: "coordinator",
       intent: "Investigate constraint violations.",
       depth: 1,
@@ -366,6 +367,7 @@ describe("trace event schema", () => {
       "childRunId",
       "depth",
       "intent",
+      "parentDecisionArrayIndex",
       "parentDecisionId",
       "parentRunId",
       "protocol",
@@ -393,6 +395,7 @@ describe("trace event schema", () => {
       childRunId: child.trace.runId,
       parentRunId: "run-parent-sub-run-completed",
       parentDecisionId: "decision-2",
+      parentDecisionArrayIndex: 0,
       subResult: child
     };
     const variant: RunEvent = fixture;
@@ -401,6 +404,7 @@ describe("trace event schema", () => {
     expect(sortedKeys(fixture)).toEqual([
       "at",
       "childRunId",
+      "parentDecisionArrayIndex",
       "parentDecisionId",
       "parentRunId",
       "runId",
@@ -434,6 +438,7 @@ describe("trace event schema", () => {
       childRunId: child.trace.runId,
       parentRunId: "run-parent-sub-run-failed",
       parentDecisionId: "decision-3",
+      parentDecisionArrayIndex: 0,
       error: {
         code: "aborted",
         message: "Child run aborted before completion.",
@@ -457,6 +462,7 @@ describe("trace event schema", () => {
       "at",
       "childRunId",
       "error",
+      "parentDecisionArrayIndex",
       "parentDecisionId",
       "parentRunId",
       "partialCost",

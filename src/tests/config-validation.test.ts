@@ -827,17 +827,17 @@ describe("maxConcurrentChildren option", () => {
     );
   });
 
-  it("rejects per-run maxConcurrentChildren that raises the engine ceiling", async () => {
+  it("rejects per-run maxConcurrentChildren that raises the engine ceiling", () => {
     const engine = createEngine({
       ...validEngineOptions(),
       protocol: { kind: "sequential", maxTurns: 1 },
       maxConcurrentChildren: 2
     });
 
-    await expect(engine.run("Validate bounded children.", { maxConcurrentChildren: 5 })).rejects.toMatchObject({
-      code: "invalid-configuration",
-      detail: { path: "maxConcurrentChildren" }
-    });
+    expectInvalidConfiguration(
+      () => engine.run("Validate bounded children.", { maxConcurrentChildren: 5 }),
+      "maxConcurrentChildren"
+    );
   });
 
   it("accepts per-run maxConcurrentChildren that lowers the engine ceiling", async () => {

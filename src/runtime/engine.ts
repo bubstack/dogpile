@@ -49,6 +49,7 @@ import {
 } from "./validation.js";
 
 const DEFAULT_MAX_DEPTH = 4;
+const DEFAULT_MAX_CONCURRENT_CHILDREN = 4;
 
 const defaultHighLevelProtocol = "sequential";
 const defaultHighLevelTier = "balanced";
@@ -78,6 +79,7 @@ export function createEngine(options: EngineOptions): Engine {
   const agents = orderAgentsForTemperature(options.agents ?? defaultAgents(), temperature, options.seed);
   const terminate = options.terminate ?? (options.budget ? conditionFromBudget(options.budget) : undefined);
   const engineMaxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const engineMaxConcurrentChildren = options.maxConcurrentChildren ?? DEFAULT_MAX_CONCURRENT_CHILDREN;
 
   return {
     run(intent: string, runOptions?: RunCallOptions): Promise<RunResult> {
@@ -88,6 +90,15 @@ export function createEngine(options: EngineOptions): Engine {
       const effectiveMaxDepth = Math.min(
         engineMaxDepth,
         runOptions?.maxDepth ?? Number.POSITIVE_INFINITY
+      );
+      assertRunDoesNotRaiseEngineMax(
+        "maxConcurrentChildren",
+        runOptions?.maxConcurrentChildren,
+        engineMaxConcurrentChildren
+      );
+      const effectiveMaxConcurrentChildren = Math.min(
+        engineMaxConcurrentChildren,
+        runOptions?.maxConcurrentChildren ?? Number.POSITIVE_INFINITY
       );
 
       const startedAtMs = Date.now();
@@ -110,6 +121,7 @@ export function createEngine(options: EngineOptions): Engine {
         ...(options.evaluate ? { evaluate: options.evaluate } : {}),
         currentDepth: 0,
         effectiveMaxDepth,
+        effectiveMaxConcurrentChildren,
         ...(parentDeadlineMs !== undefined ? { parentDeadlineMs } : {}),
         ...(options.defaultSubRunTimeoutMs !== undefined
           ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
@@ -125,6 +137,15 @@ export function createEngine(options: EngineOptions): Engine {
       const effectiveMaxDepth = Math.min(
         engineMaxDepth,
         runOptions?.maxDepth ?? Number.POSITIVE_INFINITY
+      );
+      assertRunDoesNotRaiseEngineMax(
+        "maxConcurrentChildren",
+        runOptions?.maxConcurrentChildren,
+        engineMaxConcurrentChildren
+      );
+      const effectiveMaxConcurrentChildren = Math.min(
+        engineMaxConcurrentChildren,
+        runOptions?.maxConcurrentChildren ?? Number.POSITIVE_INFINITY
       );
 
       const pendingEvents: StreamEvent[] = [];
@@ -215,6 +236,7 @@ export function createEngine(options: EngineOptions): Engine {
             ...(terminate ? { terminate } : {}),
             currentDepth: 0,
             effectiveMaxDepth,
+            effectiveMaxConcurrentChildren,
             ...(streamParentDeadlineMs !== undefined ? { parentDeadlineMs: streamParentDeadlineMs } : {}),
             ...(options.defaultSubRunTimeoutMs !== undefined
               ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
@@ -573,6 +595,8 @@ interface RunProtocolOptions {
    * Effective max recursion depth. Plan 04 enforces; Plan 03 plumbs the param.
    */
   readonly effectiveMaxDepth?: number;
+  /** Effective max delegated child concurrency resolved at run start. */
+  readonly effectiveMaxConcurrentChildren?: number;
   /**
    * Root-run deadline (epoch ms) threaded through every recursive coordinator
    * dispatch (BUDGET-02 / D-12). Children inherit `parentDeadlineMs - now()`
@@ -721,6 +745,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.emit ? { emit: options.emit } : {}),
         currentDepth: options.currentDepth ?? 0,
         effectiveMaxDepth: options.effectiveMaxDepth ?? Infinity,
+        effectiveMaxConcurrentChildren: options.effectiveMaxConcurrentChildren ?? DEFAULT_MAX_CONCURRENT_CHILDREN,
         ...(options.parentDeadlineMs !== undefined ? { parentDeadlineMs: options.parentDeadlineMs } : {}),
         ...(options.defaultSubRunTimeoutMs !== undefined
           ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
@@ -938,6 +963,23 @@ function withHighLevelDefaults(options: DogpileOptions): NormalizedDogpileOption
     protocol: options.protocol ?? defaultHighLevelProtocol,
     tier: options.tier ?? defaultHighLevelTier
   };
+}
+
+function assertRunDoesNotRaiseEngineMax(path: string, runValue: number | undefined, engineValue: number): void {
+  if (runValue === undefined || runValue <= engineValue) {
+    return;
+  }
+  throw new DogpileError({
+    code: "invalid-configuration",
+    message: `${path} cannot raise the engine ceiling (${engineValue}).`,
+    retryable: false,
+    detail: {
+      kind: "configuration-validation",
+      path,
+      expected: `integer <= ${engineValue}`,
+      actual: runValue
+    }
+  });
 }
 
 /**

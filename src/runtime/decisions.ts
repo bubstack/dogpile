@@ -24,7 +24,7 @@ export interface ParseAgentDecisionContext {
 export function parseAgentDecision(
   output: string,
   context: ParseAgentDecisionContext = {}
-): AgentDecision | undefined {
+): ParticipateAgentDecision | DelegateAgentDecision | DelegateAgentDecision[] | undefined {
   const delegateBlock = matchDelegateBlock(output);
   if (delegateBlock !== undefined) {
     return parseDelegateDecision(delegateBlock, context);
@@ -33,11 +33,19 @@ export function parseAgentDecision(
   return parseParticipateDecision(output);
 }
 
-export function isParticipatingDecision(decision: AgentDecision | undefined): boolean {
-  if (decision?.type !== "participate") {
+export function isParticipatingDecision(
+  decision: AgentDecision | readonly DelegateAgentDecision[] | undefined
+): boolean {
+  if (decision === undefined || isDelegateDecisionArray(decision) || decision.type !== "participate") {
     return false;
   }
   return decision.participation !== "abstain";
+}
+
+function isDelegateDecisionArray(
+  decision: AgentDecision | readonly DelegateAgentDecision[]
+): decision is readonly DelegateAgentDecision[] {
+  return Array.isArray(decision);
 }
 
 function parseParticipateDecision(output: string): ParticipateAgentDecision | undefined {
@@ -77,7 +85,7 @@ function matchDelegateBlock(output: string): string | undefined {
 function parseDelegateDecision(
   jsonText: string,
   context: ParseAgentDecisionContext
-): DelegateAgentDecision {
+): DelegateAgentDecision | DelegateAgentDecision[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(jsonText);
@@ -92,15 +100,24 @@ function parseDelegateDecision(
   }
 
   if (Array.isArray(parsed)) {
-    throwInvalidDelegate({
-      path: "decision",
-      message:
-        "delegate decision must be a single delegate object (array support reserved for Phase 3).",
-      expected: "single delegate object (array support reserved for Phase 3)",
-      received: "array"
-    });
+    if (parsed.length === 0) {
+      throwInvalidDelegate({
+        path: "decision",
+        message: "delegate array must not be empty.",
+        expected: "array with 1..8 delegate objects",
+        received: "empty array"
+      });
+    }
+    return parsed.map((item) => parseSingleDelegateObject(item, context));
   }
 
+  return parseSingleDelegateObject(parsed, context);
+}
+
+function parseSingleDelegateObject(
+  parsed: unknown,
+  context: ParseAgentDecisionContext
+): DelegateAgentDecision {
   if (parsed === null || typeof parsed !== "object") {
     throwInvalidDelegate({
       path: "decision",
@@ -139,6 +156,7 @@ function parseDelegateDecision(
     intent: string;
     model?: string;
     budget?: BudgetCaps;
+    maxConcurrentChildren?: number;
   } = {
     type: "delegate",
     protocol: protocol as ProtocolName,
@@ -168,6 +186,19 @@ function parseDelegateDecision(
 
   if (record["budget"] !== undefined) {
     result.budget = parseDelegateBudget(record["budget"]);
+  }
+
+  if (record["maxConcurrentChildren"] !== undefined) {
+    const value = record["maxConcurrentChildren"];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+      throwInvalidDelegate({
+        path: "decision.maxConcurrentChildren",
+        message: "delegate decision maxConcurrentChildren must be a positive integer when present.",
+        expected: "integer >= 1",
+        received: describe(value)
+      });
+    }
+    result.maxConcurrentChildren = value;
   }
 
   // Parse-time depth-overflow check (D-14). The dispatcher re-checks at

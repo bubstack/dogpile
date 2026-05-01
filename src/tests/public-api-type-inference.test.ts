@@ -22,6 +22,7 @@ import type {
   ConfiguredModelProvider,
   CoordinationProtocolSelection,
   CoordinatorProtocolConfig,
+  DelegateAgentDecision,
   DogpileErrorCode,
   DogpileErrorOptions,
   DogpileOptions,
@@ -277,8 +278,8 @@ type _FinalTraceEventIsExact = ExpectTrue<IsEqual<FinalTraceEvent, FinalEvent>>;
 type _AgentTurnTraceEventIsNotAny = ExpectFalse<IsAny<AgentTurnTraceEvent>>;
 type _AgentTurnOutputIsNotAny = ExpectFalse<IsAny<AgentTurnTraceEvent["output"]>>;
 type _AgentTurnOutputIsString = ExpectTrue<IsEqual<AgentTurnTraceEvent["output"], string>>;
-type _AgentTurnDecisionIsExact = ExpectTrue<IsEqual<AgentTurnDecision, AgentDecision>>;
-type _TranscriptDecisionIsExact = ExpectTrue<IsEqual<TranscriptDecision, AgentDecision>>;
+type _AgentTurnDecisionIsExact = ExpectTrue<IsEqual<AgentTurnDecision, AgentDecision | readonly DelegateAgentDecision[]>>;
+type _TranscriptDecisionIsExact = ExpectTrue<IsEqual<TranscriptDecision, AgentDecision | readonly DelegateAgentDecision[]>>;
 type _AgentDecisionParticipateBranchParticipationIsExact = ExpectTrue<
   IsEqual<Extract<AgentDecision, { type: "participate" }>["participation"], AgentParticipation>
 >;

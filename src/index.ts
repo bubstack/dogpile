@@ -93,6 +93,7 @@ export type {
   CoordinationProtocolSelection,
   CostSummary,
   CoordinatorProtocolConfig,
+  DelegateAgentDecision,
   DogpileErrorCode,
   DogpileErrorOptions,
   DogpileOptions,

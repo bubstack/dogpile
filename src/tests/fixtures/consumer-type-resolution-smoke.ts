@@ -63,7 +63,9 @@ const agentDecision: AgentDecision = {
   contribution: "Verify AgentDecision resolves from the package root."
 };
 const participation: AgentParticipation =
-  agentDecision.type === "participate" ? agentDecision.participation : "contribute";
+  !Array.isArray(agentDecision) && agentDecision.type === "participate"
+    ? agentDecision.participation
+    : "contribute";
 const agentDecisionFromTypesSubpath: AgentDecisionFromTypesSubpath = agentDecision;
 
 const options: DogpileOptions = {
