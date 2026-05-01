@@ -131,6 +131,30 @@ export function addCost(left: CostSummary, right: CostSummary): CostSummary {
   };
 }
 
+/**
+ * Walk a parent's events and accumulate the cost contributed by every
+ * sub-run (BUDGET-03 / D-06). Internal helper — not part of the public surface.
+ *
+ * - `sub-run-completed` events contribute `event.subResult.cost`.
+ * - `sub-run-failed` events contribute `event.partialCost` (real provider
+ *   spend captured before the throw).
+ *
+ * Used by the `parent-rollup-drift` parity check in
+ * {@link recomputeAccountingFromTrace} to verify the parent's recorded
+ * accounting equals `localOnly + Σ children` recursively.
+ */
+export function accumulateSubRunCost(events: readonly RunEvent[]): CostSummary {
+  let total = emptyCost();
+  for (const event of events) {
+    if (event.type === "sub-run-completed") {
+      total = addCost(total, event.subResult.cost);
+    } else if (event.type === "sub-run-failed") {
+      total = addCost(total, event.partialCost);
+    }
+  }
+  return total;
+}
+
 export function createTranscriptLink(transcript: readonly TranscriptEntry[]): TranscriptLink {
   return {
     kind: "trace-transcript",
@@ -704,6 +728,109 @@ export function recomputeAccountingFromTrace(trace: Trace): RunAccounting {
           field: drift.field,
           recorded: drift.recorded,
           recomputed: drift.recomputed
+        }
+      });
+    }
+  }
+
+  // BUDGET-03 / D-04: parent-rollup-drift parity check. Runs BEFORE the
+  // child recurse loop so a tampered child cost surfaces with the dedicated
+  // `subReason: "parent-rollup-drift"` rather than the generic
+  // `trace-accounting-mismatch` from the recurse check.
+  //
+  // The discriminator: each sub-run-completed event stores cost in TWO places
+  // (`subResult.cost` and `subResult.accounting.cost`). They must agree
+  // field-by-field — they are the parent-side roll-up source vs the
+  // child-side accounting source. Drift indicates someone mutated one without
+  // the other. For sub-run-failed events, `partialCost` must equal the cost
+  // implied by the partial trace's last cost-bearing event.
+  //
+  // Plus: Σ children must not exceed the parent's recorded total — cost is
+  // monotonic. A child total > parent total is unambiguous tampering.
+  for (let eventIndex = 0; eventIndex < trace.events.length; eventIndex += 1) {
+    const event = trace.events[eventIndex];
+    if (event === undefined) continue;
+    if (event.type === "sub-run-completed") {
+      const childRecordedRollup = createRunAccounting({
+        tier: trace.tier,
+        cost: event.subResult.cost,
+        events: []
+      });
+      const childRecordedAccounting = event.subResult.accounting;
+      const drift = firstDifferingField(childRecordedAccounting, childRecordedRollup);
+      if (drift !== null) {
+        throw new DogpileError({
+          code: "invalid-configuration",
+          message: `Trace parent-rollup mismatch at sub-run ${event.childRunId}: field "${drift.field}" recorded ${drift.recorded} on accounting, ${drift.recomputed} on subResult.cost.`,
+          retryable: false,
+          detail: {
+            kind: "trace-validation",
+            reason: "trace-accounting-mismatch",
+            subReason: "parent-rollup-drift",
+            eventIndex,
+            childRunId: event.childRunId,
+            field: drift.field,
+            recorded: drift.recorded,
+            recomputed: drift.recomputed
+          }
+        });
+      }
+    } else if (event.type === "sub-run-failed") {
+      const partialFromTrace = lastCostBearingEventCost(event.partialTrace.events) ?? emptyCost();
+      const recordedAccounting = createRunAccounting({
+        tier: trace.tier,
+        cost: event.partialCost,
+        events: []
+      });
+      const recomputedAccounting = createRunAccounting({
+        tier: trace.tier,
+        cost: partialFromTrace,
+        events: []
+      });
+      const drift = firstDifferingField(recordedAccounting, recomputedAccounting);
+      if (drift !== null) {
+        throw new DogpileError({
+          code: "invalid-configuration",
+          message: `Trace parent-rollup mismatch at sub-run ${event.childRunId}: partialCost field "${drift.field}" recorded ${drift.recorded}, recomputed ${drift.recomputed} from partialTrace events.`,
+          retryable: false,
+          detail: {
+            kind: "trace-validation",
+            reason: "trace-accounting-mismatch",
+            subReason: "parent-rollup-drift",
+            eventIndex,
+            childRunId: event.childRunId,
+            field: drift.field,
+            recorded: drift.recorded,
+            recomputed: drift.recomputed
+          }
+        });
+      }
+    }
+  }
+
+  // Tree-level monotonicity: Σ children must be ≤ parent's recorded total
+  // across all 8 fields. Cost is non-negative and monotonic.
+  const subRunTotal = accumulateSubRunCost(trace.events);
+  const parentTotal = trace.finalOutput.cost;
+  for (const field of RECOMPUTE_FIELD_ORDER) {
+    if (field.startsWith("usage.")) continue; // usage mirrors cost; one check is enough.
+    const [, key] = field.split(".") as [string, keyof CostSummary];
+    const parentValue = parentTotal[key];
+    const childValue = subRunTotal[key];
+    if (childValue - parentValue > FLOAT_EPSILON) {
+      throw new DogpileError({
+        code: "invalid-configuration",
+        message: `Trace parent-rollup mismatch at run ${trace.runId}: field "${field}" Σ children ${childValue} exceeds parent recorded ${parentValue}.`,
+        retryable: false,
+        detail: {
+          kind: "trace-validation",
+          reason: "trace-accounting-mismatch",
+          subReason: "parent-rollup-drift",
+          eventIndex: -1,
+          childRunId: trace.runId,
+          field,
+          recorded: parentValue,
+          recomputed: childValue
         }
       });
     }
