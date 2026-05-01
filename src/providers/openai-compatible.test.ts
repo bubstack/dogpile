@@ -41,6 +41,10 @@ describe("classifyHostLocality", () => {
     ["169.254.1.1", "local"],
     ["::1", "local"],
     ["[::1]", "local"],
+    ["[::ffff:7f00:1]", "local"],
+    ["::ffff:0a00:1", "local"],
+    ["::ffff:c0a8:101", "local"],
+    ["::ffff:0808:0808", "remote"],
     ["fc00::1", "local"],
     ["fd12:3456::1", "local"],
     ["fe80::1", "local"],
@@ -248,6 +252,26 @@ describe("createOpenAICompatibleProvider", () => {
           path: "locality",
           reason: "remote-override-on-local-host",
           host: "localhost"
+        })
+      })
+    );
+  });
+
+  it("throws when locality='remote' is set on an IPv4-mapped IPv6 local host", () => {
+    expect(() =>
+      createOpenAICompatibleProvider({
+        model: "gpt-4.1-mini",
+        baseURL: "http://[::ffff:7f00:1]:11434/v1",
+        locality: "remote",
+        fetch: async () => jsonResponse({})
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        code: "invalid-configuration",
+        detail: expect.objectContaining({
+          path: "locality",
+          reason: "remote-override-on-local-host",
+          host: "[::ffff:7f00:1]"
         })
       })
     );

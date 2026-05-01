@@ -18,6 +18,7 @@ import type {
   ModelRequest,
   ModelResponse,
   RunEvent,
+  RunResult,
   RuntimeTool,
   TerminationEvaluationContext
 } from "../index.js";
@@ -587,6 +588,64 @@ function createLocalityScriptedProvider(opts: LocalityScriptedProviderOptions): 
       };
     }
   };
+}
+
+function createMinimalChildResult(output: string, modelProviderId: string): RunResult {
+  const cost = { usd: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  return {
+    output,
+    eventLog: {
+      kind: "run-event-log",
+      runId: `child-${output}`,
+      protocol: "sequential",
+      eventTypes: [],
+      eventCount: 0,
+      events: []
+    },
+    trace: {
+      schemaVersion: "1.0",
+      runId: `child-${output}`,
+      protocol: "sequential",
+      tier: "fast",
+      modelProviderId,
+      agentsUsed: [],
+      inputs: {
+        intent: output,
+        protocol: "sequential",
+        tier: "fast",
+        modelProviderId,
+        agents: [],
+        tools: [],
+        temperature: 0.5
+      },
+      budget: {},
+      budgetStateChanges: [],
+      seed: {},
+      protocolDecisions: [],
+      providerCalls: [],
+      finalOutput: { output },
+      events: [],
+      transcript: []
+    },
+    transcript: [],
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    metadata: {
+      runId: `child-${output}`,
+      protocol: "sequential",
+      tier: "fast",
+      modelProviderId,
+      agentsUsed: [],
+      startedAt: new Date(0).toISOString(),
+      completedAt: new Date(0).toISOString(),
+      durationMs: 0
+    },
+    accounting: {
+      budget: {},
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cost
+    },
+    cost
+  } as unknown as RunResult;
 }
 
 function delay(ms: number): Promise<void> {
@@ -1219,6 +1278,54 @@ describe("local-provider concurrency clamp (Phase 3 CONCURRENCY-02)", () => {
       reason: "local-provider-detected",
       providerId: "local-silent-override-clamp-model"
     });
+  });
+
+  it("applies default maxConcurrentChildren=4 for direct runCoordinator delegate fan-out", async () => {
+    const { runCoordinator } = await import("../runtime/coordinator.js");
+    const concurrency = createConcurrencyProbe();
+    const observedEvents: RunEvent[] = [];
+    const provider = createScriptedCoordinatorProvider({
+      id: "direct-default-concurrency-model",
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "child 0" },
+          { protocol: "sequential", intent: "child 1" },
+          { protocol: "sequential", intent: "child 2" },
+          { protocol: "sequential", intent: "child 3" },
+          { protocol: "sequential", intent: "child 4" },
+          { protocol: "sequential", intent: "child 5" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await runCoordinator({
+      intent: "Direct runCoordinator default concurrency.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      tools: [],
+      temperature: 0.5,
+      emit(event: RunEvent): void {
+        observedEvents.push(event);
+      },
+      runProtocol: async (input): Promise<RunResult> => {
+        concurrency.inFlight += 1;
+        concurrency.maxInFlight = Math.max(concurrency.maxInFlight, concurrency.inFlight);
+        await delay(5);
+        concurrency.inFlight -= 1;
+        return createMinimalChildResult(input.intent, input.model.id);
+      }
+    });
+
+    expect(concurrency.maxInFlight).toBe(4);
+    expect(observedEvents.filter((event) => event.type === "sub-run-queued")).toHaveLength(2);
+    expect(result.trace.events.filter((event) => event.type === "sub-run-concurrency-clamped")).toHaveLength(0);
+    expect(JSON.parse(JSON.stringify(result.trace))).toEqual(result.trace);
   });
 });
 

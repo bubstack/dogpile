@@ -207,6 +207,10 @@ function throwInvalid(path: string, expected: string): never {
  */
 export function classifyHostLocality(host: string): "local" | "remote" {
   const lower = host.toLowerCase().replace(/^\[|\]$/g, "");
+  const mappedIpv4 = ipv4MappedToDottedQuad(lower);
+  if (mappedIpv4 !== undefined) {
+    return classifyHostLocality(mappedIpv4);
+  }
   if (lower === "localhost") return "local";
   if (lower.endsWith(".local")) return "local";
   if (/^127(?:\.\d{1,3}){3}$/.test(lower)) return "local";
@@ -218,6 +222,19 @@ export function classifyHostLocality(host: string): "local" | "remote" {
   if (/^f[cd][0-9a-f]{2}:/.test(lower)) return "local";
   if (/^fe[89ab][0-9a-f]?:/.test(lower)) return "local";
   return "remote";
+}
+
+function ipv4MappedToDottedQuad(host: string): string | undefined {
+  const match = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (match === null) {
+    return undefined;
+  }
+  const high = Number.parseInt(match[1] ?? "", 16);
+  const low = Number.parseInt(match[2] ?? "", 16);
+  if (!Number.isFinite(high) || !Number.isFinite(low)) {
+    return undefined;
+  }
+  return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
 }
 
 function createURL(options: OpenAICompatibleProviderOptions): URL {

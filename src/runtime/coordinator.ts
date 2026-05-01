@@ -139,6 +139,7 @@ interface CoordinatorRunOptions {
  * `invalid-configuration` (T-03-01). Not a public option.
  */
 const MAX_DISPATCH_PER_TURN = 8;
+const DEFAULT_MAX_CONCURRENT_CHILDREN = 4;
 
 interface Semaphore {
   acquire(): Promise<void>;
@@ -334,7 +335,7 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
           Number.POSITIVE_INFINITY
         );
         let effectiveForTurn = Math.min(
-          options.effectiveMaxConcurrentChildren ?? Number.POSITIVE_INFINITY,
+          options.effectiveMaxConcurrentChildren ?? DEFAULT_MAX_CONCURRENT_CHILDREN,
           decisionMax
         );
         const requestedMax = effectiveForTurn;
