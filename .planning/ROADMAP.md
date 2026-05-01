@@ -91,7 +91,7 @@ Plans:
 - [x] 08-02-PLAN.md — Frozen fixture (audit-record-v1.json) + type-check.ts + shape test
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 08-03-PLAN.md — Public-surface lockstep: /runtime/audit subpath + package-exports.test.ts + CHANGELOG + CLAUDE.md
+- [x] 08-03-PLAN.md — Public-surface lockstep: /runtime/audit subpath + package-exports.test.ts + CHANGELOG + CLAUDE.md
 
 **Cross-cutting constraints:**
 - `AuditRecord` type has zero imports from RunEvent variants in its declaration block
