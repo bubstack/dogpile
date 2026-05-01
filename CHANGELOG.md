@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — v0.4.0
+## [0.4.0] — 2026-05-01
 
 Recursive coordination — coordinators can now dispatch whole sub-missions via a `delegate` decision, with embedded child traces, propagated budgets/aborts/costs, bounded concurrency with locality clamping, live child-event bubbling on streams, and structured child-failure escalation. See [`docs/recursive-coordination.md`](docs/recursive-coordination.md) for the full surface and a worked example.
 
@@ -128,6 +128,7 @@ failures surface as stable public `DogpileError` instances.
 - **`examples/recursive-coordination/`** — new runnable example using the deterministic provider by default and `createOpenAICompatibleProvider` in live mode. Reuses the Hugging Face upload GUI mission verbatim and wraps it in a coordinator-with-delegate. Demonstrates all v0.4.0 surfaces: parentRunIds chain, intentionally-failing child with `partialCost`, structured failures in the next coordinator turn, locality-driven concurrency clamp. (Phase 5)
 - **`examples/README.md`** — index entry mirroring the huggingface-upload-gui section format. (Phase 5)
 - **`AGENTS.md` + `CLAUDE.md`** — cross-cutting-invariants list mirrors a recursive-coordination public-surface entry. (Phase 5)
+- Prepared the release identity for `@dogpile/sdk@0.4.0` and `dogpile-sdk-0.4.0.tgz`. (Phase 5)
 
 ### Notes
 

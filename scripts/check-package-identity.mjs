@@ -176,9 +176,14 @@ async function checkReleaseReferences({ expectedPackageName, expectedVersion, ex
     {
       path: "CHANGELOG.md",
       snippets: [
-        `## ${expectedVersion}`,
         `${expectedPackageName}@${expectedVersion}`,
         expectedPackFilename
+      ],
+      validators: [
+        {
+          label: `release heading for ${expectedVersion}`,
+          test: (contents) => hasReleaseHeading(contents, expectedVersion)
+        }
       ]
     }
   ];
@@ -203,9 +208,27 @@ async function checkReleaseReferences({ expectedPackageName, expectedVersion, ex
         findings.push(`${check.path} must include current release identity snippet ${JSON.stringify(snippet)}.`);
       }
     }
+
+    for (const validator of check.validators ?? []) {
+      if (!validator.test(contents)) {
+        findings.push(`${check.path} must include ${validator.label}.`);
+      }
+    }
   }
 
   return findings;
+}
+
+function hasReleaseHeading(contents, expectedVersion) {
+  const escapedVersion = escapeRegExp(expectedVersion);
+  const unreleasedHeading = new RegExp(`^## \\[Unreleased\\] — v${escapedVersion}$`, "m");
+  const datedHeading = new RegExp(`^## \\[${escapedVersion}\\] — \\d{4}-\\d{2}-\\d{2}$`, "m");
+
+  return unreleasedHeading.test(contents) || datedHeading.test(contents);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function collectFiles(directory) {
