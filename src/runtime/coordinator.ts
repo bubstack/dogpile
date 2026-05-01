@@ -575,11 +575,14 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
             dispatchResults.push({ index, result });
           } catch (error) {
             firstFailureIndex ??= index;
-            if (delegates.length === 1 && options.onChildFailure === "abort") {
-              throw error;
-            }
             const dispatchedChild = dispatchedForTurn[index];
             const failure = dispatchedChild?.failure;
+            if (
+              delegates.length === 1 &&
+              (options.onChildFailure === "abort" || failure === undefined || isDelegateValidationError(error))
+            ) {
+              throw error;
+            }
             const failureMessage = error instanceof Error ? error.message : String(error);
             let taggedText = `[sub-run ${childRunId} failed]: ${failureMessage}`;
             if (failure) {
@@ -600,7 +603,11 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
         });
         const settled = await Promise.allSettled(tasks);
         const firstRejected = settled.find((result) => result.status === "rejected");
-        if (firstRejected?.status === "rejected" && delegates.length === 1 && options.onChildFailure === "abort") {
+        if (
+          firstRejected?.status === "rejected" &&
+          delegates.length === 1 &&
+          (options.onChildFailure === "abort" || dispatchResults.length === 0)
+        ) {
           throw firstRejected.reason;
         }
 
@@ -851,6 +858,11 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
       transcriptEntryCount: transcript.length
     });
   }
+}
+
+function isDelegateValidationError(error: unknown): boolean {
+  return DogpileError.isInstance(error) && error.code === "invalid-configuration" &&
+    error.detail?.["kind"] === "delegate-validation";
 }
 
 interface CoordinatorTurnOptions {
