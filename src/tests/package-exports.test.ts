@@ -1148,6 +1148,7 @@ describe("package exports", () => {
       "src/runtime/ids.ts",
       "src/runtime/logger.ts",
       "src/runtime/model.ts",
+      "src/runtime/provenance.ts",
       "src/runtime/retry.ts",
       "src/runtime/sequential.ts",
       "src/runtime/shared.ts",
@@ -1289,6 +1290,11 @@ describe("package exports", () => {
         types: "./dist/runtime/model.d.ts",
         import: "./dist/runtime/model.js",
         default: "./dist/runtime/model.js"
+      },
+      "./runtime/provenance": {
+        types: "./dist/runtime/provenance.d.ts",
+        import: "./dist/runtime/provenance.js",
+        default: "./dist/runtime/provenance.js"
       },
       "./providers/openai-compatible": {
         types: "./dist/providers/openai-compatible.d.ts",
