@@ -977,12 +977,13 @@ function synthesizeProviderEvents(
     if (event.type === "agent-turn") {
       const call = providerCalls[turnCount];
       if (call !== undefined) {
+        const modelId = typeof call.modelId === "string" && call.modelId.length > 0 ? call.modelId : call.providerId;
         result.push({
           type: "model-request",
           runId: trace.runId,
           callId: call.callId,
           providerId: call.providerId,
-          modelId: call.modelId,
+          modelId,
           startedAt: call.startedAt,
           agentId: call.agentId,
           role: call.role,
@@ -993,7 +994,7 @@ function synthesizeProviderEvents(
           runId: trace.runId,
           callId: call.callId,
           providerId: call.providerId,
-          modelId: call.modelId,
+          modelId,
           startedAt: call.startedAt,
           completedAt: call.completedAt,
           agentId: call.agentId,

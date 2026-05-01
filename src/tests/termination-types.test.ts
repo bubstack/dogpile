@@ -611,6 +611,8 @@ describe("termination public types", () => {
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
       "budget-stop",
       "final"
@@ -635,7 +637,7 @@ describe("termination public types", () => {
     ]);
     expect(result.trace.budgetStateChanges[1]).toMatchObject({
       kind: "replay-trace-budget-state-change",
-      eventIndex: 4,
+      eventIndex: 6,
       eventType: "budget-stop",
       cost: stopEvent.cost,
       iteration: 1,

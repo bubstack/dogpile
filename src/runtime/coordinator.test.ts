@@ -122,9 +122,17 @@ describe("coordinator protocol", () => {
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "model-request",
+      "model-request",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
-      "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -304,8 +312,14 @@ describe("coordinator protocol", () => {
     expect(events).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -340,15 +354,23 @@ describe("coordinator protocol", () => {
     expect(result.output).toBe("final-synthesis:release-coordinator:lead");
     expect(result.trace.protocol).toBe("coordinator");
     expect(result.trace.modelProviderId).toBe("coordinator-e2e-provider");
-    expect(eventLog).toHaveLength(8);
+    expect(eventLog).toHaveLength(16);
     expect(eventLog).toEqual(result.trace.events);
     expect(eventLog.map((event) => event.type)).toEqual([
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "model-request",
+      "model-request",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
-      "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -433,9 +455,17 @@ describe("coordinator protocol", () => {
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "model-request",
+      "model-request",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
-      "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);

@@ -493,6 +493,7 @@ describe("single-call result contract", () => {
     });
     expect(namespacedReplay).toEqual(replayed);
     expect(replayed.eventLog.events).not.toBe(savedTrace.events);
+    expectReplayProvenanceRoundTrip(replayed.eventLog.events, savedTrace.providerCalls);
     expect(replayed.transcript).toBe(savedTrace.transcript);
     expect(replayed.output).toBe(savedTrace.finalOutput.output);
     expect(JSON.parse(JSON.stringify(replayed))).toEqual(replayed);
@@ -541,6 +542,7 @@ describe("single-call result contract", () => {
       "agent-turn",
       "final"
     ]);
+    expectReplayProvenanceRoundTrip(replayed.eventLog.events, legacyTrace.providerCalls);
 
     const firstRequest = replayed.eventLog.events[2];
     const firstResponse = replayed.eventLog.events[3];
@@ -683,6 +685,8 @@ describe("single-call result contract", () => {
       }
 
       expect(call.providerId).toBe(trace.modelProviderId);
+      expect(typeof call.modelId).toBe("string");
+      expect(call.modelId.length).toBeGreaterThan(0);
       expect(call.agentId).toBe(transcript.agentId);
       expect(call.role).toBe(transcript.role);
       expect(call.request.messages.at(-1)?.content).toBe(transcript.input);
@@ -808,6 +812,8 @@ describe("single-call result contract", () => {
       );
       for (const call of result.trace.providerCalls) {
         expect(call.kind).toBe("replay-trace-provider-call");
+        expect(typeof call.modelId).toBe("string");
+        expect(call.modelId.length).toBeGreaterThan(0);
         expect(call.request.temperature).toBe(0);
         expect(call.request.metadata).toMatchObject({
           runId: result.trace.runId,
@@ -1315,4 +1321,56 @@ function eventTimestamp(event: RunEvent | undefined): string | undefined {
 
 function sortedKeys(value: object): string[] {
   return Object.keys(value).sort();
+}
+
+function expectReplayProvenanceRoundTrip(
+  events: readonly RunEvent[],
+  providerCalls: readonly ReplayTraceProviderCall[]
+): void {
+  const replayedModelRequests = events.filter((event) => event.type === "model-request");
+  const replayedModelResponses = events.filter((event) => event.type === "model-response");
+
+  expect(replayedModelRequests.length).toBeGreaterThan(0);
+  expect(replayedModelResponses.length).toBeGreaterThan(0);
+  expect(replayedModelRequests).toHaveLength(providerCalls.length);
+  expect(replayedModelResponses).toHaveLength(providerCalls.length);
+
+  for (const [index, event] of replayedModelRequests.entries()) {
+    const call = providerCalls[index];
+    if (event.type !== "model-request" || call === undefined) {
+      throw new Error("missing replayed model-request provenance fixture");
+    }
+
+    expect(event.callId).toBe(call.callId);
+    expect(event.providerId).toBe(call.providerId);
+    expect(event.modelId).toBe(call.modelId);
+    expect(event.startedAt).toBe(call.startedAt);
+    expect(event.agentId).toBe(call.agentId);
+    expect(event.role).toBe(call.role);
+    expect(event.request).toEqual(call.request);
+    expect(typeof event.modelId).toBe("string");
+    expect(typeof event.providerId).toBe("string");
+    expect(typeof event.callId).toBe("string");
+    expect(typeof event.startedAt).toBe("string");
+    expect(Date.parse(event.startedAt)).not.toBeNaN();
+  }
+
+  for (const [index, event] of replayedModelResponses.entries()) {
+    const call = providerCalls[index];
+    if (event.type !== "model-response" || call === undefined) {
+      throw new Error("missing replayed model-response provenance fixture");
+    }
+
+    expect(event.callId).toBe(call.callId);
+    expect(event.providerId).toBe(call.providerId);
+    expect(event.modelId).toBe(call.modelId);
+    expect(event.startedAt).toBe(call.startedAt);
+    expect(event.completedAt).toBe(call.completedAt);
+    expect(event.agentId).toBe(call.agentId);
+    expect(event.role).toBe(call.role);
+    expect(event.response).toEqual(call.response);
+    expect(typeof event.modelId).toBe("string");
+    expect(typeof event.completedAt).toBe("string");
+    expect(Date.parse(event.completedAt)).not.toBeNaN();
+  }
 }

@@ -1,0 +1,53 @@
+[
+  {
+    "agentId": "agent-1",
+    "callId": "0bf780e4-d41d-4bbd-8183-88a65a43bd6f:provider-call:1",
+    "modelId": "provenance-shape-fixture-model",
+    "providerId": "provenance-shape-fixture-model",
+    "request": {
+      "messages": [
+        {
+          "content": "You are agent-1, acting as planner in a Sequential multi-agent protocol.\nInstructions: Frame the mission and identify the important constraints.",
+          "role": "system"
+        },
+        {
+          "content": "Mission: Test provenance shape\nProvide your contribution.",
+          "role": "user"
+        }
+      ],
+      "metadata": {
+        "agentId": "agent-1",
+        "protocol": "sequential",
+        "role": "planner",
+        "runId": "0bf780e4-d41d-4bbd-8183-88a65a43bd6f",
+        "tier": "balanced",
+        "turn": 1
+      },
+      "temperature": 0.2
+    },
+    "role": "planner",
+    "runId": "0bf780e4-d41d-4bbd-8183-88a65a43bd6f",
+    "startedAt": "2026-05-01T18:34:08.255Z",
+    "type": "model-request"
+  },
+  {
+    "agentId": "agent-1",
+    "callId": "0bf780e4-d41d-4bbd-8183-88a65a43bd6f:provider-call:1",
+    "completedAt": "2026-05-01T18:34:08.255Z",
+    "modelId": "provenance-shape-fixture-model",
+    "providerId": "provenance-shape-fixture-model",
+    "response": {
+      "costUsd": 0.0001,
+      "text": "planner:agent-1 framed the mission.",
+      "usage": {
+        "inputTokens": 7,
+        "outputTokens": 4,
+        "totalTokens": 11
+      }
+    },
+    "role": "planner",
+    "runId": "0bf780e4-d41d-4bbd-8183-88a65a43bd6f",
+    "startedAt": "2026-05-01T18:34:08.255Z",
+    "type": "model-response"
+  }
+]

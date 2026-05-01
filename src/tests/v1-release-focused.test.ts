@@ -42,7 +42,13 @@ describe("v1 release focused coverage", () => {
     expect(requests).toHaveLength(1);
     expect(result.output).toBe("release answer from release-checker");
     expect(result.trace.modelProviderId).toBe("v1-focused-success-model");
-    expect(result.trace.events.map((event) => event.type)).toEqual(["role-assignment", "agent-turn", "final"]);
+    expect(result.trace.events.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
     expect(result.usage).toEqual({
       inputTokens: 5,
       outputTokens: 7,

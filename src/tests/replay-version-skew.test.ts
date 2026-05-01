@@ -40,7 +40,23 @@ describe("replay version-skew contract", () => {
 
     expect(replayed.output).toBe(savedTrace.finalOutput.output);
     expect(replayed.transcript).toBe(savedTrace.transcript);
-    expect(replayed.eventLog.events).toBe(savedTrace.events);
+    expect(replayed.eventLog.events).not.toBe(savedTrace.events);
+    expect(replayed.eventLog.events.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
+    expect(
+      replayed.eventLog.events
+        .filter((event) => event.type === "model-request" || event.type === "model-response")
+        .every((event) => event.modelId === "v0_3-replay-fixture")
+    ).toBe(true);
     expect(replayed.trace).toBe(savedTrace);
     expect(namespaced).toEqual(replayed);
     // JSON round-trip determinism — guards against non-JSON values sneaking into trace.
