@@ -106,12 +106,12 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
         throw normalizeFetchError(error, providerId);
       }
 
-      const payload = await readJson(response, providerId);
-
       if (!response.ok) {
+        const payload = await readJsonLenient(response);
         throw createProviderError(response, payload, providerId);
       }
 
+      const payload = await readJson(response, providerId);
       const completion = asChatCompletionResponse(payload, providerId);
       const text = readAssistantText(completion, providerId);
       const usage = normalizeUsage(completion.usage);
@@ -297,6 +297,14 @@ async function readJson(response: Response, providerId: string): Promise<unknown
         statusText: response.statusText
       }
     });
+  }
+}
+
+async function readJsonLenient(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return undefined;
   }
 }
 

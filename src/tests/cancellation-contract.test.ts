@@ -58,6 +58,34 @@ describe("caller cancellation contract", () => {
     });
   });
 
+  it("provider HTTP timeout with non-JSON body still surfaces provider-timeout source provider", async () => {
+    const provider = createOpenAICompatibleProvider({
+      id: "openai-compatible-provider-timeout-html-source",
+      model: "test-model",
+      apiKey: "test-key",
+      fetch: async () =>
+        new Response("<html>gateway timed out</html>", {
+          status: 504,
+          statusText: "Gateway Timeout",
+          headers: { "content-type": "text/html" }
+        })
+    });
+
+    await expect(run({
+      intent: "Verify provider timeout source provider for non-JSON error body.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: provider,
+      agents: [{ id: "writer", role: "writer" }]
+    })).rejects.toMatchObject({
+      code: "provider-timeout",
+      detail: {
+        source: "provider",
+        statusCode: 504
+      }
+    });
+  });
+
   it("provider timeout source engine is set when a child engine deadline expires", async () => {
     let planCalls = 0;
     const provider: ConfiguredModelProvider = {
