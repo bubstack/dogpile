@@ -21,6 +21,7 @@ import type {
   StreamEvent,
   StreamLifecycleEvent,
   StreamOutputEvent,
+  AbortedEvent,
   SubRunBudgetClampedEvent,
   SubRunCompletedEvent,
   SubRunConcurrencyClampedEvent,
@@ -122,6 +123,54 @@ describe("trace event schema", () => {
 
     expect(streamEvents.map((event) => event.type)).toEqual(["role-assignment", "agent-turn", "error", "final"]);
     expect(JSON.parse(JSON.stringify(streamEvents))).toEqual(streamEvents);
+  });
+
+  it("locks AbortedEvent as a stream lifecycle variant", () => {
+    const event: StreamLifecycleEvent = {
+      type: "aborted",
+      runId: "run-aborted-contract",
+      at: "2026-05-01T00:00:00.000Z",
+      reason: "parent-aborted"
+    };
+    const timeoutEvent: AbortedEvent = {
+      type: "aborted",
+      runId: "run-timeout-aborted-contract",
+      at: "2026-05-01T00:00:01.000Z",
+      reason: "timeout",
+      detail: {
+        source: "budget"
+      }
+    };
+    const streamEvents: readonly StreamEvent[] = [event, timeoutEvent];
+
+    const reasons = streamEvents.map((streamEvent) => {
+      if (streamEvent.type !== "aborted") {
+        return "not-aborted";
+      }
+      return streamEvent.reason;
+    });
+
+    expect(reasons).toEqual(["parent-aborted", "timeout"]);
+    expect(JSON.parse(JSON.stringify(streamEvents))).toEqual(streamEvents);
+  });
+
+  it("round-trips AbortedEvent parentRunIds ancestry through JSON serialization", () => {
+    const parentRunIds = ["run-grandparent", "run-parent"] as const;
+    const event: AbortedEvent = {
+      type: "aborted",
+      runId: "run-child",
+      at: "2026-05-01T00:00:02.000Z",
+      reason: "parent-aborted",
+      parentRunIds
+    };
+
+    expect(JSON.parse(JSON.stringify(event))).toEqual({
+      type: "aborted",
+      runId: "run-child",
+      at: "2026-05-01T00:00:02.000Z",
+      reason: "parent-aborted",
+      parentRunIds: ["run-grandparent", "run-parent"]
+    });
   });
 
   it("accepts optional parentRunIds on every stream lifecycle and output variant", () => {

@@ -1033,6 +1033,18 @@ describe("single-call result contract", () => {
     ).toBeUndefined();
   });
 
+  it("records zero aborted lifecycle events for a normally completed run", async () => {
+    const result = await run({
+      intent: "Complete without abort lifecycle events.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: createDeterministicModelProvider("result-contract-no-aborted-events"),
+      agents: [{ id: "writer", role: "writer" }]
+    });
+
+    expect(result.trace.events.filter((event) => event.type === "aborted")).toHaveLength(0);
+  });
+
   it("round-trips a sub-run-parent-aborted RunEvent variant through JSON serialization", () => {
     const fixture: SubRunParentAbortedEvent = {
       type: "sub-run-parent-aborted",
