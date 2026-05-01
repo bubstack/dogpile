@@ -174,6 +174,7 @@ export function createEngine(options: EngineOptions): Engine {
       const abortRace = createAbortRace(abortController.signal, options.model.id);
       let complete = false;
       let lastRunId = "";
+      let rootRunId: string | undefined;
       let pendingFinalEvent: FinalEvent | undefined;
       let activeAbortDrain: AbortDrainFn | undefined;
       const failureInstancesByChildRunId = new Map<string, DogpileError>();
@@ -263,8 +264,12 @@ export function createEngine(options: EngineOptions): Engine {
                 return;
               }
 
+              if (rootRunId === undefined && event.parentRunIds === undefined) {
+                rootRunId = event.runId;
+              }
+
               lastRunId = event.runId;
-              if (event.type === "final") {
+              if (event.type === "final" && event.runId === rootRunId) {
                 pendingFinalEvent = event;
                 return;
               }

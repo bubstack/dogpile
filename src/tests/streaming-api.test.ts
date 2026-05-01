@@ -491,8 +491,14 @@ describe("SDK streaming API", () => {
     }
     const childEvents = streamedEvents.filter((event) => event.runId === childRunId);
     const parentEvents = streamedEvents.filter((event) => event.runId === result.trace.runId);
+    const childFinal = childEvents.find((event) => event.type === "final");
 
     expect(childEvents.length).toBeGreaterThan(0);
+    expect(childFinal).toMatchObject({
+      type: "final",
+      runId: childRunId,
+      parentRunIds: [result.trace.runId]
+    });
     expect(childEvents.every((event) => parentRunIdsOf(event)?.join("/") === result.trace.runId)).toBe(true);
     expect(parentEvents.every((event) => parentRunIdsOf(event) === undefined)).toBe(true);
   });
