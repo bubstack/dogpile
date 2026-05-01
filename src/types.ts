@@ -887,6 +887,14 @@ export interface ConfiguredModelProvider {
    * support incremental output and for callers that prefer batch execution.
    */
   stream?(request: ModelRequest): AsyncIterable<ModelOutputChunk>;
+  /**
+   * Optional provider hints for the runtime. Absent or omitted is treated as
+   * `remote` for concurrency clamping (CONCURRENCY-02 / Phase 3 D-01).
+   */
+  readonly metadata?: {
+    /** Locality hint for dispatch clamping. Absent -> "remote" for clamping. */
+    readonly locality?: "local" | "remote";
+  };
 }
 
 /**

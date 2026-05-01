@@ -221,6 +221,27 @@ export function validateModelProviderRegistration(value: unknown, path = "model"
   validateOptionalFunction(record.stream, `${path}.stream`);
 }
 
+/**
+ * Engine-time defense-in-depth check that a provider's optional
+ * `metadata.locality` is one of the two valid values when present (Phase 3 D-03).
+ * Catches user-implemented providers that bypass TypeScript checks.
+ */
+export function validateProviderLocality(
+  provider: ConfiguredModelProvider,
+  pathPrefix: string = "model"
+): void {
+  const loc = provider.metadata?.locality;
+  if (loc !== undefined && loc !== "local" && loc !== "remote") {
+    invalidConfiguration({
+      path: `${pathPrefix}.metadata.locality`,
+      rule: "enum",
+      message: `${pathPrefix}.metadata.locality must be "local" or "remote" when provided.`,
+      expected: "\"local\" | \"remote\"",
+      actual: loc
+    });
+  }
+}
+
 function validateVercelAILanguageModel(value: unknown, path: string): void {
   const record = requireRecord(value, path);
 

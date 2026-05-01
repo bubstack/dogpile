@@ -358,14 +358,16 @@ describe("caller configuration validation", () => {
 
   it("validates provider metadata.locality when a reusable engine run starts", () => {
     const engine = createEngine({
-      ...validDogpileOptions,
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
       model: {
         id: "engine-invalid-locality-model",
         async generate(): Promise<ModelResponse> {
           return { text: "ok" };
         },
         metadata: { locality: "BOGUS" as "local" }
-      }
+      },
+      agents: [{ id: "validator", role: "tester" }]
     });
 
     expectInvalidConfiguration(() => engine.run("validate locality"), "model.metadata.locality");

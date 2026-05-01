@@ -40,7 +40,13 @@ import { runSequential } from "./sequential.js";
 import { runShared } from "./shared.js";
 import { createAbortErrorFromSignal, createTimeoutError } from "./cancellation.js";
 import { budget as budgetCondition } from "./termination.js";
-import { validateDogpileOptions, validateEngineOptions, validateMissionIntent, validateRunCallOptions } from "./validation.js";
+import {
+  validateDogpileOptions,
+  validateEngineOptions,
+  validateMissionIntent,
+  validateProviderLocality,
+  validateRunCallOptions
+} from "./validation.js";
 
 const DEFAULT_MAX_DEPTH = 4;
 
@@ -77,6 +83,7 @@ export function createEngine(options: EngineOptions): Engine {
     run(intent: string, runOptions?: RunCallOptions): Promise<RunResult> {
       validateMissionIntent(intent);
       validateRunCallOptions(runOptions);
+      validateProviderLocality(options.model, "model");
 
       const effectiveMaxDepth = Math.min(
         engineMaxDepth,
@@ -113,6 +120,7 @@ export function createEngine(options: EngineOptions): Engine {
     stream(intent: string, runOptions?: RunCallOptions): StreamHandle {
       validateMissionIntent(intent);
       validateRunCallOptions(runOptions);
+      validateProviderLocality(options.model, "model");
 
       const effectiveMaxDepth = Math.min(
         engineMaxDepth,

@@ -37,6 +37,8 @@ export interface OpenAICompatibleProviderOptions {
   readonly maxOutputTokens?: number;
   readonly extraBody?: JsonObject;
   readonly costEstimator?: OpenAICompatibleProviderCostEstimator;
+  /** Locality hint override; if omitted, auto-detected from baseURL. Explicit "local" always wins; explicit "remote" on a detected-local host throws. */
+  readonly locality?: "local" | "remote";
 }
 
 export interface OpenAICompatibleChatCompletionResponse {
@@ -68,6 +70,10 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
 
   const providerId = options.id ?? `openai-compatible:${options.model}`;
   const fetchImplementation = options.fetch ?? globalThis.fetch?.bind(globalThis);
+  const baseURLForLocality = new URL(String(options.baseURL ?? defaultBaseURL));
+  const detectedLocality = classifyHostLocality(baseURLForLocality.hostname);
+  const resolvedLocality: "local" | "remote" =
+    options.locality === "local" ? "local" : options.locality === "remote" ? "remote" : detectedLocality;
 
   if (!fetchImplementation) {
     throw new DogpileError({
@@ -85,6 +91,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
 
   return {
     id: providerId,
+    metadata: { locality: resolvedLocality },
     async generate(request: ModelRequest): Promise<ModelResponse> {
       let response: Response;
 
@@ -154,6 +161,27 @@ function validateOptions(options: OpenAICompatibleProviderOptions): void {
   if (options.costEstimator !== undefined && typeof options.costEstimator !== "function") {
     throwInvalid("costEstimator", "a function when provided");
   }
+  if (options.locality !== undefined && options.locality !== "local" && options.locality !== "remote") {
+    throwInvalid("locality", "\"local\" | \"remote\" when provided");
+  }
+  if (options.locality === "remote") {
+    const baseURL = new URL(String(options.baseURL ?? defaultBaseURL));
+    const detected = classifyHostLocality(baseURL.hostname);
+    if (detected === "local") {
+      throw new DogpileError({
+        code: "invalid-configuration",
+        message: `locality "remote" cannot be set when baseURL resolves to a local host (${baseURL.hostname}).`,
+        retryable: false,
+        detail: {
+          kind: "configuration-validation",
+          path: "locality",
+          expected: "\"local\" (or omit to auto-detect)",
+          reason: "remote-override-on-local-host",
+          host: baseURL.hostname
+        }
+      });
+    }
+  }
 }
 
 function throwInvalid(path: string, expected: string): never {
@@ -167,6 +195,29 @@ function throwInvalid(path: string, expected: string): never {
       expected
     }
   });
+}
+
+/**
+ * Classify a URL hostname as "local" or "remote" per Phase 3 D-02.
+ * Local: localhost, *.local mDNS, IPv4 loopback (127.0.0.0/8), RFC1918
+ * (10/8, 172.16/12, 192.168/16), link-local (169.254/16), IPv6 loopback (::1),
+ * IPv6 ULA (fc00::/7), IPv6 link-local (fe80::/10).
+ *
+ * Pure function: no I/O, no side effects. Exported for tests and future reuse.
+ */
+export function classifyHostLocality(host: string): "local" | "remote" {
+  const lower = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (lower === "localhost") return "local";
+  if (lower.endsWith(".local")) return "local";
+  if (/^127(?:\.\d{1,3}){3}$/.test(lower)) return "local";
+  if (/^10(?:\.\d{1,3}){3}$/.test(lower)) return "local";
+  if (/^172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}$/.test(lower)) return "local";
+  if (/^192\.168(?:\.\d{1,3}){2}$/.test(lower)) return "local";
+  if (/^169\.254(?:\.\d{1,3}){2}$/.test(lower)) return "local";
+  if (lower === "::1") return "local";
+  if (/^f[cd][0-9a-f]{2}:/.test(lower)) return "local";
+  if (/^fe[89ab][0-9a-f]?:/.test(lower)) return "local";
+  return "remote";
 }
 
 function createURL(options: OpenAICompatibleProviderOptions): URL {
