@@ -34,6 +34,7 @@ import type {
   StreamEvent,
   SubRunBudgetClampedEvent,
   SubRunCompletedEvent,
+  SubRunFailedEvent,
   SubRunParentAbortedEvent,
   Trace,
   TranscriptEntry
@@ -989,6 +990,43 @@ describe("single-call result contract", () => {
     const roundTripped = JSON.parse(JSON.stringify(fixture)) as SubRunParentAbortedEvent;
     expect(roundTripped).toEqual(fixture);
     expect(roundTripped.reason).toBe("parent-aborted");
+  });
+
+  it("round-trips a sub-run-failed RunEvent variant with partialCost through JSON serialization (BUDGET-03)", async () => {
+    const child = await run({
+      intent: "Capture a partial trace shape for sub-run-failed embedding (result-contract).",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: createDeterministicModelProvider("result-contract-sub-run-failed-fixture")
+    });
+    const partialTrace: Trace = child.trace;
+    const partialCost: CostSummary = {
+      usd: 0.000123,
+      inputTokens: 13,
+      outputTokens: 17,
+      totalTokens: 30
+    };
+    const fixture: SubRunFailedEvent = {
+      type: "sub-run-failed",
+      runId: "run-parent-sub-run-failed-roundtrip",
+      at: "2026-04-30T00:00:06.000Z",
+      childRunId: child.trace.runId,
+      parentRunId: "run-parent-sub-run-failed-roundtrip",
+      parentDecisionId: "decision-7",
+      error: {
+        code: "provider-timeout",
+        message: "Child timed out before completing.",
+        providerId: "result-contract-sub-run-failed-fixture"
+      },
+      partialTrace,
+      partialCost
+    };
+    const variant: RunEvent = fixture;
+    expect(variant.type).toBe("sub-run-failed");
+    const roundTripped = JSON.parse(JSON.stringify(fixture)) as SubRunFailedEvent;
+    expect(roundTripped).toEqual(fixture);
+    expect(roundTripped.partialCost).toEqual(partialCost);
+    expect(roundTripped.partialTrace.events).toEqual(partialTrace.events);
   });
 
   it("round-trips a sub-run-budget-clamped RunEvent variant through JSON serialization", () => {

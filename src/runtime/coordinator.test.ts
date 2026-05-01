@@ -1098,6 +1098,75 @@ describe("BUDGET-02 sub-run timeout / deadline propagation", () => {
     expect(childBudgetsSeen[0]).toBe(7777);
   });
 
+  it("BUDGET-03 / D-01: rolls up sub-run cost into parent's totalCost BEFORE emitting sub-run-completed (Test G)", async () => {
+    // Lock the ordering invariant: the agent-turn emitted AFTER a successful
+    // sub-run-completed shows a cost that includes the child's subResult.cost.
+    // This proves recordSubRunCost was invoked BEFORE the next cost-bearing
+    // parent event, preserving the existing "last cost-bearing event ===
+    // final.cost" invariant.
+    const provider = createScriptedCoordinatorProvider({
+      id: "budget-03-rollup-ordering-model",
+      planResponses: [
+        delegateBlock({ protocol: "sequential", intent: "child via sequential for ordering test" }),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+    const result = await run({
+      intent: "BUDGET-03 ordering: parent dispatches once, then participates.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+
+    const events = result.trace.events;
+    const completedIndex = events.findIndex((event) => event.type === "sub-run-completed");
+    expect(completedIndex).toBeGreaterThanOrEqual(0);
+    const completedEvent = events[completedIndex];
+    if (completedEvent?.type !== "sub-run-completed") throw new Error("expected sub-run-completed");
+
+    // Find the next cost-bearing parent event after sub-run-completed.
+    let nextCostEvent: RunEvent | undefined;
+    for (let i = completedIndex + 1; i < events.length; i++) {
+      const event = events[i];
+      if (event === undefined) continue;
+      if (
+        event.type === "agent-turn" ||
+        event.type === "broadcast" ||
+        event.type === "final" ||
+        event.type === "budget-stop"
+      ) {
+        nextCostEvent = event;
+        break;
+      }
+    }
+    expect(nextCostEvent).toBeDefined();
+    if (
+      nextCostEvent === undefined ||
+      (nextCostEvent.type !== "agent-turn" &&
+        nextCostEvent.type !== "broadcast" &&
+        nextCostEvent.type !== "final" &&
+        nextCostEvent.type !== "budget-stop")
+    ) {
+      throw new Error("expected cost-bearing event after sub-run-completed");
+    }
+
+    // The cost on the NEXT cost-bearing parent event must be ≥ the child's
+    // subResult.cost. (Strictly greater because the parent also makes its own
+    // model call between sub-run-completed and the next agent-turn.)
+    const childUsd = completedEvent.subResult.cost.usd;
+    expect(nextCostEvent.cost.usd).toBeGreaterThanOrEqual(childUsd);
+
+    // And the final.cost === parent's recorded accounting.cost (existing
+    // invariant from D-01).
+    const finalEvent = events.at(-1);
+    if (finalEvent?.type !== "final") throw new Error("expected final");
+    expect(finalEvent.cost).toEqual(result.accounting.cost);
+  });
+
   it("defaultSubRunTimeoutMs is IGNORED when the parent has a budget.timeoutMs (parent's remaining wins)", async () => {
     const provider = createScriptedCoordinatorProvider({
       id: "budget-02-default-ignored-model",
