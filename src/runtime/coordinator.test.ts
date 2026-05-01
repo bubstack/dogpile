@@ -1161,7 +1161,8 @@ describe("coordinator delegate dispatch", () => {
       agents: [
         { id: "lead", role: "coordinator" },
         { id: "worker-a", role: "worker" }
-      ]
+      ],
+      onChildFailure: "abort"
     }).then(
       (result) => ({ ok: true as const, result }),
       (error: unknown) => ({ ok: false as const, error })
@@ -1208,7 +1209,8 @@ describe("coordinator delegate dispatch", () => {
       agents: [
         { id: "lead", role: "coordinator" },
         { id: "worker-a", role: "worker" }
-      ]
+      ],
+      onChildFailure: "abort"
     });
     handle.subscribe((event) => {
       if ((event as RunEvent).type === "sub-run-failed") {
@@ -1816,6 +1818,7 @@ describe("BUDGET-02 sub-run timeout / deadline propagation", () => {
       tools: [],
       temperature: 0.5,
       parentDeadlineMs: Date.now() - 10_000,
+      onChildFailure: "abort",
       runProtocol: async () => {
         throw new Error("runProtocol must NOT be called when zero-remaining gate fires");
       },

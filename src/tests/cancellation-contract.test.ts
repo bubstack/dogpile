@@ -110,6 +110,7 @@ describe("caller cancellation contract", () => {
       tier: "fast",
       model: provider,
       agents: [{ id: "lead", role: "coordinator" }],
+      onChildFailure: "abort",
       defaultSubRunTimeoutMs: 1
     })).rejects.toMatchObject({
       code: "provider-timeout",
