@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DogpileError, type ModelRequest } from "../index.js";
-import { createOpenAICompatibleProvider, type OpenAICompatibleFetch } from "./openai-compatible.js";
+import {
+  classifyHostLocality,
+  createOpenAICompatibleProvider,
+  type OpenAICompatibleFetch
+} from "./openai-compatible.js";
 
 const request: ModelRequest = {
   temperature: 0.2,
@@ -18,6 +22,36 @@ const request: ModelRequest = {
     }
   ]
 };
+
+describe("classifyHostLocality", () => {
+  it.each<[string, "local" | "remote"]>([
+    ["localhost", "local"],
+    ["LOCALHOST", "local"],
+    ["mybox.local", "local"],
+    ["SERVICE.LOCAL", "local"],
+    ["127.0.0.1", "local"],
+    ["127.255.255.254", "local"],
+    ["10.0.0.1", "local"],
+    ["10.255.255.255", "local"],
+    ["172.16.5.3", "local"],
+    ["172.31.0.1", "local"],
+    ["172.32.0.1", "remote"],
+    ["172.15.0.1", "remote"],
+    ["192.168.1.100", "local"],
+    ["169.254.1.1", "local"],
+    ["::1", "local"],
+    ["[::1]", "local"],
+    ["fc00::1", "local"],
+    ["fd12:3456::1", "local"],
+    ["fe80::1", "local"],
+    ["api.openai.com", "remote"],
+    ["127.0.0.1.example.com", "remote"],
+    ["8.8.8.8", "remote"],
+    ["2001:db8::1", "remote"]
+  ])("classifies %s as %s", (host, expected) => {
+    expect(classifyHostLocality(host)).toBe(expected);
+  });
+});
 
 describe("createOpenAICompatibleProvider", () => {
   it("maps Dogpile model requests to direct OpenAI-compatible chat completions", async () => {
@@ -157,6 +191,83 @@ describe("createOpenAICompatibleProvider", () => {
         maxOutputTokens: 0
       })
     ).toThrow(DogpileError);
+  });
+
+  it("auto-detects metadata.locality='local' for loopback baseURL", () => {
+    const provider = createOpenAICompatibleProvider({
+      model: "gpt-4.1-mini",
+      baseURL: "http://localhost:11434/v1",
+      fetch: async () => jsonResponse({})
+    });
+
+    expect(provider.metadata?.locality).toBe("local");
+  });
+
+  it("auto-detects metadata.locality='remote' for public baseURL", () => {
+    const provider = createOpenAICompatibleProvider({
+      model: "gpt-4.1-mini",
+      baseURL: "https://api.openai.com/v1",
+      fetch: async () => jsonResponse({})
+    });
+
+    expect(provider.metadata?.locality).toBe("remote");
+  });
+
+  it("defaults metadata.locality to remote for the default public baseURL", () => {
+    const provider = createOpenAICompatibleProvider({
+      model: "gpt-4.1-mini",
+      fetch: async () => jsonResponse({})
+    });
+
+    expect(provider.metadata?.locality).toBe("remote");
+  });
+
+  it("explicit locality='local' overrides remote auto-detect", () => {
+    const provider = createOpenAICompatibleProvider({
+      model: "gpt-4.1-mini",
+      baseURL: "https://example.com/v1",
+      locality: "local",
+      fetch: async () => jsonResponse({})
+    });
+
+    expect(provider.metadata?.locality).toBe("local");
+  });
+
+  it("throws when locality='remote' is set on a detected-local host", () => {
+    expect(() =>
+      createOpenAICompatibleProvider({
+        model: "gpt-4.1-mini",
+        baseURL: "http://localhost:11434/v1",
+        locality: "remote",
+        fetch: async () => jsonResponse({})
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        code: "invalid-configuration",
+        detail: expect.objectContaining({
+          path: "locality",
+          reason: "remote-override-on-local-host",
+          host: "localhost"
+        })
+      })
+    );
+  });
+
+  it("throws DogpileError on invalid locality string at construct time", () => {
+    expect(() =>
+      createOpenAICompatibleProvider({
+        model: "gpt-4.1-mini",
+        locality: "INVALID" as "local",
+        fetch: async () => jsonResponse({})
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        code: "invalid-configuration",
+        detail: expect.objectContaining({
+          path: "locality"
+        })
+      })
+    );
   });
 });
 

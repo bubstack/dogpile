@@ -1,6 +1,6 @@
 import type { LanguageModel } from "ai";
 import { describe, expect, it } from "vitest";
-import { createEngine, createRuntimeToolExecutor, DogpileError, run, stream } from "../index.js";
+import { createEngine, createRuntimeToolExecutor, Dogpile, DogpileError, run, stream } from "../index.js";
 import { createVercelAIProvider } from "../internal/vercel-ai.js";
 import { assertDepthWithinLimit } from "../runtime/decisions.js";
 import type {
@@ -66,6 +66,19 @@ const invalidDogpileOptionCases = [
     name: "missing model generate function",
     options: optionsWith({ model: { id: "missing-generate" } }),
     path: "model.generate"
+  },
+  {
+    name: "invalid locality string on user-implemented model provider",
+    options: optionsWith({
+      model: {
+        id: "invalid-locality-model",
+        async generate(): Promise<ModelResponse> {
+          return { text: "ok" };
+        },
+        metadata: { locality: "BOGUS" as "local" }
+      }
+    }),
+    path: "model.metadata.locality"
   },
   {
     name: "empty explicit agent roster",
@@ -340,6 +353,38 @@ describe("caller configuration validation", () => {
           protocol: { kind: "broadcast", maxRounds: 0 }
         } as unknown as EngineOptions),
       "protocol.maxRounds"
+    );
+  });
+
+  it("validates provider metadata.locality when a reusable engine run starts", () => {
+    const engine = createEngine({
+      ...validDogpileOptions,
+      model: {
+        id: "engine-invalid-locality-model",
+        async generate(): Promise<ModelResponse> {
+          return { text: "ok" };
+        },
+        metadata: { locality: "BOGUS" as "local" }
+      }
+    });
+
+    expectInvalidConfiguration(() => engine.run("validate locality"), "model.metadata.locality");
+  });
+
+  it("validates provider metadata.locality before Dogpile.pile starts protocol execution", () => {
+    expectInvalidConfiguration(
+      () =>
+        Dogpile.pile({
+          ...validDogpileOptions,
+          model: {
+            id: "pile-invalid-locality-model",
+            async generate(): Promise<ModelResponse> {
+              return { text: "ok" };
+            },
+            metadata: { locality: "BOGUS" as "local" }
+          }
+        }),
+      "model.metadata.locality"
     );
   });
 
