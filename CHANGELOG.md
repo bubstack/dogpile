@@ -16,11 +16,32 @@
 - Fenced-JSON delegate parsing convention added to `parseAgentDecision` (no new tool surface — delegate is a parser-level concern). Coordinator runs accept a `delegate:` prefix followed by a fenced ```json block.
 - `Dogpile.replay()` rehydrates embedded sub-run traces without provider invocation; the new `recomputeAccountingFromTrace` helper verifies recorded child `RunAccounting` against a per-child recompute and throws `invalid-configuration` with `detail.reason: "trace-accounting-mismatch"` and `detail.field` identifying the offending numeric field on tamper. The eight enumerated comparable numeric fields are `cost.usd`, `cost.inputTokens`, `cost.outputTokens`, `cost.totalTokens`, `usage.usd`, `usage.inputTokens`, `usage.outputTokens`, `usage.totalTokens`. Top-level parent drift is reported with `eventIndex: -1`; child drift is reported with the offending event's index plus `childRunId`.
 - New `ReplayTraceProtocolDecisionType` literals: `start-sub-run`, `complete-sub-run`, `fail-sub-run`.
-- Added: parent abort propagates to all in-flight sub-runs via a per-child derived `AbortController`; aborted children carry `detail.reason: "parent-aborted"` on `code: "aborted"` errors. New trace event `sub-run-parent-aborted` (also exported as TS type `SubRunParentAbortedEvent`) marks parent aborts that land after a sub-run completes; observable on `Dogpile.stream()` subscribers when stream teardown timing permits. New `ReplayTraceProtocolDecisionType` literal `mark-sub-run-parent-aborted`.
-- Added: parent `budget.timeoutMs` is now a true tree-wide deadline. Children inherit `parentDeadline − now` as their default timeout. Per-decision `budget.timeoutMs` exceeding the parent's remaining is clamped (no longer throws), and the parent trace gains a `sub-run-budget-clamped` event (also exported as TS type `SubRunBudgetClampedEvent`) recording the requested vs clamped values. Parent timeouts surface on the child as `code: "aborted"` with `detail.reason: "timeout"`. New `ReplayTraceProtocolDecisionType` literal `mark-sub-run-budget-clamped`.
-- Added: `defaultSubRunTimeoutMs` engine option on `createEngine`, `Dogpile.pile`, `run`, and `stream` — fallback ceiling applied only when neither parent nor decision specifies a timeout. Precedence: `decision.budget.timeoutMs` > parent's remaining deadline > `defaultSubRunTimeoutMs` > undefined.
-- Added: `sub-run-failed` events carry `partialCost: CostSummary` reflecting real provider spend before the failure. The parent's `accounting.cost` and token totals include failed-child partial costs recursively. Parent rolls up child cost (`subResult.cost` for completed, `partialCost` for failed) into its own totals BEFORE the corresponding `sub-run-completed` / `sub-run-failed` event is emitted, preserving the existing "last cost-bearing event === final.cost" invariant.
-- Added: `Dogpile.replay()` now detects parent-rollup drift — if a saved trace's child `subResult.cost` disagrees with `subResult.accounting.cost`, or a `sub-run-failed.partialCost` disagrees with the cost implied by its `partialTrace`, or Σ children exceeds the parent's recorded total, replay throws `DogpileError({ code: "invalid-configuration", detail: { reason: "trace-accounting-mismatch", subReason: "parent-rollup-drift" } })` with `detail.field` identifying the offending numeric field.
+### Added — Recursive coordination: budget, cancellation, cost roll-up (Phase 2)
+
+The four BUDGET-* requirements ship together as a single coherent surface for safely
+running recursive coordinator delegations under shared deadlines, abortable cancellation,
+and reconciled cost accounting.
+
+#### Cancellation propagation (BUDGET-01)
+
+- Parent abort propagates to all in-flight sub-runs via a per-child derived `AbortController`. Aborted children carry `detail.reason: "parent-aborted"` on `code: "aborted"` errors.
+- New trace event `sub-run-parent-aborted` (exported as TS type `SubRunParentAbortedEvent`) marks parent aborts that land after a sub-run completes; observable on `Dogpile.stream()` subscribers when stream teardown timing permits. New `ReplayTraceProtocolDecisionType` literal `mark-sub-run-parent-aborted`.
+
+#### Timeout / deadline propagation (BUDGET-02)
+
+- Parent `budget.timeoutMs` is now a true tree-wide deadline. Children inherit `parentDeadline − now` as their default timeout.
+- Per-decision `budget.timeoutMs` exceeding the parent's remaining is **clamped** (no longer throws), and the parent trace gains a `sub-run-budget-clamped` event (exported as TS type `SubRunBudgetClampedEvent`) recording the requested vs clamped values. Parent timeouts surface on the child as `code: "aborted"` with `detail.reason: "timeout"`. New `ReplayTraceProtocolDecisionType` literal `mark-sub-run-budget-clamped`.
+- New `defaultSubRunTimeoutMs` engine option on `createEngine`, `Dogpile.pile`, `run`, and `stream` — fallback ceiling applied only when neither parent nor decision specifies a timeout. Precedence: `decision.budget.timeoutMs` > parent's remaining deadline > `defaultSubRunTimeoutMs` > undefined.
+
+#### Cost & token roll-up + replay parity (BUDGET-03)
+
+- `sub-run-failed` events carry `partialCost: CostSummary` reflecting real provider spend before the failure. The parent's `accounting.cost` and token totals include failed-child partial costs recursively.
+- Parent rolls up child cost (`subResult.cost` for completed, `partialCost` for failed) into its own totals **before** the corresponding `sub-run-completed` / `sub-run-failed` event is emitted, preserving the existing "last cost-bearing event === final.cost" invariant.
+- `Dogpile.replay()` now detects parent-rollup drift — if a saved trace's child `subResult.cost` disagrees with `subResult.accounting.cost`, or a `sub-run-failed.partialCost` disagrees with the cost implied by its `partialTrace`, or Σ children exceeds the parent's recorded total, replay throws `DogpileError({ code: "invalid-configuration", detail: { reason: "trace-accounting-mismatch", subReason: "parent-rollup-drift" } })` with `detail.field` identifying the offending numeric field.
+
+#### Termination floors (BUDGET-04)
+
+- Internal contract guarantee (no public-surface delta): parent termination policies (`budget`, `convergence`, `judge`, `firstOf`) operate over parent-level events / iterations only — child agent-turn events bubbled into the parent stream do not count toward parent iteration limits, and `minTurns`/`minRounds` floors are per-protocol-instance (parent and child read their own protocol config independently). One `sub-run-completed` counts as exactly one parent iteration via the synthetic `delegate-result` transcript entry. Locked by contract tests in `src/tests/budget-first-stop.test.ts` and `src/runtime/coordinator.test.ts`.
 
 ### Notes
 
