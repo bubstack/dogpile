@@ -1149,6 +1149,7 @@ describe("package exports", () => {
       "src/types/replay.ts",
       "src/browser/index.ts",
       "src/providers/openai-compatible.ts",
+      "src/runtime/audit.ts",
       "src/runtime/broadcast.ts",
       "src/runtime/cancellation.ts",
       "src/runtime/coordinator.ts",
@@ -1277,6 +1278,11 @@ describe("package exports", () => {
         types: "./dist/types.d.ts",
         import: "./dist/types.js",
         default: "./dist/types.js"
+      },
+      "./runtime/audit": {
+        types: "./dist/runtime/audit.d.ts",
+        import: "./dist/runtime/audit.js",
+        default: "./dist/runtime/audit.js"
       },
       "./runtime/broadcast": {
         types: "./dist/runtime/broadcast.d.ts",
