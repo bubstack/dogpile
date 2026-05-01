@@ -466,30 +466,22 @@ The `files` allowlist uses glob `"dist/runtime/*.js"` etc. — new files in `src
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **`provider-error-recovered` scope in Phase 7**
-   - What we know: No trace signal exists; adding one requires an event-shape change which STATE.md prohibits for phases other than Phase 6. [VERIFIED]
-   - What's unclear: Whether user will waive the "only Phase 6 is event-shape change" invariant to get detection in Phase 7.
-   - Recommendation: Default to Option C (no emission). User should confirm in discuss-phase if they want Option A (requires explicit STATE.md waiver).
+   - RESOLVED: Option C — no emission in Phase 7. The anomaly code exists in the type union and frozen fixture, but `computeHealth()` never emits it. The "only Phase 6 is event-shape change" invariant is preserved. Future phase may add detection with an explicit waiver.
 
 2. **`turnRange` global vs per-agent semantics**
-   - What we know: `TurnEvent` has no `turnIndex` field. [VERIFIED: src/types/events.ts]
-   - What's unclear: Whether the user expects global (cross-agent) 1-based position or per-agent turn counting.
-   - Recommendation: Global. [ASSUMED]
+   - RESOLVED: Global 1-based position. `TurnEvent` has no `turnIndex` field; global ordering of `agent-turn` events in `events[]` is the natural and consistent semantic.
 
 3. **Type placement for `RunHealthSummary`, `HealthAnomaly`, `AnomalyCode`**
-   - What we know: `RunResult` is in `src/types.ts`; public-surface types live there. `RetryPolicy` lives in `src/runtime/retry.ts` (module-local).
-   - Recommendation: `RunHealthSummary`, `HealthAnomaly`, `AnomalyCode` in `src/types.ts` (since `result.health` is a public `RunResult` field). `EventQueryFilter` and `HealthThresholds` in their respective runtime modules. [ASSUMED]
+   - RESOLVED: `RunHealthSummary`, `HealthAnomaly`, `AnomalyCode` in `src/types.ts` (public-surface types co-located with `RunResult`). `EventQueryFilter` and `HealthThresholds` in their respective runtime modules (`src/runtime/introspection.ts` and `src/runtime/health.ts`).
 
 4. **`canonicalizeRunResult` update is confirmed required**
-   - Verified: function enumerates fields explicitly at `defaults.ts` lines 594–605. `health` MUST be added.
-   - No open question — this is a known required change.
+   - RESOLVED: Verified — `defaults.ts` lines 594–605 enumerate fields explicitly; `health` must be added. Also required in `runNonStreamingProtocol` and `replay()` result construction sites.
 
 5. **`runawyTurns` typo in CONTEXT.md D-08**
-   - What we know: CONTEXT.md D-08 uses `runawyTurns` (missing 'a'). The intended field is `runawayTurns`.
-   - What's unclear: Whether to implement with the typo (for fidelity to CONTEXT) or correct it to `runawayTurns` in the TypeScript interface.
-   - Recommendation: Implement as `runawayTurns` (corrected). The typo in CONTEXT is a transcription error. [ASSUMED]
+   - RESOLVED: Implement as `runawayTurns` (corrected). The typo in CONTEXT.md is a transcription error; the TypeScript interface uses the correct spelling.
 
 ---
 

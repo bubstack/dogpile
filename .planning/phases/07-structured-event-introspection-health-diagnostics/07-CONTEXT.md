@@ -56,7 +56,7 @@ This phase does NOT add OTEL spans (Phase 9), metrics hooks (Phase 10), or audit
 ### Anomaly Thresholds (Q-08, Q-09)
 
 - **D-08: No default `runaway-turns` threshold.** The anomaly is suppressed unless the caller explicitly sets a threshold via `computeHealth(trace, { runawyTurns: N })`. No assumption about what "runaway" means for the caller's domain. `result.health` (auto-computed) will never emit `runaway-turns` unless a threshold is provided.
-- **D-09: No default `budget-near-miss` threshold.** Same rationale — suppressed unless caller sets `budgetNearMissPct`. `result.health` auto-path will never emit `budget-near-miss` without explicit configuration. The auto-path can still emit `empty-contribution` and `provider-error-recovered` (which are threshold-free — they fire on the presence of qualifying events).
+- **D-09: No default `budget-near-miss` threshold.** Same rationale — suppressed unless caller sets `budgetNearMissPct`. `result.health` auto-path will never emit `budget-near-miss` without explicit configuration. The auto-path emits `empty-contribution` (threshold-free). `provider-error-recovered` is **deferred to a future phase**: `withRetry` retries are invisible to the event log, and detecting them requires an event-shape change which the v0.5.0 milestone reserves for Phase 6 only. The anomaly code ships in the type union and `anomaly-record-v1.json` fixture but is never emitted by `computeHealth()` in Phase 7.
 
 ### Subpath Exports (Q-10)
 
