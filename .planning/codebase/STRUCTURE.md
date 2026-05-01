@@ -28,6 +28,7 @@ dogpile/
 │   │   ├── defaults.ts               # Default agents, tier→temperature, trace canonicalization
 │   │   ├── introspection.ts          # Structured completed-event query contract
 │   │   ├── health.ts                 # Run health diagnostics contract
+│   │   ├── tracing.ts                # Duck-typed OTEL tracing bridge contract
 │   │   ├── validation.ts             # Public-input validation → invalid-configuration errors
 │   │   └── *.test.ts                 # Co-located unit tests
 │   ├── providers/
@@ -171,6 +172,7 @@ dogpile/
 - `src/runtime/defaults.ts`: Trace canonicalization, defaults, accounting.
 - `src/runtime/introspection.ts`: Completed-event query contract for structured introspection.
 - `src/runtime/health.ts`: Run health diagnostics contract and thresholds.
+- `src/runtime/tracing.ts`: Duck-typed OTEL-compatible tracer/span interfaces and locked Dogpile span names.
 - `src/runtime/validation.ts`: Input validation.
 - `src/types.ts`: All exported types + `DogpileError`.
 

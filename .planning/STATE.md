@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.5.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-01T22:57:05Z"
-last_activity: 2026-05-01 -- Phase 9 Plan 00 complete
+last_updated: "2026-05-01T23:06:16Z"
+last_activity: 2026-05-01 -- Phase 9 Plan 01 complete
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 19
-  completed_plans: 15
-  percent: 79
+  completed_plans: 16
+  percent: 84
 ---
 
 # State
@@ -24,12 +24,12 @@ progress:
 ## Current Position
 
 Phase: 09
-Plan: 09-01
+Plan: 09-02
 Status: Ready to execute
-Last activity: 2026-05-01 -- Phase 9 Plan 00 complete
+Last activity: 2026-05-01 -- Phase 9 Plan 01 complete
 
 ```
-Progress [████████░░] 79% (15/19 milestone plans)
+Progress [████████░░] 84% (16/19 milestone plans)
 ```
 
 ## Performance Metrics
@@ -37,12 +37,13 @@ Progress [████████░░] 79% (15/19 milestone plans)
 | Metric | Value |
 |--------|-------|
 | Phases complete | 3 / 5 |
-| Requirements complete | 9 / 13 |
-| Plans complete | 15 / 19 |
+| Requirements complete | 11 / 13 |
+| Plans complete | 16 / 19 |
 | Phase 08 P01 | 5 min | 2 tasks | 2 files |
 | Phase 08 P02 | 4 min | 2 tasks | 3 files |
 | Phase 08 P03 | 4 min | 2 tasks | 4 files |
 | Phase 09 P00 | 4 min | 1 task | 2 files |
+| Phase 09 P01 | 6 min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -53,6 +54,7 @@ Progress [████████░░] 79% (15/19 milestone plans)
 - **Phase 6 (Provenance) is the only event-shape change.** All other phases are pure additions or engine-option injections. Phase 6 must complete before OTEL (Phase 9) which depends on stable provenance fields.
 - **Audit record is an independent type.** `AuditRecord` is not derived from `RunEvent` via Pick/Omit; it has its own `auditSchemaVersion: "1"` and is protected by a frozen fixture test.
 - **No `@opentelemetry/*` imports in src/runtime/, src/browser/, src/providers/.** OTEL integration is duck-typed only; a grep-based test will enforce this boundary.
+- **Tracing contract is locked before engine wiring.** `DogpileTracer`, `DogpileSpan`, `DogpileSpanOptions`, and `DOGPILE_SPAN_NAMES` are defined in `src/runtime/tracing.ts`; `tracer?: DogpileTracer` is present on `DogpileOptions` and `EngineOptions`; root exports are available while `/runtime/tracing` subpath wiring remains deferred to Phase 9 Plan 03.
 - **Phase 7 contracts ship before behavior.** `queryEvents` and `computeHealth` are stubbed contract surfaces in 07-01; 07-02 and 07-03 implement behavior against those signatures.
 - **queryEvents filter semantics are locked.** Filters compose with AND semantics; `turnRange` uses global 1-based `agent-turn` positions and excludes non-turn events, while `costRange` only includes `agent-turn` and `broadcast` events.
 - **computeHealth provider recovery is deferred.** `provider-error-recovered` remains in the anomaly union and fixture but is never emitted until a future event-shape change provides a trace signal.
@@ -80,8 +82,8 @@ Progress [████████░░] 79% (15/19 milestone plans)
 
 ## Session Continuity
 
-**Next action:** Execute Phase 9 Plan 01 — Tracing module surface.
+**Next action:** Execute Phase 9 Plan 02 — Engine span lifecycle.
 
 ---
 
-*Last updated: 2026-05-01 — Phase 9 Plan 00 complete.*
+*Last updated: 2026-05-01 — Phase 9 Plan 01 complete.*
