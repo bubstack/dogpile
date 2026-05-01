@@ -66,7 +66,13 @@ Plans:
 2. Introspection query composes filters; an empty filter set returns all events; an unmatched filter set returns an empty array.
 3. `result.health` is present on every `RunResult` and contains an `anomalies` array with machine-readable codes (`runaway-turns`, `budget-near-miss`, `empty-contribution`, `provider-error-recovered`) and configurable thresholds.
 4. Calling `replay(trace)` produces a `RunResult` whose `health` summary is byte-for-byte identical to the original run's health summary, confirming deterministic re-computation.
-**Plans:** TBD
+**Plans:** 5 plans
+Plans:
+- [ ] 07-01-PLAN.md — Types + contracts: RunHealthSummary/HealthAnomaly/AnomalyCode in types.ts, skeleton modules, frozen fixture
+- [ ] 07-02-PLAN.md — queryEvents implementation + unit tests (introspection)
+- [ ] 07-03-PLAN.md — computeHealth implementation + unit tests (health diagnostics)
+- [ ] 07-04-PLAN.md — Engine attach: result.health on run/replay paths + canonicalizeRunResult + contract tests
+- [ ] 07-05-PLAN.md — Public-surface lockstep: package.json subpaths + package-exports.test.ts + CHANGELOG + CLAUDE.md
 
 ### Phase 8: Audit Event Schema
 **Goal:** Callers can produce a stable, versioned audit record from any completed trace using a pure function; the record type is independent of `RunEvent` schema and its shape is protected by a frozen fixture test.
@@ -104,7 +110,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 6. Provenance Annotations | 1/6 | In Progress | — |
-| 7. Structured Event Introspection + Health Diagnostics | 0/? | Not started | — |
+| 7. Structured Event Introspection + Health Diagnostics | 0/5 | Not started | — |
 | 8. Audit Event Schema | 0/? | Not started | — |
 | 9. OTEL Tracing Bridge | 0/? | Not started | — |
 | 10. Metrics / Counters | 0/? | Not started | — |
@@ -124,4 +130,4 @@ Plans:
 
 ---
 
-*Last updated: 2026-05-01 — Phase 6 planning complete: 6 plans in 3 waves.*
+*Last updated: 2026-05-01 — Phase 7 planning complete: 5 plans in 4 waves.*
