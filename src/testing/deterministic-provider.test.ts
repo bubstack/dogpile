@@ -5,6 +5,7 @@ import { createDelegatingDeterministicProvider } from "./deterministic-provider.
 
 function coordinatorRequest(phase: "plan" | "worker" | "final-synthesis"): ModelRequest {
   return {
+    temperature: 0,
     messages: [{ role: "user", content: "anything" }],
     metadata: {
       phase,
