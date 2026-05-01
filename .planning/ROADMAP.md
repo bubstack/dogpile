@@ -86,7 +86,7 @@ requirements_total: 27
 Plans:
 - [x] 04-01-stream-wrapping-PLAN.md — parentRunIds chain on stream events; per-child order contract; D-04 trace isolation
 - [x] 04-02-cancel-propagation-PLAN.md — synthetic sub-run-failed drain on cancel; new aborted lifecycle event; late-event suppression
-- [ ] 04-03-coordinator-failure-context-PLAN.md — enriched transcript line; structured failures prompt section; onChildFailure config
+- [x] 04-03-coordinator-failure-context-PLAN.md — enriched transcript line; structured failures prompt section; onChildFailure config
 - [ ] 04-04-throw-and-timeout-discrimination-PLAN.md — last-real-failure throw matrix; classifyChildTimeoutSource helper; v0.4.0 CHANGELOG batched entry
 
 ### Phase 5: Documentation & Changelog
@@ -116,7 +116,7 @@ Plans:
 | 1. Delegate Decision & Sub-Run Traces | 5/5 | Complete | 2026-04-30 |
 | 2. Budget, Cancellation, Cost Roll-Up | 4/4 | Complete | 2026-04-30 |
 | 3. Provider Locality & Bounded Concurrency | 3/3 | Complete | 2026-05-01 |
-| 4. Streaming & Child Error Escalation | 2/4 | In progress | - |
+| 4. Streaming & Child Error Escalation | 3/4 | In progress | - |
 | 5. Documentation & Changelog | 0/6 | Planned | - |
 
 ## Coverage

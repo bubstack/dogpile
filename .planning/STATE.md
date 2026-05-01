@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.4.0
 milestone_name: milestone
-status: Phase 4 in progress; Plan 04-02 cancel propagation complete
-last_updated: "2026-05-01T14:11:47Z"
-last_activity: 2026-05-01 -- Phase 04 Plan 04-02 complete
+status: Phase 4 in progress; Plan 04-03 coordinator failure context complete
+last_updated: "2026-05-01T14:22:46Z"
+last_activity: 2026-05-01 -- Phase 04 Plan 04-03 complete
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 22
-  completed_plans: 14
-  percent: 64
+  completed_plans: 15
+  percent: 68
 ---
 
 # State
@@ -24,17 +24,17 @@ progress:
 ## Current Position
 
 Phase: 04
-Plan: 03
-Status: Plan 04-02 complete; ready for coordinator failure context
-Last activity: 2026-05-01 -- Phase 04 Plan 04-02 complete
+Plan: 04
+Status: Plan 04-03 complete; ready for throw and timeout discrimination
+Last activity: 2026-05-01 -- Phase 04 Plan 04-03 complete
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
 | Phases complete | 3 / 5 |
-| Requirements complete | 16 / 27 |
-| Plans complete | 14 / 22 |
+| Requirements complete | 17 / 27 |
+| Plans complete | 15 / 22 |
 
 ## Accumulated Context
 
@@ -59,10 +59,12 @@ Last activity: 2026-05-01 -- Phase 04 Plan 04-02 complete
 - **Phase 4 Plan 04-01 — Replay stream mirror.** `replayStream()` expands embedded `subResult.trace` events and reconstructs `parentRunIds` at replay emit time.
 - **Phase 4 Plan 04-02 — Stream cancel drain.** `StreamHandle.cancel()` now drains active coordinator `DispatchedChild` records before terminal error: started children get synthetic `sub-run-failed` with `detail.reason: "parent-aborted"`, queued children keep `sibling-failed`, and closed children suppress late live forwarding.
 - **Phase 4 Plan 04-02 — Aborted lifecycle event.** `AbortedEvent` joins `StreamLifecycleEvent` with `reason: "parent-aborted" | "timeout"` and is emitted before terminal stream `error` events on abort paths.
+- **Phase 4 Plan 04-03 — Coordinator failure context.** Real child failures now reach the next coordinator plan turn as enriched tagged text plus a structured JSON roster under `## Sub-run failures since last decision`; synthetic `sibling-failed` and `parent-aborted` failures are excluded.
+- **Phase 4 Plan 04-03 — onChildFailure config.** `onChildFailure?: "continue" | "abort"` is public on engine, high-level, and per-run surfaces; it resolves per-run > engine > default `continue`, and abort mode stores `triggeringFailureForAbortMode`.
 
 ### Todos
 
-- Execute Phase 4 Plan 04-03: coordinator failure context.
+- Execute Phase 4 Plan 04-04: throw and timeout discrimination.
 
 ### Blockers
 
@@ -70,8 +72,8 @@ Last activity: 2026-05-01 -- Phase 04 Plan 04-02 complete
 
 ## Session Continuity
 
-**Next action:** Execute 04-03 coordinator failure context.
+**Next action:** Execute 04-04 throw and timeout discrimination.
 
 ---
 
-*Last updated: 2026-05-01 — Phase 4 Plan 04-02 complete; 16/27 requirements shipped; verify green.*
+*Last updated: 2026-05-01 — Phase 4 Plan 04-03 complete; 17/27 requirements shipped; verify green.*
