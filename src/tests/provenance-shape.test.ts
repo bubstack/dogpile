@@ -1,5 +1,4 @@
-import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -37,12 +36,7 @@ function typeShape(value: object | undefined): Record<string, string> {
 }
 
 describe("provenance event shape contract", () => {
-  it("bootstraps or verifies the frozen provenance event shape fixture", async () => {
-    if (!existsSync(fixturePath)) {
-      const events = await captureProvenanceEvents();
-      await writeFile(fixturePath, JSON.stringify(events, null, 2) + "\n", "utf8");
-    }
-
+  it("verifies the frozen provenance event shape fixture", async () => {
     const raw = await readFile(fixturePath, "utf8");
     const saved = JSON.parse(raw) as unknown;
     const live = await captureProvenanceEvents();

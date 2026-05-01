@@ -471,7 +471,8 @@ function toTraceEventListItem(event: RunEvent, index: number): DemoTraceEventLis
 }
 
 function eventTimestamp(event: RunEvent): string {
-  return "at" in event ? event.at : event.startedAt;
+  if ("at" in event) return event.at;
+  return event.type === "model-response" ? event.completedAt : event.startedAt;
 }
 
 function traceEventTitle(event: RunEvent): string {

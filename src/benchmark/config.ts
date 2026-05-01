@@ -99,7 +99,8 @@ export function createBenchmarkRunArtifact(
 
 function eventTimestamp(event: RunEvent | undefined): string | undefined {
   if (event === undefined) return undefined;
-  return "at" in event ? event.at : event.startedAt;
+  if ("at" in event) return event.at;
+  return event.type === "model-response" ? event.completedAt : event.startedAt;
 }
 
 /**

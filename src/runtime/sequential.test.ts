@@ -113,6 +113,39 @@ describe("sequential protocol", () => {
     expect(Date.parse(responseEvent.completedAt)).toBeLessThanOrEqual(Date.parse(turnEvent.at));
   });
 
+  it("freezes model request snapshots before handing requests to providers", async () => {
+    const model: ConfiguredModelProvider = {
+      id: "mutating-provider",
+      async generate(request) {
+        (request.messages as { role: "system" | "user" | "assistant"; content: string }[]).push({
+          role: "assistant",
+          content: "mutated after provenance emission"
+        });
+        (request.metadata as Record<string, unknown>)["mutated"] = true;
+        return { text: "planner output" };
+      }
+    };
+
+    const result = await run({
+      intent: "Verify provider mutation cannot rewrite provenance request snapshots.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model,
+      agents: [{ id: "planner-seat", role: "planner" }]
+    });
+
+    const requestEvent = result.trace.events.find((event) => event.type === "model-request");
+    const providerCall = result.trace.providerCalls[0];
+    if (requestEvent?.type !== "model-request" || providerCall === undefined) {
+      throw new Error("expected request provenance and provider call");
+    }
+
+    expect(requestEvent.request.messages).toHaveLength(2);
+    expect(providerCall.request.messages).toHaveLength(2);
+    expect(requestEvent.request.metadata).not.toHaveProperty("mutated");
+    expect(providerCall.request.metadata).not.toHaveProperty("mutated");
+  });
+
   it("emits model provenance events around streaming provider calls", async () => {
     const model: ConfiguredModelProvider = {
       id: "streaming-provider",

@@ -967,6 +967,13 @@ function synthesizeProviderEvents(
   trace: Trace,
   providerCalls: readonly ReplayTraceProviderCall[]
 ): readonly RunEvent[] {
+  const hasLiveProvenance = trace.events.some(
+    (event) => event.type === "model-request" || event.type === "model-response"
+  );
+  if (hasLiveProvenance) {
+    return trace.events;
+  }
+
   const baseEvents = trace.events.filter(
     (event) => event.type !== "model-request" && event.type !== "model-response"
   );
@@ -1112,10 +1119,11 @@ function dogpileErrorFromSerializedPayload(input: {
  * Replay a saved completed trace as a stream without invoking a model provider.
  *
  * @remarks
- * This is the streaming counterpart to {@link replay}. It yields the exact
- * saved {@link Trace.events} in order and resolves {@link StreamHandle.result}
- * to the rehydrated {@link RunResult}. Since all data comes from the trace,
- * replay remains storage-free and provider-free.
+ * This is the streaming counterpart to {@link replay}. It yields the same
+ * event sequence exposed by the replayed result event log, including legacy
+ * provenance synthesis when a saved trace predates model request/response
+ * events. Since all data comes from the trace, replay remains storage-free and
+ * provider-free.
  */
 export function replayStream(trace: Trace): StreamHandle {
   const result = Promise.resolve(replay(trace));
@@ -1161,7 +1169,7 @@ export function replayStream(trace: Trace): StreamHandle {
 function replayStreamEvents(trace: Trace, parentRunIds: readonly string[] = []): StreamEvent[] {
   const events: StreamEvent[] = [];
 
-  for (const event of trace.events) {
+  for (const event of synthesizeProviderEvents(trace, trace.providerCalls)) {
     if (event.type === "sub-run-completed") {
       events.push(...replayStreamEvents(event.subResult.trace, [...parentRunIds, trace.runId]));
     }

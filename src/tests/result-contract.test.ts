@@ -492,7 +492,7 @@ describe("single-call result contract", () => {
       events: replayed.eventLog.events
     });
     expect(namespacedReplay).toEqual(replayed);
-    expect(replayed.eventLog.events).not.toBe(savedTrace.events);
+    expect(replayed.eventLog.events).toBe(savedTrace.events);
     expectReplayProvenanceRoundTrip(replayed.eventLog.events, savedTrace.providerCalls);
     expect(replayed.transcript).toBe(savedTrace.transcript);
     expect(replayed.output).toBe(savedTrace.finalOutput.output);
@@ -543,6 +543,20 @@ describe("single-call result contract", () => {
       "final"
     ]);
     expectReplayProvenanceRoundTrip(replayed.eventLog.events, legacyTrace.providerCalls);
+
+    const streamHandle = replayStream(legacyTrace);
+    const subscriberEvents: StreamEvent[] = [];
+    const streamedEvents: StreamEvent[] = [];
+    streamHandle.subscribe((event) => {
+      subscriberEvents.push(event);
+    });
+    for await (const event of streamHandle) {
+      streamedEvents.push(event);
+    }
+    const streamedReplay = await streamHandle.result;
+    expect(streamedReplay.eventLog.events).toEqual(replayed.eventLog.events);
+    expect(streamedEvents).toEqual(replayed.eventLog.events);
+    expect(subscriberEvents).toEqual(replayed.eventLog.events);
 
     const firstRequest = replayed.eventLog.events[2];
     const firstResponse = replayed.eventLog.events[3];
@@ -636,7 +650,7 @@ describe("single-call result contract", () => {
     expect(subscriberEvents).toEqual(savedTrace.events);
     expect(replayed.output).toBe(savedTrace.finalOutput.output);
     expect(replayed.transcript).toBe(savedTrace.transcript);
-    expect(replayed.eventLog.events).not.toBe(savedTrace.events);
+    expect(replayed.eventLog.events).toBe(savedTrace.events);
     expect(replayed.trace).toBe(savedTrace);
     expect(replayed).toEqual(replay(savedTrace));
     expect(namespacedResult).toEqual(replayed);
@@ -1316,7 +1330,8 @@ describe("single-call result contract", () => {
 
 function eventTimestamp(event: RunEvent | undefined): string | undefined {
   if (event === undefined) return undefined;
-  return "at" in event ? event.at : event.startedAt;
+  if ("at" in event) return event.at;
+  return event.type === "model-response" ? event.completedAt : event.startedAt;
 }
 
 function sortedKeys(value: object): string[] {

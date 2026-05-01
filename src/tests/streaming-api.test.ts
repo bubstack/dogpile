@@ -992,7 +992,8 @@ describe("SDK streaming API", () => {
 
 function eventTimestamp(event: RunEvent | StreamEvent | undefined): string | undefined {
   if (event === undefined) return undefined;
-  return "at" in event ? event.at : event.startedAt;
+  if ("at" in event) return event.at;
+  return event.type === "model-response" ? event.completedAt : event.startedAt;
 }
 
 const output = "critic judged final output";

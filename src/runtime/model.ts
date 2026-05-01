@@ -25,6 +25,7 @@ type ModelUsage = NonNullable<ModelResponse["usage"]>;
 export async function generateModelTurn(options: GenerateModelTurnOptions): Promise<ModelResponse> {
   const startedAt = new Date().toISOString();
   const modelId = options.model.modelId ?? options.model.id;
+  const traceRequest = requestForTrace(options.request);
   let response: ModelResponse;
 
   throwIfAborted(options.request.signal, options.model.id);
@@ -38,13 +39,13 @@ export async function generateModelTurn(options: GenerateModelTurnOptions): Prom
     startedAt,
     agentId: options.agent.id,
     role: options.agent.role,
-    request: requestForTrace(options.request)
+    request: traceRequest
   });
 
   if (!options.model.stream) {
     response = await options.model.generate(options.request);
     throwIfAborted(options.request.signal, options.model.id);
-    recordProviderCall(response, startedAt, modelId, options);
+    recordProviderCall(response, startedAt, modelId, traceRequest, options);
     return response;
   }
 
@@ -99,7 +100,7 @@ export async function generateModelTurn(options: GenerateModelTurnOptions): Prom
     ...(metadata !== undefined ? { metadata } : {})
   };
   throwIfAborted(options.request.signal, options.model.id);
-  recordProviderCall(response, startedAt, modelId, options);
+  recordProviderCall(response, startedAt, modelId, traceRequest, options);
   return response;
 }
 
@@ -107,6 +108,7 @@ function recordProviderCall(
   response: ModelResponse,
   startedAt: string,
   modelId: string,
+  request: ModelRequest,
   options: GenerateModelTurnOptions
 ): void {
   const completedAt = new Date().toISOString();
@@ -133,15 +135,15 @@ function recordProviderCall(
     completedAt,
     agentId: options.agent.id,
     role: options.agent.role,
-    request: requestForTrace(options.request),
+    request,
     response
   });
 }
 
 function requestForTrace(request: ModelRequest): ModelRequest {
   return {
-    messages: request.messages,
+    messages: request.messages.map((message) => ({ ...message })),
     temperature: request.temperature,
-    metadata: request.metadata
+    metadata: JSON.parse(JSON.stringify(request.metadata)) as ModelRequest["metadata"]
   };
 }
