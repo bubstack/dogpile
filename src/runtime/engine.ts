@@ -970,13 +970,20 @@ function resolveRuntimeTerminalThrow(
     return null;
   }
 
-  return findLastRealFailure(trace.events, failureInstancesByChildRunId);
+  const lastFailure = findLastRealFailure(trace.events, failureInstancesByChildRunId);
+  if (lastFailure === null) {
+    return null;
+  }
+  if (hasFinalSynthesisAfterEvent(trace, lastFailure.eventIndex)) {
+    return null;
+  }
+  return lastFailure.error;
 }
 
 function findLastRealFailure(
   events: readonly RunEvent[],
   failureInstancesByChildRunId: ReadonlyMap<string, DogpileError>
-): DogpileError | null {
+): { readonly error: DogpileError; readonly eventIndex: number } | null {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     if (event?.type !== "sub-run-failed") {
@@ -984,7 +991,7 @@ function findLastRealFailure(
     }
     const instance = failureInstancesByChildRunId.get(event.childRunId);
     if (instance) {
-      return instance;
+      return { error: instance, eventIndex: index };
     }
   }
   return null;
@@ -1000,18 +1007,33 @@ function resolveReplayTerminalThrow(trace: Trace): DogpileError | null {
     return null;
   }
 
-  return reconstructLastRealFailure(trace.events);
+  const lastFailure = reconstructLastRealFailure(trace.events);
+  if (lastFailure === null) {
+    return null;
+  }
+  if (hasFinalSynthesisAfterEvent(trace, lastFailure.eventIndex)) {
+    return null;
+  }
+  return lastFailure.error;
 }
 
-function reconstructLastRealFailure(events: readonly RunEvent[]): DogpileError | null {
+function reconstructLastRealFailure(
+  events: readonly RunEvent[]
+): { readonly error: DogpileError; readonly eventIndex: number } | null {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     if (event?.type !== "sub-run-failed" || isSyntheticSubRunFailure(event)) {
       continue;
     }
-    return dogpileErrorFromSerializedPayload(event.error);
+    return { error: dogpileErrorFromSerializedPayload(event.error), eventIndex: index };
   }
   return null;
+}
+
+function hasFinalSynthesisAfterEvent(trace: Trace, eventIndex: number): boolean {
+  return trace.protocolDecisions.some((decision) => {
+    return decision.phase === "final-synthesis" && decision.eventIndex > eventIndex;
+  });
 }
 
 function isSyntheticSubRunFailure(event: SubRunFailedEvent): boolean {

@@ -282,7 +282,7 @@ describe("public DogpileError API", () => {
       tier: "fast",
       model: provider
     });
-    const terminalTrace = traceWithBudgetTermination(result.trace);
+    const terminalTrace = traceWithBudgetTermination(result.trace, { removeFinalSynthesisDecisions: true });
 
     let replayError: unknown;
     try {
@@ -299,6 +299,31 @@ describe("public DogpileError API", () => {
       message: secondError.message,
       detail: secondError.detail
     });
+  });
+
+  it("successful final synthesis is not re-thrown just because termination metadata exists", async () => {
+    const provider = createThrowMatrixProvider({
+      firstPlan: delegateBlock({ protocol: "sequential", intent: "handled single child failure" }),
+      followUpPlan: participateBlock("handled after retry"),
+      finalResponse: "final synthesis after handled failure",
+      failures: {
+        "handled single child failure": new DogpileError({
+          code: "provider-timeout",
+          message: "handled child failure",
+          providerId: "throw-matrix-provider",
+          detail: { source: "provider", marker: "handled" }
+        })
+      }
+    });
+    const result = await run({
+      intent: "capture handled failure trace with final synthesis",
+      protocol: { kind: "coordinator", maxTurns: 1 },
+      tier: "fast",
+      model: provider
+    });
+    const terminalTrace = traceWithBudgetTermination(result.trace);
+
+    expect(replay(terminalTrace).output).toBe("final synthesis after handled failure");
   });
 
   it("cancel-wins throws the cancel error verbatim", async () => {
@@ -451,7 +476,10 @@ function createThrowMatrixProvider(opts: {
   };
 }
 
-function traceWithBudgetTermination(trace: Trace): Trace {
+function traceWithBudgetTermination(
+  trace: Trace,
+  options: { readonly removeFinalSynthesisDecisions?: boolean } = {}
+): Trace {
   const events = trace.events.map((event, index): RunEvent => {
     if (index !== trace.events.length - 1 || event.type !== "final") {
       return event;
@@ -475,6 +503,9 @@ function traceWithBudgetTermination(trace: Trace): Trace {
   return {
     ...trace,
     events,
+    protocolDecisions: options.removeFinalSynthesisDecisions
+      ? trace.protocolDecisions.filter((decision) => decision.phase !== "final-synthesis")
+      : trace.protocolDecisions,
     finalOutput: {
       ...trace.finalOutput,
       output: finalEvent.output,
