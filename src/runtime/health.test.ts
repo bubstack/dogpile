@@ -27,6 +27,29 @@ describe("computeHealth", () => {
     expect(result.stats.budgetUtilizationPct).toBe(50);
   });
 
+  it("reports full utilization when a zero-dollar cap has nonzero final spend", () => {
+    const trace = traceWith([], { finalUsd: 0.01, budgetCaps: { maxUsd: 0 } });
+
+    const result = computeHealth(trace, { budgetNearMissPct: 80 });
+
+    expect(result.stats.budgetUtilizationPct).toBe(100);
+    expect(result.anomalies).toContainEqual({
+      code: "budget-near-miss",
+      severity: "warning",
+      value: 100,
+      threshold: 80
+    });
+  });
+
+  it("reports zero utilization when a zero-dollar cap has zero final spend", () => {
+    const trace = traceWith([], { finalUsd: 0, budgetCaps: { maxUsd: 0 } });
+
+    const result = computeHealth(trace, { budgetNearMissPct: 80 });
+
+    expect(result.stats.budgetUtilizationPct).toBe(0);
+    expect(result.anomalies.map((anomaly) => anomaly.code)).not.toContain("budget-near-miss");
+  });
+
   it("returns null budget utilization when budget caps are absent", () => {
     const trace = traceWith([], { finalUsd: 0.5 });
 
@@ -204,6 +227,23 @@ describe("computeHealth", () => {
     const second = computeHealth(trace, thresholds);
 
     expect(second).toEqual(first);
+  });
+
+  it("rejects negative and non-finite runaway turn thresholds", () => {
+    const trace = traceWith([]);
+
+    expect(() => computeHealth(trace, { runawayTurns: -1 })).toThrow(RangeError);
+    expect(() => computeHealth(trace, { runawayTurns: Number.NaN })).toThrow(RangeError);
+    expect(() => computeHealth(trace, { runawayTurns: Number.POSITIVE_INFINITY })).toThrow(RangeError);
+  });
+
+  it("rejects budget near-miss thresholds outside the documented percentage range", () => {
+    const trace = traceWith([]);
+
+    expect(() => computeHealth(trace, { budgetNearMissPct: -1 })).toThrow(RangeError);
+    expect(() => computeHealth(trace, { budgetNearMissPct: Number.NaN })).toThrow(RangeError);
+    expect(() => computeHealth(trace, { budgetNearMissPct: Number.POSITIVE_INFINITY })).toThrow(RangeError);
+    expect(() => computeHealth(trace, { budgetNearMissPct: 101 })).toThrow(RangeError);
   });
 });
 

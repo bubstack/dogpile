@@ -57,6 +57,9 @@ export function computeHealth(
   trace: Trace,
   thresholds: HealthThresholds = DEFAULT_HEALTH_THRESHOLDS
 ): RunHealthSummary {
+  assertFiniteNonNegativeThreshold(thresholds.runawayTurns, "runawayTurns");
+  assertBudgetNearMissThreshold(thresholds.budgetNearMissPct);
+
   const turnEvents = trace.events.filter((event): event is TurnEvent => event.type === "agent-turn");
   const agentIds = new Set(turnEvents.map((event) => event.agentId));
   const totalTurns = turnEvents.length;
@@ -65,7 +68,7 @@ export function computeHealth(
   const maxUsd = trace.budget.caps?.maxUsd;
   const finalCost = trace.finalOutput.cost.usd;
   const budgetUtilizationPct: number | null =
-    maxUsd !== undefined ? (maxUsd === 0 ? 0 : (finalCost / maxUsd) * 100) : null;
+    maxUsd !== undefined ? (maxUsd === 0 ? (finalCost === 0 ? 0 : 100) : (finalCost / maxUsd) * 100) : null;
 
   const anomalies: HealthAnomaly[] = [];
 
@@ -116,4 +119,18 @@ export function computeHealth(
       budgetUtilizationPct
     }
   };
+}
+
+function assertFiniteNonNegativeThreshold(value: number | undefined, name: string): void {
+  if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+    throw new RangeError(`${name} must be a finite non-negative number`);
+  }
+}
+
+function assertBudgetNearMissThreshold(value: number | undefined): void {
+  assertFiniteNonNegativeThreshold(value, "budgetNearMissPct");
+
+  if (value !== undefined && value > 100) {
+    throw new RangeError("budgetNearMissPct must be between 0 and 100");
+  }
 }
