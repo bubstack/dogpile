@@ -71,6 +71,7 @@ export type RunProtocolFn = (input: {
   readonly terminate?: TerminationCondition;
   readonly wrapUpHint?: DogpileOptions["wrapUpHint"];
   readonly emit?: (event: RunEvent) => void;
+  readonly streamEvents?: boolean;
   readonly currentDepth?: number;
   readonly effectiveMaxDepth?: number;
   readonly effectiveMaxConcurrentChildren?: number;
@@ -101,6 +102,7 @@ interface CoordinatorRunOptions {
   readonly terminate?: TerminationCondition;
   readonly wrapUpHint?: DogpileOptions["wrapUpHint"];
   readonly emit?: (event: RunEvent) => void;
+  readonly streamEvents?: boolean;
   /**
    * Recursion depth of this coordinator run. Top-level callers pass 0; child
    * sub-runs receive parent depth + 1 from the dispatch loop.
@@ -1117,7 +1119,13 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
   const parentEmit = input.emit;
   const teedEmit = (event: RunEvent): void => {
     childEvents.push(event);
-    options.emit?.(event);
+    if (options.streamEvents && options.emit) {
+      const inbound = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
+      options.emit({
+        ...event,
+        parentRunIds: [input.parentRunId, ...(inbound ?? [])]
+      } as RunEvent);
+    }
   };
   const childStartedAt = Date.now();
 
@@ -1193,6 +1201,7 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     ...(childTimeoutMs !== undefined ? { budget: { timeoutMs: childTimeoutMs } } : {}),
     signal: dispatchedChild.controller.signal,
     emit: teedEmit,
+    ...(options.streamEvents !== undefined ? { streamEvents: options.streamEvents } : {}),
     currentDepth: input.parentDepth + 1,
     ...(options.effectiveMaxDepth !== undefined ? { effectiveMaxDepth: options.effectiveMaxDepth } : {}),
     ...(options.effectiveMaxConcurrentChildren !== undefined

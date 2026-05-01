@@ -241,6 +241,7 @@ export function createEngine(options: EngineOptions): Engine {
             ...(options.defaultSubRunTimeoutMs !== undefined
               ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
               : {}),
+            streamEvents: true,
             emit(event: RunEvent): void {
               if (status !== "running") {
                 return;
@@ -585,6 +586,7 @@ interface RunProtocolOptions {
   readonly terminate?: EngineOptions["terminate"];
   readonly wrapUpHint?: EngineOptions["wrapUpHint"];
   readonly emit?: (event: RunEvent) => void;
+  readonly streamEvents?: boolean;
   /**
    * Current recursion depth. Top-level runs use 0; the coordinator dispatch
    * loop increments before invoking {@link runProtocol} for a child run.
@@ -743,6 +745,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.terminate ? { terminate: options.terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
         ...(options.emit ? { emit: options.emit } : {}),
+        ...(options.streamEvents !== undefined ? { streamEvents: options.streamEvents } : {}),
         currentDepth: options.currentDepth ?? 0,
         effectiveMaxDepth: options.effectiveMaxDepth ?? Infinity,
         effectiveMaxConcurrentChildren: options.effectiveMaxConcurrentChildren ?? DEFAULT_MAX_CONCURRENT_CHILDREN,
@@ -872,6 +875,7 @@ export function replay(trace: Trace): RunResult {
  */
 export function replayStream(trace: Trace): StreamHandle {
   const result = Promise.resolve(replay(trace));
+  const replayEvents = replayStreamEvents(trace);
 
   return {
     get status(): StreamHandleStatus {
@@ -882,7 +886,7 @@ export function replayStream(trace: Trace): StreamHandle {
       // Replay streams are already completed snapshots, so cancellation is a no-op.
     },
     subscribe(subscriber: StreamEventSubscriber) {
-      for (const event of trace.events) {
+      for (const event of replayEvents) {
         subscriber(event);
       }
 
@@ -897,7 +901,7 @@ export function replayStream(trace: Trace): StreamHandle {
 
       return {
         next(): Promise<IteratorResult<StreamEvent>> {
-          const event = trace.events[index];
+          const event = replayEvents[index];
           if (event) {
             index += 1;
             return Promise.resolve({ done: false, value: event });
@@ -908,6 +912,31 @@ export function replayStream(trace: Trace): StreamHandle {
       };
     }
   };
+}
+
+function replayStreamEvents(trace: Trace, parentRunIds: readonly string[] = []): StreamEvent[] {
+  const events: StreamEvent[] = [];
+
+  for (const event of trace.events) {
+    if (event.type === "sub-run-completed") {
+      events.push(...replayStreamEvents(event.subResult.trace, [...parentRunIds, trace.runId]));
+    }
+    events.push(wrapReplayStreamEvent(event, parentRunIds));
+  }
+
+  return events;
+}
+
+function wrapReplayStreamEvent(event: RunEvent, parentRunIds: readonly string[]): StreamEvent {
+  if (parentRunIds.length === 0) {
+    return event;
+  }
+
+  const inbound = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
+  return {
+    ...event,
+    parentRunIds: [...parentRunIds, ...(inbound ?? [])]
+  } as StreamEvent;
 }
 
 function wireCallerAbortSignal(
