@@ -83,6 +83,10 @@ export function createEngine(options: EngineOptions): Engine {
         runOptions?.maxDepth ?? Number.POSITIVE_INFINITY
       );
 
+      const startedAtMs = Date.now();
+      const parentDeadlineMs =
+        options.budget?.timeoutMs !== undefined ? startedAtMs + options.budget.timeoutMs : undefined;
+
       return runNonStreamingProtocol({
         intent,
         protocol,
@@ -98,7 +102,11 @@ export function createEngine(options: EngineOptions): Engine {
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
         ...(options.evaluate ? { evaluate: options.evaluate } : {}),
         currentDepth: 0,
-        effectiveMaxDepth
+        effectiveMaxDepth,
+        ...(parentDeadlineMs !== undefined ? { parentDeadlineMs } : {}),
+        ...(options.defaultSubRunTimeoutMs !== undefined
+          ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
+          : {})
       });
     },
 
@@ -182,6 +190,9 @@ export function createEngine(options: EngineOptions): Engine {
         }
 
         try {
+          const streamStartedAtMs = Date.now();
+          const streamParentDeadlineMs =
+            options.budget?.timeoutMs !== undefined ? streamStartedAtMs + options.budget.timeoutMs : undefined;
           const baseResult = await abortRace.run(runProtocol({
             intent,
             protocol,
@@ -196,6 +207,10 @@ export function createEngine(options: EngineOptions): Engine {
             ...(terminate ? { terminate } : {}),
             currentDepth: 0,
             effectiveMaxDepth,
+            ...(streamParentDeadlineMs !== undefined ? { parentDeadlineMs: streamParentDeadlineMs } : {}),
+            ...(options.defaultSubRunTimeoutMs !== undefined
+              ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
+              : {}),
             emit(event: RunEvent): void {
               if (status !== "running") {
                 return;
@@ -550,6 +565,17 @@ interface RunProtocolOptions {
    * Effective max recursion depth. Plan 04 enforces; Plan 03 plumbs the param.
    */
   readonly effectiveMaxDepth?: number;
+  /**
+   * Root-run deadline (epoch ms) threaded through every recursive coordinator
+   * dispatch (BUDGET-02 / D-12). Children inherit `parentDeadlineMs - now()`
+   * as their default timeout window.
+   */
+  readonly parentDeadlineMs?: number;
+  /**
+   * Engine-level fallback sub-run timeout (BUDGET-02 / D-14). Applied only when
+   * neither the parent nor the decision specifies a `budget.timeoutMs`.
+   */
+  readonly defaultSubRunTimeoutMs?: number;
 }
 
 type NonStreamingProtocolOptions = Omit<RunProtocolOptions, "emit"> & Pick<EngineOptions, "evaluate">;
@@ -687,6 +713,10 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.emit ? { emit: options.emit } : {}),
         currentDepth: options.currentDepth ?? 0,
         effectiveMaxDepth: options.effectiveMaxDepth ?? Infinity,
+        ...(options.parentDeadlineMs !== undefined ? { parentDeadlineMs: options.parentDeadlineMs } : {}),
+        ...(options.defaultSubRunTimeoutMs !== undefined
+          ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
+          : {}),
         runProtocol: (childInput) =>
           runProtocol({
             ...childInput,

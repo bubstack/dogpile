@@ -17,6 +17,7 @@ import type {
   RuntimeToolExecutor,
   RunEvent,
   RunResult,
+  SubRunBudgetClampedEvent,
   SubRunFailedEvent,
   SubRunParentAbortedEvent,
   TerminationCondition,
@@ -69,6 +70,17 @@ export type RunProtocolFn = (input: {
   readonly emit?: (event: RunEvent) => void;
   readonly currentDepth?: number;
   readonly effectiveMaxDepth?: number;
+  /**
+   * Root-run deadline (epoch ms). Children inherit `parentDeadlineMs - now()`
+   * as their default timeout window so a depth-N child sees the ROOT's deadline,
+   * not its immediate parent's freshly-computed value (BUDGET-02 / D-12).
+   */
+  readonly parentDeadlineMs?: number;
+  /**
+   * Engine-level fallback sub-run timeout (BUDGET-02 / D-14). Applied only when
+   * neither the parent nor the decision specifies a `budget.timeoutMs`.
+   */
+  readonly defaultSubRunTimeoutMs?: number;
 }) => Promise<RunResult>;
 
 interface CoordinatorRunOptions {
@@ -102,6 +114,18 @@ interface CoordinatorRunOptions {
    * delegate dispatch falls back to throwing `invalid-configuration`.
    */
   readonly runProtocol?: RunProtocolFn;
+  /**
+   * Root-run deadline (epoch ms) threaded through every recursive coordinator
+   * dispatch (BUDGET-02 / D-12). When set, sub-run dispatches compute their
+   * `remainingMs = parentDeadlineMs - Date.now()` against this deadline rather
+   * than the parent's full `budget.timeoutMs` window.
+   */
+  readonly parentDeadlineMs?: number;
+  /**
+   * Engine-level fallback sub-run timeout (BUDGET-02 / D-14). Applied only when
+   * neither the parent nor the decision specifies a `budget.timeoutMs`.
+   */
+  readonly defaultSubRunTimeoutMs?: number;
 }
 
 /**
@@ -798,35 +822,47 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
 
   const childRunId = createRunId();
   const recursive = decision.protocol === "coordinator";
-  const parentTimeoutMs = options.budget?.timeoutMs;
   const decisionTimeoutMs = decision.budget?.timeoutMs;
+  const parentDeadlineMs = options.parentDeadlineMs;
 
-  // Compute remaining time per D-12 / planner Q3. If parent has no timeoutMs,
-  // child has none either. If decision overrides exceed parent's remaining,
-  // throw `invalid-configuration` per the plan.
+  // BUDGET-02 / D-12: deadline-based remaining-time math. Children inherit
+  // `parentDeadlineMs - now()`, not a static `parent.budget.timeoutMs`. If the
+  // parent's deadline has already elapsed, throw `code: "aborted"` with
+  // `detail.reason: "timeout"` BEFORE `sub-run-started` is emitted.
+  const remainingMs =
+    parentDeadlineMs !== undefined ? Math.max(0, parentDeadlineMs - Date.now()) : undefined;
+
+  if (parentDeadlineMs !== undefined && remainingMs === 0) {
+    throw new DogpileError({
+      code: "aborted",
+      message: "Parent deadline elapsed before sub-run dispatch.",
+      retryable: false,
+      providerId: options.model.id,
+      detail: { reason: "timeout" }
+    });
+  }
+
+  // Resolve child timeout with precedence (D-12 / D-14):
+  //   decision.budget.timeoutMs > parent's remaining > defaultSubRunTimeoutMs > undefined.
+  // When the decision-level timeout exceeds the parent's remaining, CLAMP
+  // (no longer throw) and emit a `sub-run-budget-clamped` event below.
   let childTimeoutMs: number | undefined;
-  if (parentTimeoutMs !== undefined) {
-    const remainingMs = Math.max(0, parentTimeoutMs);
+  let clampedFrom: number | undefined;
+  if (remainingMs !== undefined) {
     if (decisionTimeoutMs !== undefined) {
       if (decisionTimeoutMs > remainingMs) {
-        throw new DogpileError({
-          code: "invalid-configuration",
-          message: `delegate decision budget.timeoutMs (${decisionTimeoutMs}) exceeds parent's remaining timeout (${remainingMs})`,
-          retryable: false,
-          detail: {
-            kind: "delegate-validation",
-            path: "decision.budget.timeoutMs",
-            expected: `<= ${remainingMs}`,
-            received: String(decisionTimeoutMs)
-          }
-        });
+        clampedFrom = decisionTimeoutMs;
+        childTimeoutMs = remainingMs;
+      } else {
+        childTimeoutMs = decisionTimeoutMs;
       }
-      childTimeoutMs = decisionTimeoutMs;
     } else {
       childTimeoutMs = remainingMs;
     }
   } else if (decisionTimeoutMs !== undefined) {
     childTimeoutMs = decisionTimeoutMs;
+  } else if (options.defaultSubRunTimeoutMs !== undefined) {
+    childTimeoutMs = options.defaultSubRunTimeoutMs;
   }
 
   if (!options.runProtocol) {
@@ -851,6 +887,25 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     options.emit?.(event);
   };
   const childStartedAt = Date.now();
+
+  // BUDGET-02 / D-12: emit clamp event BEFORE sub-run-started so the trace
+  // records "this child's requested timeout was reduced to fit parent's
+  // remaining deadline." Skipped on the happy path (no clamp, no event).
+  if (clampedFrom !== undefined && childTimeoutMs !== undefined) {
+    const clampEvent: SubRunBudgetClampedEvent = {
+      type: "sub-run-budget-clamped",
+      runId: input.parentRunId,
+      at: new Date().toISOString(),
+      childRunId,
+      parentRunId: input.parentRunId,
+      parentDecisionId: input.parentDecisionId,
+      requestedTimeoutMs: clampedFrom,
+      clampedTimeoutMs: childTimeoutMs,
+      reason: "exceeded-parent-remaining"
+    };
+    input.emit(clampEvent);
+    input.recordProtocolDecision(clampEvent);
+  }
 
   const startEvent: RunEvent = {
     type: "sub-run-started",
@@ -900,7 +955,13 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     signal: childController.signal,
     emit: teedEmit,
     currentDepth: input.parentDepth + 1,
-    ...(options.effectiveMaxDepth !== undefined ? { effectiveMaxDepth: options.effectiveMaxDepth } : {})
+    ...(options.effectiveMaxDepth !== undefined ? { effectiveMaxDepth: options.effectiveMaxDepth } : {}),
+    // BUDGET-02 / D-12: forward the ROOT deadline so depth-N grandchildren
+    // see the same `parentDeadlineMs` rather than a fresh per-level snapshot.
+    ...(parentDeadlineMs !== undefined ? { parentDeadlineMs } : {}),
+    ...(options.defaultSubRunTimeoutMs !== undefined
+      ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
+      : {})
   };
 
   let subResult: RunResult;

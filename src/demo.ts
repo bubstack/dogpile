@@ -92,7 +92,8 @@ export type DemoTraceEventMetadata =
   | DemoSubRunStartedEventMetadata
   | DemoSubRunCompletedEventMetadata
   | DemoSubRunFailedEventMetadata
-  | DemoSubRunParentAbortedEventMetadata;
+  | DemoSubRunParentAbortedEventMetadata
+  | DemoSubRunBudgetClampedEventMetadata;
 
 export interface DemoRoleAssignmentEventMetadata {
   readonly type: "role-assignment";
@@ -217,6 +218,16 @@ export interface DemoSubRunParentAbortedEventMetadata {
   readonly childRunId: string;
   readonly parentRunId: string;
   readonly reason: "parent-aborted";
+}
+
+export interface DemoSubRunBudgetClampedEventMetadata {
+  readonly type: "sub-run-budget-clamped";
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly parentDecisionId: string;
+  readonly requestedTimeoutMs: number;
+  readonly clampedTimeoutMs: number;
+  readonly reason: "exceeded-parent-remaining";
 }
 
 export interface DemoTraceEventListItem {
@@ -467,6 +478,8 @@ function traceEventTitle(event: RunEvent): string {
       return `Sub-run ${event.childRunId} failed: ${event.error.message}`;
     case "sub-run-parent-aborted":
       return `Parent aborted after sub-run ${event.childRunId}`;
+    case "sub-run-budget-clamped":
+      return `Sub-run ${event.childRunId} budget clamped to ${event.clampedTimeoutMs}ms`;
   }
 
   return assertNever(event);
@@ -495,6 +508,7 @@ function traceEventVisualSection(event: RunEvent): DemoTraceEventVisualSection {
     case "sub-run-completed":
     case "sub-run-failed":
     case "sub-run-parent-aborted":
+    case "sub-run-budget-clamped":
       return "activity-log";
   }
 
@@ -524,6 +538,7 @@ function traceEventVisualState(event: RunEvent): DemoTraceEventVisualState {
     case "sub-run-completed":
     case "sub-run-failed":
     case "sub-run-parent-aborted":
+    case "sub-run-budget-clamped":
       return "turn-completed";
   }
 
@@ -655,6 +670,16 @@ function traceEventMetadata(event: RunEvent): DemoTraceEventMetadata {
         type: event.type,
         childRunId: event.childRunId,
         parentRunId: event.parentRunId,
+        reason: event.reason
+      };
+    case "sub-run-budget-clamped":
+      return {
+        type: event.type,
+        childRunId: event.childRunId,
+        parentRunId: event.parentRunId,
+        parentDecisionId: event.parentDecisionId,
+        requestedTimeoutMs: event.requestedTimeoutMs,
+        clampedTimeoutMs: event.clampedTimeoutMs,
         reason: event.reason
       };
   }

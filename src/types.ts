@@ -1303,6 +1303,7 @@ import type {
   StreamEvent,
   StreamLifecycleEvent,
   StreamOutputEvent,
+  SubRunBudgetClampedEvent,
   SubRunCompletedEvent,
   SubRunFailedEvent,
   SubRunParentAbortedEvent,
@@ -1333,6 +1334,7 @@ export type {
   StreamEvent,
   StreamLifecycleEvent,
   StreamOutputEvent,
+  SubRunBudgetClampedEvent,
   SubRunCompletedEvent,
   SubRunFailedEvent,
   SubRunParentAbortedEvent,
@@ -1782,6 +1784,18 @@ export interface DogpileOptions extends BudgetCostTierOptions {
    * detail: { kind: "delegate-validation", reason: "depth-overflow" } })`.
    */
   readonly maxDepth?: number;
+  /**
+   * Fallback timeout (milliseconds) applied to delegated sub-runs when neither
+   * the parent's `budget.timeoutMs` nor the decision-level
+   * `decision.budget.timeoutMs` specifies one (BUDGET-02 / D-14).
+   *
+   * Precedence (most specific wins):
+   *   `decision.budget.timeoutMs` > parent's remaining deadline (when parent has
+   *   `budget.timeoutMs`) > `defaultSubRunTimeoutMs` > undefined.
+   *
+   * Default: `undefined` (preserves the "no sub-run timeout" posture).
+   */
+  readonly defaultSubRunTimeoutMs?: number;
 }
 
 /**
@@ -1855,6 +1869,18 @@ export interface EngineOptions {
    * detail: { kind: "delegate-validation", reason: "depth-overflow" } })`.
    */
   readonly maxDepth?: number;
+  /**
+   * Fallback timeout (milliseconds) applied to delegated sub-runs when neither
+   * the parent's `budget.timeoutMs` nor the decision-level
+   * `decision.budget.timeoutMs` specifies one (BUDGET-02 / D-14).
+   *
+   * Precedence (most specific wins):
+   *   `decision.budget.timeoutMs` > parent's remaining deadline (when parent has
+   *   `budget.timeoutMs`) > `defaultSubRunTimeoutMs` > undefined.
+   *
+   * Default: `undefined` (preserves the "no sub-run timeout" posture).
+   */
+  readonly defaultSubRunTimeoutMs?: number;
 }
 
 /**

@@ -24,6 +24,7 @@ type ValidationRule =
   | "finite-number"
   | "non-negative-number"
   | "positive-integer"
+  | "positive-finite-number"
   | "non-negative-integer"
   | "range"
   | "enum"
@@ -70,6 +71,7 @@ export function validateDogpileOptions(options: DogpileOptions): void {
   validateOptionalSeed(options.seed, "seed");
   validateOptionalAbortSignal(options.signal, "signal");
   validateOptionalNonNegativeInteger(options.maxDepth, "maxDepth");
+  validateOptionalPositiveFiniteNumber(options.defaultSubRunTimeoutMs, "defaultSubRunTimeoutMs");
 }
 
 export function validateMissionIntent(intent: unknown, path = "intent"): void {
@@ -105,6 +107,7 @@ export function validateEngineOptions(options: EngineOptions): void {
   validateOptionalSeed(options.seed, "seed");
   validateOptionalAbortSignal(options.signal, "signal");
   validateOptionalNonNegativeInteger(options.maxDepth, "maxDepth");
+  validateOptionalPositiveFiniteNumber(options.defaultSubRunTimeoutMs, "defaultSubRunTimeoutMs");
 }
 
 /**
@@ -712,6 +715,21 @@ function validateOptionalNonNegativeInteger(value: unknown, path: string): void 
       rule: "non-negative-integer",
       message: "value must be a non-negative integer.",
       expected: "integer >= 0",
+      actual: value
+    });
+  }
+}
+
+function validateOptionalPositiveFiniteNumber(value: unknown, path: string): void {
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    invalidConfiguration({
+      path,
+      rule: "positive-finite-number",
+      message: "value must be a positive finite number.",
+      expected: "finite number > 0",
       actual: value
     });
   }

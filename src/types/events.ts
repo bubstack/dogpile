@@ -591,6 +591,40 @@ export interface SubRunParentAbortedEvent {
 }
 
 /**
+ * Event emitted when a delegated sub-run's requested `budget.timeoutMs`
+ * exceeds the parent's remaining deadline and is therefore clamped to the
+ * parent's remaining time (BUDGET-02 / D-12).
+ *
+ * @remarks
+ * Emitted on the parent trace BEFORE `sub-run-started`. When the requested
+ * decision-level timeout fits within the parent's remaining deadline, the
+ * event is NOT emitted (zero-overhead happy path). The parent's deadline is
+ * a hard ceiling for the whole tree, so any decision-level override that
+ * exceeds it is silently clamped rather than throwing — recording the
+ * requested-vs-clamped pair on the trace preserves provenance for replay.
+ */
+export interface SubRunBudgetClampedEvent {
+  /** Discriminant for event rendering and exhaustive switches. */
+  readonly type: "sub-run-budget-clamped";
+  /** Parent run id; matches the surrounding trace runId. */
+  readonly runId: string;
+  /** ISO-8601 event timestamp. */
+  readonly at: string;
+  /** Child run id whose budget was clamped. */
+  readonly childRunId: string;
+  /** Parent run id (duplicates `runId` for explicit cross-reference). */
+  readonly parentRunId: string;
+  /** Replay decision id of the parent decision that triggered the sub-run. */
+  readonly parentDecisionId: string;
+  /** The decision's originally requested `budget.timeoutMs` value (milliseconds). */
+  readonly requestedTimeoutMs: number;
+  /** The clamped child timeout actually applied (parent's remaining deadline, in milliseconds). */
+  readonly clampedTimeoutMs: number;
+  /** Discriminator for the clamp cause (currently always "exceeded-parent-remaining"). */
+  readonly reason: "exceeded-parent-remaining";
+}
+
+/**
  * Successful coordination event emitted by Dogpile and persisted in traces.
  *
  * @remarks
@@ -643,6 +677,7 @@ export type RunEvent =
   | SubRunCompletedEvent
   | SubRunFailedEvent
   | SubRunParentAbortedEvent
+  | SubRunBudgetClampedEvent
   | BudgetStopEvent
   | FinalEvent;
 
@@ -672,7 +707,8 @@ export type StreamLifecycleEvent =
   | SubRunStartedEvent
   | SubRunCompletedEvent
   | SubRunFailedEvent
-  | SubRunParentAbortedEvent;
+  | SubRunParentAbortedEvent
+  | SubRunBudgetClampedEvent;
 
 /**
  * Output event yielded by `stream()`.

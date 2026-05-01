@@ -185,6 +185,7 @@ export type {
   StreamOutputEvent,
   StreamSubscription,
   StopTerminationDecision,
+  SubRunBudgetClampedEvent,
   SubRunCompletedEvent,
   SubRunFailedEvent,
   SubRunParentAbortedEvent,
