@@ -33,13 +33,146 @@ describe("sequential protocol", () => {
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
     expect(JSON.parse(JSON.stringify(result.trace))).toEqual(result.trace);
     expect(result.cost.totalTokens).toBeGreaterThan(0);
+  });
+
+  it("emits model provenance events around non-streaming provider calls", async () => {
+    const model: ConfiguredModelProvider = {
+      id: "non-streaming-provider",
+      modelId: "non-streaming-model",
+      async generate() {
+        return { text: "planner output" };
+      }
+    };
+
+    const result = await run({
+      intent: "Verify model provenance around a non-streaming call.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model,
+      agents: [{ id: "planner-seat", role: "planner" }]
+    });
+
+    expect(result.trace.events.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
+
+    const requestEvent = result.trace.events[1];
+    const responseEvent = result.trace.events[2];
+    const turnEvent = result.trace.events[3];
+    if (
+      requestEvent?.type !== "model-request" ||
+      responseEvent?.type !== "model-response" ||
+      turnEvent?.type !== "agent-turn"
+    ) {
+      throw new Error("expected request, response, and turn events");
+    }
+
+    expect(requestEvent).toMatchObject({
+      runId: result.trace.runId,
+      callId: `${result.trace.runId}:provider-call:1`,
+      providerId: "non-streaming-provider",
+      modelId: "non-streaming-model",
+      agentId: "planner-seat",
+      role: "planner"
+    });
+    expect(responseEvent).toMatchObject({
+      runId: result.trace.runId,
+      callId: requestEvent.callId,
+      providerId: requestEvent.providerId,
+      modelId: requestEvent.modelId,
+      startedAt: requestEvent.startedAt,
+      agentId: requestEvent.agentId,
+      role: requestEvent.role,
+      response: { text: "planner output" }
+    });
+    expect(result.trace.providerCalls[0]).toMatchObject({
+      callId: requestEvent.callId,
+      providerId: requestEvent.providerId,
+      modelId: requestEvent.modelId,
+      startedAt: requestEvent.startedAt,
+      completedAt: responseEvent.completedAt
+    });
+    expect(Date.parse(requestEvent.startedAt)).toBeLessThanOrEqual(Date.parse(responseEvent.completedAt));
+    expect(Date.parse(responseEvent.completedAt)).toBeLessThanOrEqual(Date.parse(turnEvent.at));
+  });
+
+  it("emits model provenance events around streaming provider calls", async () => {
+    const model: ConfiguredModelProvider = {
+      id: "streaming-provider",
+      modelId: "streaming-model",
+      async generate() {
+        throw new Error("expected streaming path");
+      },
+      async *stream() {
+        yield { text: "hel" };
+        yield { text: "lo" };
+      }
+    };
+
+    const result = await run({
+      intent: "Verify model provenance around a streaming call.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model,
+      agents: [{ id: "writer-seat", role: "writer" }]
+    });
+
+    expect(result.trace.events.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "model-request",
+      "model-output-chunk",
+      "model-output-chunk",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
+
+    const requestEvent = result.trace.events[1];
+    const firstChunk = result.trace.events[2];
+    const secondChunk = result.trace.events[3];
+    const responseEvent = result.trace.events[4];
+    if (
+      requestEvent?.type !== "model-request" ||
+      firstChunk?.type !== "model-output-chunk" ||
+      secondChunk?.type !== "model-output-chunk" ||
+      responseEvent?.type !== "model-response"
+    ) {
+      throw new Error("expected streaming provenance event sequence");
+    }
+
+    expect(requestEvent.modelId).toBe("streaming-model");
+    expect(firstChunk.output).toBe("hel");
+    expect(secondChunk.output).toBe("hello");
+    expect(responseEvent).toMatchObject({
+      callId: requestEvent.callId,
+      providerId: requestEvent.providerId,
+      modelId: requestEvent.modelId,
+      startedAt: requestEvent.startedAt,
+      response: { text: "hello" }
+    });
+    expect(result.trace.providerCalls[0]).toMatchObject({
+      callId: requestEvent.callId,
+      modelId: requestEvent.modelId,
+      completedAt: responseEvent.completedAt,
+      response: { text: "hello" }
+    });
   });
 
   it("passes a caller AbortSignal through every sequential model request", async () => {
@@ -150,7 +283,11 @@ describe("sequential protocol", () => {
     expect(events).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -181,7 +318,11 @@ describe("sequential protocol", () => {
     expect(streamedEvents.map((event) => event.type)).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
