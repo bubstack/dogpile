@@ -74,16 +74,16 @@
 
 | REQ-ID | Phase | Phase Name |
 |--------|-------|------------|
-| PROV-01 | — | — |
-| PROV-02 | — | — |
-| INTR-01 | — | — |
-| INTR-02 | — | — |
-| HLTH-01 | — | — |
-| HLTH-02 | — | — |
-| AUDT-01 | — | — |
-| AUDT-02 | — | — |
-| OTEL-01 | — | — |
-| OTEL-02 | — | — |
-| OTEL-03 | — | — |
-| METR-01 | — | — |
-| METR-02 | — | — |
+| PROV-01 | 6 | Provenance Annotations |
+| PROV-02 | 6 | Provenance Annotations |
+| INTR-01 | 7 | Structured Event Introspection + Health Diagnostics |
+| INTR-02 | 7 | Structured Event Introspection + Health Diagnostics |
+| HLTH-01 | 7 | Structured Event Introspection + Health Diagnostics |
+| HLTH-02 | 7 | Structured Event Introspection + Health Diagnostics |
+| AUDT-01 | 8 | Audit Event Schema |
+| AUDT-02 | 8 | Audit Event Schema |
+| OTEL-01 | 9 | OTEL Tracing Bridge |
+| OTEL-02 | 9 | OTEL Tracing Bridge |
+| OTEL-03 | 9 | OTEL Tracing Bridge |
+| METR-01 | 10 | Metrics / Counters |
+| METR-02 | 10 | Metrics / Counters |

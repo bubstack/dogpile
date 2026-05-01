@@ -4,9 +4,9 @@ milestone: v0.5.0
 milestone_name: Observability and Auditability
 status: planning
 last_updated: "2026-05-01T00:00:00Z"
-last_activity: 2026-05-01 -- Milestone v0.5.0 started
+last_activity: 2026-05-01 -- Roadmap created; Phase 6 is next
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -23,17 +23,21 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 6 — Provenance Annotations (next to start)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-05-01 — Milestone v0.5.0 started
+Status: Roadmap defined; ready for phase planning
+Last activity: 2026-05-01 — Roadmap created (Phases 6–10, 13 requirements, 100% coverage)
+
+```
+Progress [----------] 0% (0/5 phases)
+```
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 0 / 0 |
-| Requirements complete | 0 / 0 |
+| Phases complete | 0 / 5 |
+| Requirements complete | 0 / 13 |
 | Plans complete | 0 / 0 |
 
 ## Accumulated Context
@@ -42,6 +46,9 @@ Last activity: 2026-05-01 — Milestone v0.5.0 started
 
 - **OTEL bridge uses tracer injection.** Caller passes an optional `tracer` object duck-typed against the OTEL Tracer interface. SDK emits spans when present, no-ops when absent. Zero new dependencies added to the runtime.
 - **Public-surface invariants must move together.** Every event/result/exports change updates `src/tests/event-schema.test.ts`, `src/tests/result-contract.test.ts`, `src/tests/package-exports.test.ts`, `package.json` `exports`/`files`, and `CHANGELOG.md`.
+- **Phase 6 (Provenance) is the only event-shape change.** All other phases are pure additions or engine-option injections. Phase 6 must complete before OTEL (Phase 9) which depends on stable provenance fields.
+- **Audit record is an independent type.** `AuditRecord` is not derived from `RunEvent` via Pick/Omit; it has its own `auditSchemaVersion: "1"` and is protected by a frozen fixture test.
+- **No `@opentelemetry/*` imports in src/runtime/, src/browser/, src/providers/.** OTEL integration is duck-typed only; a grep-based test will enforce this boundary.
 
 ### Todos
 
@@ -53,12 +60,17 @@ Last activity: 2026-05-01 — Milestone v0.5.0 started
 
 ## Deferred Items
 
-(none)
+- Per-turn health streaming (health diagnostics emitted as events during a run, not only at completion)
+- Caller-defined-tree API: `Dogpile.nest({ children: [...] })`
+- Cross-protocol shared transcript across parent/child boundary
+- Per-child retry policy on `delegate` decisions
+- `compactProvenance` deduplication mode
+- Built-in OTLP HTTP exporter
 
 ## Session Continuity
 
-**Next action:** Requirements defined. Run `/gsd-plan-phase [N]` to plan the first phase.
+**Next action:** Roadmap defined. Run `/gsd-plan-phase 6` to plan Phase 6: Provenance Annotations.
 
 ---
 
-*Last updated: 2026-05-01 — v0.5.0 Observability and Auditability milestone started.*
+*Last updated: 2026-05-01 — v0.5.0 Observability and Auditability roadmap created.*
