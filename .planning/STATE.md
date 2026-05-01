@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.4.0
 milestone_name: milestone
-status: Phase 3 Plan 03-01 complete; ready for 03-02 bounded dispatch
-last_updated: "2026-05-01T01:31:05Z"
+status: Phase 3 Plan 03-02 complete; ready for 03-03 local-provider clamping
+last_updated: "2026-05-01T01:47:19Z"
 last_activity: 2026-05-01
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 12
-  completed_plans: 10
-  percent: 83
+  completed_plans: 11
+  percent: 92
 ---
 
 # State
@@ -24,8 +24,8 @@ progress:
 ## Current Position
 
 Phase: 03
-Plan: 02
-Status: Phase 3 Plan 03-01 complete; ready for bounded dispatch and array-parser unlock
+Plan: 03
+Status: Phase 3 Plan 03-02 complete; ready for local-provider clamping
 Last activity: 2026-05-01
 
 ## Performance Metrics
@@ -33,8 +33,8 @@ Last activity: 2026-05-01
 | Metric | Value |
 |--------|-------|
 | Phases complete | 2 / 5 |
-| Requirements complete | 11 / 27 |
-| Plans complete | 10 / 12 |
+| Requirements complete | 12 / 27 |
+| Plans complete | 11 / 12 |
 
 ## Accumulated Context
 
@@ -50,10 +50,12 @@ Last activity: 2026-05-01
 - **Phase 1 — Provider inheritance.** Child sub-runs inherit the parent provider object verbatim (D-11); cost-cap not propagated; child timeoutMs default = `parent.deadline - now` (or undefined if parent uncapped, per planner-resolved Q3).
 - **Phase 3 Plan 03-01 — Provider locality metadata.** `ConfiguredModelProvider.metadata?.locality` is the public provider hint; OpenAI-compatible providers auto-detect local hosts through `classifyHostLocality`; invalid locality is rejected at construct time and engine run start.
 - **Phase 3 Plan 03-01 — Local spoofing guard.** `locality: "remote"` on a detected-local OpenAI-compatible `baseURL` throws `invalid-configuration` with `detail.reason: "remote-override-on-local-host"`.
+- **Phase 3 Plan 03-02 — Bounded fan-out dispatch.** Coordinator delegate arrays now execute through a per-turn semaphore with default `maxConcurrentChildren=4`, per-run/decision lowering, `sub-run-queued` pressure events, completion-order result prompts, and synthetic `sibling-failed` failures for queued children abandoned after a sibling failure.
+- **Phase 3 Plan 03-02 — Additive fan-out identity.** `parentDecisionId` format remains unchanged; `parentDecisionArrayIndex` disambiguates delegates from the same plan turn on queued/started/completed/failed sub-run events.
 
 ### Todos
 
-- Execute Phase 3 Plan 03-02: bounded dispatch + delegate array-parser unlock.
+- Execute Phase 3 Plan 03-03: local-provider clamping + clamp event.
 
 ### Blockers
 
@@ -61,8 +63,8 @@ Last activity: 2026-05-01
 
 ## Session Continuity
 
-**Next action:** Execute `.planning/phases/03-provider-locality-bounded-concurrency/03-02-PLAN.md`.
+**Next action:** Execute `.planning/phases/03-provider-locality-bounded-concurrency/03-03-PLAN.md`.
 
 ---
 
-*Last updated: 2026-05-01 — Phase 3 Plan 03-01 complete; 11/27 requirements shipped; verify green.*
+*Last updated: 2026-05-01 — Phase 3 Plan 03-02 complete; 12/27 requirements shipped; verify green.*

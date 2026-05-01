@@ -67,7 +67,7 @@ requirements_total: 27
 **Key files**: `src/types.ts`, `src/providers/openai-compatible.ts`, `src/runtime/validation.ts`, `src/runtime/coordinator.ts`, `src/runtime/defaults.ts`, `src/providers/openai-compatible.test.ts`, `src/runtime/coordinator.test.ts`, `src/tests/event-schema.test.ts`, `src/tests/config-validation.test.ts`
 **Plans**: 3 plans
 - [x] 03-01-PLAN.md — Provider Locality (PROVIDER-01..03): metadata.locality field + classifyHostLocality + dual validation + asymmetric override
-- [ ] 03-02-PLAN.md — Bounded Dispatch + Array-Parser Unlock (CONCURRENCY-01): semaphore, fan-out, sub-run-queued event, sibling-failed drain, completion-order transcript
+- [x] 03-02-PLAN.md — Bounded Dispatch + Array-Parser Unlock (CONCURRENCY-01): semaphore, fan-out, sub-run-queued event, sibling-failed drain, completion-order transcript
 - [ ] 03-03-PLAN.md — Local-Provider Clamping + Event (CONCURRENCY-02): per-dispatch locality walk, lazy single-emit subRun.concurrencyClamped, CHANGELOG v0.4.0 wrap-up
 
 ### Phase 4: Streaming & Child Error Escalation
@@ -101,7 +101,7 @@ requirements_total: 27
 |-------|----------------|--------|-----------|
 | 1. Delegate Decision & Sub-Run Traces | 0/5 | Planned | - |
 | 2. Budget, Cancellation, Cost Roll-Up | 0/4 | Planned | - |
-| 3. Provider Locality & Bounded Concurrency | 1/3 | In progress | 2026-05-01 |
+| 3. Provider Locality & Bounded Concurrency | 2/3 | In progress | 2026-05-01 |
 | 4. Streaming & Child Error Escalation | 0/0 | Not started | - |
 | 5. Documentation & Changelog | 0/0 | Not started | - |
 
