@@ -36,9 +36,9 @@ REQ-ID format: `[CATEGORY]-[NN]`. Numbering restarts per milestone (no prior REQ
 
 ### PROVIDER — locality hint
 
-- [ ] **PROVIDER-01** — `ConfiguredModelProvider` accepts optional `locality?: "local" | "remote"` (default unknown → treated as `remote` for clamping).
-- [ ] **PROVIDER-02** — `createOpenAICompatibleProvider` auto-sets `locality: "local"` when `baseURL` host is loopback (`localhost`, `127/8`, `::1`) or RFC1918. Caller-supplied `locality` overrides auto-detection.
-- [ ] **PROVIDER-03** — Invalid `locality` value throws `DogpileError({ code: "invalid-configuration" })`.
+- [x] **PROVIDER-01** — `ConfiguredModelProvider` accepts optional `locality?: "local" | "remote"` (default unknown → treated as `remote` for clamping).
+- [x] **PROVIDER-02** — `createOpenAICompatibleProvider` auto-sets `locality: "local"` when `baseURL` host is loopback (`localhost`, `127/8`, `::1`) or RFC1918. Caller-supplied `locality` overrides auto-detection.
+- [x] **PROVIDER-03** — Invalid `locality` value throws `DogpileError({ code: "invalid-configuration" })`.
 
 ### STREAM — child event bubbling
 
@@ -92,9 +92,9 @@ REQ-ID format: `[CATEGORY]-[NN]`. Numbering restarts per milestone (no prior REQ
 | BUDGET-02 | Phase 2 | Complete |
 | BUDGET-03 | Phase 2 | Complete |
 | BUDGET-04 | Phase 2 | Complete |
-| PROVIDER-01 | Phase 3 | Pending |
-| PROVIDER-02 | Phase 3 | Pending |
-| PROVIDER-03 | Phase 3 | Pending |
+| PROVIDER-01 | Phase 3 | Complete |
+| PROVIDER-02 | Phase 3 | Complete |
+| PROVIDER-03 | Phase 3 | Complete |
 | CONCURRENCY-01 | Phase 3 | Pending |
 | CONCURRENCY-02 | Phase 3 | Pending |
 | STREAM-01 | Phase 4 | Pending |
