@@ -24,10 +24,10 @@ REQ-ID format: `[CATEGORY]-[NN]`. Numbering restarts per milestone (no prior REQ
 
 ### BUDGET — cancellation, timeout, cost, floors
 
-- [ ] **BUDGET-01** — Parent abort (`AbortSignal` or `StreamHandle.cancel()`) propagates to all in-flight children; child runs surface `DogpileError({ code: "aborted" })`.
-- [ ] **BUDGET-02** — Parent `budget.timeoutMs` is a hard ceiling. Children get the parent's remaining time as their default; per-decision `budget` override is honored.
-- [ ] **BUDGET-03** — Parent `accounting.costUsd` and token totals = parent's own provider calls + sum of children. Roll-up is recursive across depth.
-- [ ] **BUDGET-04** — Parent termination policies (`budget` / `convergence` / `judge` / `firstOf`) operate over parent-level events only. `minTurns` / `minRounds` floors apply per-protocol-instance and do not propagate.
+- [x] **BUDGET-01** — Parent abort (`AbortSignal` or `StreamHandle.cancel()`) propagates to all in-flight children; child runs surface `DogpileError({ code: "aborted" })`.
+- [x] **BUDGET-02** — Parent `budget.timeoutMs` is a hard ceiling. Children get the parent's remaining time as their default; per-decision `budget` override is honored.
+- [x] **BUDGET-03** — Parent `accounting.costUsd` and token totals = parent's own provider calls + sum of children. Roll-up is recursive across depth.
+- [x] **BUDGET-04** — Parent termination policies (`budget` / `convergence` / `judge` / `firstOf`) operate over parent-level events only. `minTurns` / `minRounds` floors apply per-protocol-instance and do not propagate.
 
 ### CONCURRENCY — bounded parallelism
 
@@ -88,10 +88,10 @@ REQ-ID format: `[CATEGORY]-[NN]`. Numbering restarts per milestone (no prior REQ
 | TRACE-02 | Phase 1 | Complete |
 | TRACE-03 | Phase 1 | Complete |
 | TRACE-04 | Phase 1 | Complete |
-| BUDGET-01 | Phase 2 | Pending |
-| BUDGET-02 | Phase 2 | Pending |
-| BUDGET-03 | Phase 2 | Pending |
-| BUDGET-04 | Phase 2 | Pending |
+| BUDGET-01 | Phase 2 | Complete |
+| BUDGET-02 | Phase 2 | Complete |
+| BUDGET-03 | Phase 2 | Complete |
+| BUDGET-04 | Phase 2 | Complete |
 | PROVIDER-01 | Phase 3 | Pending |
 | PROVIDER-02 | Phase 3 | Pending |
 | PROVIDER-03 | Phase 3 | Pending |

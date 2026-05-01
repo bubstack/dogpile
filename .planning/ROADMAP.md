@@ -50,10 +50,10 @@ requirements_total: 27
   4. Parent termination policies (`budget`, `convergence`, `judge`, `firstOf`) evaluate over parent-level events only; `minTurns`/`minRounds` floors apply per-protocol-instance and do not propagate into children.
 **Key files**: `src/runtime/coordinator.ts`, `src/runtime/engine.ts`, `src/runtime/cancellation.ts`, `src/runtime/termination.ts`, `src/runtime/defaults.ts`, `src/runtime/coordinator.test.ts`, `src/tests/cancellation-contract.test.ts`, `src/tests/budget-first-stop.test.ts`
 **Plans**: 4 plans
-- [ ] 02-01-PLAN.md — BUDGET-01 cancellation propagation (per-child AbortController, parent-aborted detail.reason, post-completion abort marker)
-- [ ] 02-02-PLAN.md — BUDGET-02 timeout/deadline propagation (parentDeadlineMs, sub-run-budget-clamped event, defaultSubRunTimeoutMs option, timeout detail.reason)
-- [ ] 02-03-PLAN.md — BUDGET-03 cost & token roll-up + replay parity (partialCost on sub-run-failed, parent-rollup-drift)
-- [ ] 02-04-PLAN.md — BUDGET-04 termination floors lock (parent-events isolation, per-instance minTurns/minRounds)
+- [x] 02-01-PLAN.md — BUDGET-01 cancellation propagation (per-child AbortController, parent-aborted detail.reason, post-completion abort marker)
+- [x] 02-02-PLAN.md — BUDGET-02 timeout/deadline propagation (parentDeadlineMs, sub-run-budget-clamped event, defaultSubRunTimeoutMs option, timeout detail.reason)
+- [x] 02-03-PLAN.md — BUDGET-03 cost & token roll-up + replay parity (partialCost on sub-run-failed, parent-rollup-drift)
+- [x] 02-04-PLAN.md — BUDGET-04 termination floors lock (parent-events isolation, per-instance minTurns/minRounds)
 
 ### Phase 3: Provider Locality & Bounded Concurrency
 **Goal**: Providers can declare `local` vs `remote`; coordinator runs delegated decisions in parallel up to a bound, auto-clamping to 1 when any local provider is in the active tree.
