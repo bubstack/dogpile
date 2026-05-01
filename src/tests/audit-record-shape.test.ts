@@ -101,6 +101,7 @@ describe("audit record shape contract", () => {
 
     expect(Object.keys(live)).toEqual(Object.keys(saved));
     expect(typeShape(live)).toEqual(typeShape(saved));
+    expect(live).toEqual(saved);
 
     expect(saved).toEqual(
       expect.objectContaining({
