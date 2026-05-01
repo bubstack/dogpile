@@ -51,11 +51,11 @@ last_completed: v0.4.0
 **Plans:** 6 plans
 Plans:
 - [x] 06-01-PLAN.md — Type shape mutation + defaults.ts blast-radius fix
-- [ ] 06-02-PLAN.md — Runtime emission in model.ts + replay synthesis in engine.ts
-- [ ] 06-03-PLAN.md — Provider adapter modelId population (openai-compatible + vercel-ai)
-- [ ] 06-04-PLAN.md — /runtime/provenance subpath module + package.json wiring
-- [ ] 06-05-PLAN.md — Contract tests + frozen provenance-event-v1.json fixture
-- [ ] 06-06-PLAN.md — CHANGELOG v0.5.0 entry + CLAUDE.md invariant update
+- [x] 06-02-PLAN.md — Runtime emission in model.ts + replay synthesis in engine.ts
+- [x] 06-03-PLAN.md — Provider adapter modelId population (openai-compatible + vercel-ai)
+- [x] 06-04-PLAN.md — /runtime/provenance subpath module + package.json wiring
+- [x] 06-05-PLAN.md — Contract tests + frozen provenance-event-v1.json fixture
+- [x] 06-06-PLAN.md — CHANGELOG v0.5.0 entry + CLAUDE.md invariant update
 
 ### Phase 7: Structured Event Introspection + Health Diagnostics
 **Goal:** Callers can filter completed trace events through a typed query function and read a machine-readable health summary on `RunResult` that is deterministically re-computed from the same trace on any runtime.
@@ -109,7 +109,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 6. Provenance Annotations | 1/6 | In Progress | — |
+| 6. Provenance Annotations | 6/6 | Ready for verification | — |
 | 7. Structured Event Introspection + Health Diagnostics | 0/5 | Not started | — |
 | 8. Audit Event Schema | 0/? | Not started | — |
 | 9. OTEL Tracing Bridge | 0/? | Not started | — |
