@@ -108,6 +108,7 @@ function recordEvent(event: RunEvent): string {
     case "sub-run-started":
     case "sub-run-completed":
     case "sub-run-failed":
+    case "sub-run-parent-aborted":
       return event.type;
   }
 }

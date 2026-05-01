@@ -91,7 +91,8 @@ export type DemoTraceEventMetadata =
   | DemoFinalEventMetadata
   | DemoSubRunStartedEventMetadata
   | DemoSubRunCompletedEventMetadata
-  | DemoSubRunFailedEventMetadata;
+  | DemoSubRunFailedEventMetadata
+  | DemoSubRunParentAbortedEventMetadata;
 
 export interface DemoRoleAssignmentEventMetadata {
   readonly type: "role-assignment";
@@ -209,6 +210,13 @@ export interface DemoSubRunFailedEventMetadata {
   readonly parentDecisionId: string;
   readonly errorCode: string;
   readonly errorMessage: string;
+}
+
+export interface DemoSubRunParentAbortedEventMetadata {
+  readonly type: "sub-run-parent-aborted";
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly reason: "parent-aborted";
 }
 
 export interface DemoTraceEventListItem {
@@ -457,6 +465,8 @@ function traceEventTitle(event: RunEvent): string {
       return `Sub-run ${event.childRunId} completed`;
     case "sub-run-failed":
       return `Sub-run ${event.childRunId} failed: ${event.error.message}`;
+    case "sub-run-parent-aborted":
+      return `Parent aborted after sub-run ${event.childRunId}`;
   }
 
   return assertNever(event);
@@ -484,6 +494,7 @@ function traceEventVisualSection(event: RunEvent): DemoTraceEventVisualSection {
     case "sub-run-started":
     case "sub-run-completed":
     case "sub-run-failed":
+    case "sub-run-parent-aborted":
       return "activity-log";
   }
 
@@ -512,6 +523,7 @@ function traceEventVisualState(event: RunEvent): DemoTraceEventVisualState {
     case "sub-run-started":
     case "sub-run-completed":
     case "sub-run-failed":
+    case "sub-run-parent-aborted":
       return "turn-completed";
   }
 
@@ -637,6 +649,13 @@ function traceEventMetadata(event: RunEvent): DemoTraceEventMetadata {
         parentDecisionId: event.parentDecisionId,
         errorCode: event.error.code,
         errorMessage: event.error.message
+      };
+    case "sub-run-parent-aborted":
+      return {
+        type: event.type,
+        childRunId: event.childRunId,
+        parentRunId: event.parentRunId,
+        reason: event.reason
       };
   }
 

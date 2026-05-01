@@ -563,6 +563,34 @@ export interface SubRunFailedEvent {
 }
 
 /**
+ * Event emitted when the parent's `signal` aborts AFTER a sub-run has already
+ * completed successfully but BEFORE the parent advances to its next coordinator
+ * turn (BUDGET-01 / D-10).
+ *
+ * @remarks
+ * Provides replay/streaming provenance for "parent gave up after a successful
+ * child finished." The marker is observable on `Dogpile.stream()` subscribers
+ * before the run errors with `code: "aborted"`. Non-streaming `run()` rejects
+ * with the abort error and does NOT expose the marker — `engine.ts` does not
+ * attach the parent events array to the rejected error (verified at
+ * `engine.ts:230-239`). Streaming-subscriber observability is the contract.
+ */
+export interface SubRunParentAbortedEvent {
+  /** Discriminant for event rendering and exhaustive switches. */
+  readonly type: "sub-run-parent-aborted";
+  /** Parent run id; matches the surrounding trace runId. */
+  readonly runId: string;
+  /** ISO-8601 event timestamp. */
+  readonly at: string;
+  /** Most-recent completed child run id whose completion preceded the abort. */
+  readonly childRunId: string;
+  /** Parent run id (duplicates `runId` for explicit cross-reference). */
+  readonly parentRunId: string;
+  /** Discriminator (currently always "parent-aborted"; reserved for future variants). */
+  readonly reason: "parent-aborted";
+}
+
+/**
  * Successful coordination event emitted by Dogpile and persisted in traces.
  *
  * @remarks
@@ -614,6 +642,7 @@ export type RunEvent =
   | SubRunStartedEvent
   | SubRunCompletedEvent
   | SubRunFailedEvent
+  | SubRunParentAbortedEvent
   | BudgetStopEvent
   | FinalEvent;
 
@@ -642,7 +671,8 @@ export type StreamLifecycleEvent =
   | BudgetStopEvent
   | SubRunStartedEvent
   | SubRunCompletedEvent
-  | SubRunFailedEvent;
+  | SubRunFailedEvent
+  | SubRunParentAbortedEvent;
 
 /**
  * Output event yielded by `stream()`.

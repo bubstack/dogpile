@@ -187,6 +187,7 @@ export type {
   StopTerminationDecision,
   SubRunCompletedEvent,
   SubRunFailedEvent,
+  SubRunParentAbortedEvent,
   SubRunStartedEvent,
   TerminationCondition,
   TerminationDecision,

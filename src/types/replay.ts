@@ -113,7 +113,8 @@ export type ReplayTraceProtocolDecisionType =
   | "finalize-output"
   | "start-sub-run"
   | "complete-sub-run"
-  | "fail-sub-run";
+  | "fail-sub-run"
+  | "mark-sub-run-parent-aborted";
 
 /**
  * Protocol-level decision appended during execution.

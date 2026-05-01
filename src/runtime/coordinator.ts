@@ -18,6 +18,7 @@ import type {
   RunEvent,
   RunResult,
   SubRunFailedEvent,
+  SubRunParentAbortedEvent,
   TerminationCondition,
   TerminationStopRecord,
   Tier,
@@ -41,7 +42,7 @@ import {
   emptyCost,
   nextProviderCallId
 } from "./defaults.js";
-import { throwIfAborted } from "./cancellation.js";
+import { createAbortErrorFromSignal, throwIfAborted } from "./cancellation.js";
 import { assertDepthWithinLimit, parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
 import { evaluateTerminationStop, warnOnProtocolTerminationMisconfiguration } from "./termination.js";
@@ -866,6 +867,27 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
   parentEmit(startEvent);
   input.recordProtocolDecision(startEvent);
 
+  // BUDGET-01 / D-07: derive a per-child AbortController so child engines see
+  // their own signal. Listener forwards parent.signal.reason verbatim, so
+  // detail.reason classification (parent-aborted vs timeout) is preserved.
+  // Phase 4 STREAM-03 hook: per-child cancel handle attaches here.
+  const parentSignal = options.signal;
+  const childController = new AbortController();
+  let removeParentAbortListener: (() => void) | undefined;
+  if (parentSignal !== undefined) {
+    if (parentSignal.aborted) {
+      childController.abort(parentSignal.reason);
+    } else {
+      const handler = (): void => {
+        childController.abort(parentSignal.reason);
+      };
+      parentSignal.addEventListener("abort", handler, { once: true });
+      removeParentAbortListener = (): void => {
+        parentSignal.removeEventListener("abort", handler);
+      };
+    }
+  }
+
   const childOptions = {
     intent: decision.intent,
     protocol: decision.protocol,
@@ -875,7 +897,7 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     tools: options.tools,
     temperature: options.temperature,
     ...(childTimeoutMs !== undefined ? { budget: { timeoutMs: childTimeoutMs } } : {}),
-    ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    signal: childController.signal,
     emit: teedEmit,
     currentDepth: input.parentDepth + 1,
     ...(options.effectiveMaxDepth !== undefined ? { effectiveMaxDepth: options.effectiveMaxDepth } : {})
@@ -885,6 +907,8 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
   try {
     subResult = await options.runProtocol(childOptions);
   } catch (error) {
+    removeParentAbortListener?.();
+
     const failedDecision: JsonObject = {
       type: "delegate",
       protocol: decision.protocol,
@@ -937,6 +961,8 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     });
   }
 
+  removeParentAbortListener?.();
+
   const completedEvent: RunEvent = {
     type: "sub-run-completed",
     runId: input.parentRunId,
@@ -948,6 +974,27 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
   };
   parentEmit(completedEvent);
   input.recordProtocolDecision(completedEvent);
+
+  // BUDGET-01 / D-10: parent.signal aborted AFTER the child completed but
+  // before we advance to the next coordinator turn. Emit a marker event so
+  // streaming subscribers see "parent gave up after sub-run" provenance,
+  // then re-throw the parent's abort reason. Non-streaming run() rejects with
+  // the thrown error and does NOT preserve the marker — engine.ts does not
+  // attach the parent events array to the rejected error (verified at
+  // engine.ts:230-239). Streaming-subscriber observability is the contract.
+  if (parentSignal?.aborted) {
+    const abortMarker: SubRunParentAbortedEvent = {
+      type: "sub-run-parent-aborted",
+      runId: input.parentRunId,
+      at: new Date().toISOString(),
+      childRunId,
+      parentRunId: input.parentRunId,
+      reason: "parent-aborted"
+    };
+    parentEmit(abortMarker);
+    input.recordProtocolDecision(abortMarker);
+    throw createAbortErrorFromSignal(parentSignal, options.model.id);
+  }
 
   // D-18 synthetic transcript entry.
   const decisionAsJson: JsonObject = {

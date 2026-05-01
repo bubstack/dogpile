@@ -279,6 +279,7 @@ export function createReplayTraceBudgetStateChanges(
       case "sub-run-started":
       case "sub-run-completed":
       case "sub-run-failed":
+      case "sub-run-parent-aborted":
         return [];
     }
   });
@@ -428,6 +429,10 @@ export function createReplayTraceProtocolDecision(
       return {
         ...base
       };
+    case "sub-run-parent-aborted":
+      return {
+        ...base
+      };
   }
 }
 
@@ -459,6 +464,8 @@ function defaultProtocolDecision(event: RunEvent): ReplayTraceProtocolDecisionTy
       return "complete-sub-run";
     case "sub-run-failed":
       return "fail-sub-run";
+    case "sub-run-parent-aborted":
+      return "mark-sub-run-parent-aborted";
   }
 }
 
