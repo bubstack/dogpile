@@ -438,7 +438,11 @@ async function expectStreamDogpileError(
 
   const resultError = handle.result.catch((error: unknown) => error);
   const iterator = handle[Symbol.asyncIterator]();
-  const errorEvent = await iterator.next();
+  const firstEvent = await iterator.next();
+  const errorEvent =
+    firstEvent.value?.type === "aborted"
+      ? await iterator.next()
+      : firstEvent;
   const afterError = await iterator.next();
   const rejectedError = await resultError;
 

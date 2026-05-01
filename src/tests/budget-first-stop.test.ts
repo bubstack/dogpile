@@ -202,15 +202,13 @@ describe("budget-first stop behavior", () => {
     );
     expect(parentAgentTurns.length).toBeLessThanOrEqual(5);
 
-    // 4. Bubbled child events appearing under the parent's trace are tagged
-    //    with the child's runId (proof of teedEmit semantics — child events
-    //    flow through `options.emit?.()` to the engine-level subscriber and
-    //    then into result.trace.events, but they carry the child's runId so
-    //    are unambiguously distinguishable from parent events).
+    // 4. Bubbled child events are stream-only. The completed parent trace
+    //    keeps child events inside subResult.trace.events so parent iteration
+    //    accounting cannot accidentally count child turns.
     const childTaggedInParentTrace = result.trace.events.filter(
       (event) => event.runId === childRunId
     );
-    expect(childTaggedInParentTrace.length).toBeGreaterThan(0);
+    expect(childTaggedInParentTrace).toHaveLength(0);
 
     // 5. Parent-emitted sub-run-started / sub-run-completed are tagged with
     //    the PARENT's runId (per coordinator.ts:914,929 — both events use
