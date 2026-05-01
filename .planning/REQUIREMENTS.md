@@ -25,8 +25,8 @@
 
 ### Audit Event Schema
 
-- [ ] **AUDT-01**: Caller can produce a versioned (`auditSchemaVersion: "1"`) audit record from a completed trace using a pure function — not auto-attached to `RunResult`
-- [ ] **AUDT-02**: `AuditRecord` type is independent of `RunEvent` schema and is validated by a frozen JSON fixture test that must be explicitly updated when the schema changes
+- [x] **AUDT-01**: Caller can produce a versioned (`auditSchemaVersion: "1"`) audit record from a completed trace using a pure function — not auto-attached to `RunResult`
+- [x] **AUDT-02**: `AuditRecord` type is independent of `RunEvent` schema and is validated by a frozen JSON fixture test that must be explicitly updated when the schema changes
 
 ### OTEL Tracing Bridge
 

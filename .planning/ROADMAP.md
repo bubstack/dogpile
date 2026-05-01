@@ -24,7 +24,7 @@ last_completed: v0.4.0
 
 - [x] **Phase 6: Provenance Annotations** — Event-shape foundation: structured metadata on model request/response events (completed 2026-05-01)
 - [x] **Phase 7: Structured Event Introspection + Health Diagnostics** — Typed query API over trace events and per-run health summaries (completed 2026-05-01)
-- [ ] **Phase 8: Audit Event Schema** — Stable, versioned, independent audit record format for compliance
+- [x] **Phase 8: Audit Event Schema** — Stable, versioned, independent audit record format for compliance (completed 2026-05-01)
 - [ ] **Phase 9: OTEL Tracing Bridge** — Duck-typed tracer injection with span ancestry matching parentRunIds
 - [ ] **Phase 10: Metrics / Counters** — Named counter hook for token usage, cost, turn count, and duration
 
@@ -125,7 +125,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 6. Provenance Annotations | 6/6 | Complete | 2026-05-01 |
 | 7. Structured Event Introspection + Health Diagnostics | 5/5 | Complete | 2026-05-01 |
-| 8. Audit Event Schema | 0/3 | Not started | — |
+| 8. Audit Event Schema | 3/3 | Complete | 2026-05-01 |
 | 9. OTEL Tracing Bridge | 0/? | Not started | — |
 | 10. Metrics / Counters | 0/? | Not started | — |
 
@@ -144,4 +144,4 @@ Plans:
 
 ---
 
-*Last updated: 2026-05-01 — Phase 7 Plan 05 complete; public-surface lockstep verified.*
+*Last updated: 2026-05-01 — Phase 8 complete; audit event schema verified.*
