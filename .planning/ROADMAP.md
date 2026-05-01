@@ -48,7 +48,14 @@ last_completed: v0.4.0
 1. A completed `RunResult` trace has provenance fields (`modelId`, `providerId`, `callId`, `startedAt`, `completedAt`) present on every `model-request` and `model-response` event.
 2. Provenance timestamps are ISO-8601 strings — not `Date` objects — and pass a `JSON.stringify → JSON.parse` round-trip assertion without data loss.
 3. A trace produced by `run()` and passed through `replay()` returns provenance fields identical to the originals, confirming event-shape stability.
-**Plans:** TBD
+**Plans:** 6 plans
+Plans:
+- [ ] 06-01-PLAN.md — Type shape mutation + defaults.ts blast-radius fix
+- [ ] 06-02-PLAN.md — Runtime emission in model.ts + replay synthesis in engine.ts
+- [ ] 06-03-PLAN.md — Provider adapter modelId population (openai-compatible + vercel-ai)
+- [ ] 06-04-PLAN.md — /runtime/provenance subpath module + package.json wiring
+- [ ] 06-05-PLAN.md — Contract tests + frozen provenance-event-v1.json fixture
+- [ ] 06-06-PLAN.md — CHANGELOG v0.5.0 entry + CLAUDE.md invariant update
 
 ### Phase 7: Structured Event Introspection + Health Diagnostics
 **Goal:** Callers can filter completed trace events through a typed query function and read a machine-readable health summary on `RunResult` that is deterministically re-computed from the same trace on any runtime.
@@ -96,7 +103,7 @@ last_completed: v0.4.0
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 6. Provenance Annotations | 0/? | Not started | — |
+| 6. Provenance Annotations | 0/6 | Planning | — |
 | 7. Structured Event Introspection + Health Diagnostics | 0/? | Not started | — |
 | 8. Audit Event Schema | 0/? | Not started | — |
 | 9. OTEL Tracing Bridge | 0/? | Not started | — |
@@ -117,4 +124,4 @@ last_completed: v0.4.0
 
 ---
 
-*Last updated: 2026-05-01 — v0.5.0 Observability and Auditability roadmap created.*
+*Last updated: 2026-05-01 — Phase 6 planning complete: 6 plans in 3 waves.*
