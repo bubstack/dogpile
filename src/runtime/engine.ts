@@ -169,6 +169,7 @@ export function createEngine(options: EngineOptions): Engine {
       let lastRunId = "";
       let pendingFinalEvent: FinalEvent | undefined;
       let activeAbortDrain: AbortDrainFn | undefined;
+      const failureInstancesByChildRunId = new Map<string, DogpileError>();
       let status: StreamHandleStatus = "running";
       let resolveResult!: (result: RunResult) => void;
       let rejectResult!: (error: unknown) => void;
@@ -264,7 +265,8 @@ export function createEngine(options: EngineOptions): Engine {
             },
             registerAbortDrain(drain: AbortDrainFn): void {
               activeAbortDrain = drain;
-            }
+            },
+            failureInstancesByChildRunId
           }));
           if (status !== "running") {
             return;
@@ -322,6 +324,7 @@ export function createEngine(options: EngineOptions): Engine {
         }
 
         complete = true;
+        failureInstancesByChildRunId.clear();
         removeCallerAbortListener();
         timeoutLifecycle.cleanup();
         abortRace.cleanup();
@@ -651,11 +654,13 @@ interface RunProtocolOptions {
    */
   readonly defaultSubRunTimeoutMs?: number;
   readonly registerAbortDrain?: (drain: AbortDrainFn) => void;
+  readonly failureInstancesByChildRunId?: Map<string, DogpileError>;
 }
 
 type NonStreamingProtocolOptions = Omit<RunProtocolOptions, "emit"> & Pick<EngineOptions, "evaluate">;
 
 async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Promise<RunResult> {
+  const failureInstancesByChildRunId = new Map<string, DogpileError>();
   const abortLifecycle = createNonStreamingAbortLifecycle({
     callerSignal: options.signal,
     timeoutMs: runtimeTimeoutMs(options),
@@ -669,7 +674,8 @@ async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Pr
       ...(abortLifecycle.signal !== undefined ? { signal: abortLifecycle.signal } : {}),
       emit(event: RunEvent): void {
         emittedEvents.push(event);
-      }
+      },
+      failureInstancesByChildRunId
     }));
     const events = emittedEvents.length > 0 ? emittedEvents : result.trace.events;
     const trace = {
@@ -695,6 +701,7 @@ async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Pr
   } catch (error: unknown) {
     throw abortLifecycle.translateError(error);
   } finally {
+    failureInstancesByChildRunId.clear();
     abortLifecycle.cleanup();
   }
 }
@@ -796,6 +803,9 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
           ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
           : {}),
         ...(options.registerAbortDrain !== undefined ? { registerAbortDrain: options.registerAbortDrain } : {}),
+        ...(options.failureInstancesByChildRunId !== undefined
+          ? { failureInstancesByChildRunId: options.failureInstancesByChildRunId }
+          : {}),
         runProtocol: (childInput) =>
           runProtocol({
             ...childInput,

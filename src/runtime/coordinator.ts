@@ -88,6 +88,7 @@ export type RunProtocolFn = (input: {
    */
   readonly defaultSubRunTimeoutMs?: number;
   readonly registerAbortDrain?: (drain: AbortDrainFn) => void;
+  readonly failureInstancesByChildRunId?: Map<string, DogpileError>;
 }) => Promise<RunResult>;
 
 export type AbortDrainFn = (reason?: unknown) => void;
@@ -139,6 +140,7 @@ interface CoordinatorRunOptions {
    */
   readonly defaultSubRunTimeoutMs?: number;
   readonly registerAbortDrain?: (drain: AbortDrainFn) => void;
+  readonly failureInstancesByChildRunId?: Map<string, DogpileError>;
 }
 
 /**
@@ -1441,6 +1443,9 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     // parent-aborted vs timeout regardless of which engine path produced the
     // abort error.
     const enrichedError = enrichAbortErrorWithParentReason(error, parentSignal);
+    if (DogpileError.isInstance(error)) {
+      options.failureInstancesByChildRunId?.set(childRunId, error);
+    }
     const errorPayload = errorPayloadFromUnknown(enrichedError, failedDecision);
     // BUDGET-03 / D-02: capture real provider spend before the throw and
     // roll it into the parent's totalCost BEFORE emitting sub-run-failed.
