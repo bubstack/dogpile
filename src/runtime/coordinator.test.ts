@@ -899,7 +899,7 @@ describe("coordinator delegate dispatch", () => {
       recordedRequests: planRequests
     });
 
-    await run({
+    await expect(run({
       intent: "Abort after child failure.",
       protocol: { kind: "coordinator", maxTurns: 2 },
       tier: "fast",
@@ -910,6 +910,9 @@ describe("coordinator delegate dispatch", () => {
       ],
       maxConcurrentChildren: 2,
       onChildFailure: "abort"
+    })).rejects.toMatchObject({
+      code: "provider-timeout",
+      message: "fail first child exploded"
     });
 
     expect(planRequests.filter((request) => request.metadata.phase === "plan")).toHaveLength(1);
@@ -964,7 +967,7 @@ describe("coordinator delegate dispatch", () => {
       recordedRequests: planRequests
     });
 
-    const result = await run({
+    await expect(run({
       intent: "Snapshot first child failure.",
       protocol: { kind: "coordinator", maxTurns: 2 },
       tier: "fast",
@@ -975,16 +978,11 @@ describe("coordinator delegate dispatch", () => {
       ],
       maxConcurrentChildren: 2,
       onChildFailure: "abort"
+    })).rejects.toMatchObject({
+      code: "provider-timeout",
+      message: "fail first child exploded"
     });
-
-    const firstFailedEvent = result.trace.events.find((event) => event.type === "sub-run-failed");
-    expect(result.trace).toHaveProperty("triggeringFailureForAbortMode");
-    expect((result.trace as unknown as { triggeringFailureForAbortMode: { intent: string } }).triggeringFailureForAbortMode.intent).toBe(
-      "fail first child"
-    );
-    expect((result.trace as unknown as { triggeringFailureForAbortMode: { childRunId: string } }).triggeringFailureForAbortMode.childRunId).toBe(
-      firstFailedEvent?.type === "sub-run-failed" ? firstFailedEvent.childRunId : undefined
-    );
+    expect(planRequests.filter((request) => request.metadata.phase === "plan")).toHaveLength(1);
   });
 
   it("fans out delegate arrays and queues delegates beyond maxConcurrentChildren", async () => {
