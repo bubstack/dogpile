@@ -484,7 +484,7 @@ const PARTICIPATE_OUTPUT = [
   "synthesized after sub-run"
 ].join("\n");
 
-function delegateBlock(payload: { protocol: string; intent: string; model?: string; budget?: { timeoutMs?: number } }): string {
+function delegateBlock(payload: unknown): string {
   return [
     "delegate:",
     "```json",
@@ -535,6 +535,43 @@ function createScriptedCoordinatorProvider(opts: ScriptedProviderOptions): Confi
 }
 
 describe("coordinator delegate dispatch", () => {
+  it("fans out delegate arrays and queues delegates beyond maxConcurrentChildren", async () => {
+    const provider = createScriptedCoordinatorProvider({
+      id: "delegate-fanout-queue-model",
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "child 0" },
+          { protocol: "sequential", intent: "child 1" },
+          { protocol: "sequential", intent: "child 2" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "Fan out bounded delegates.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 1
+    });
+
+    const queued = result.trace.events.filter((event) => event.type === "sub-run-queued");
+    const started = result.trace.events.filter((event) => event.type === "sub-run-started");
+    const completed = result.trace.events.filter((event) => event.type === "sub-run-completed");
+
+    expect(queued).toHaveLength(2);
+    expect(started).toHaveLength(3);
+    expect(completed).toHaveLength(3);
+    expect(queued.map((event) => event.type === "sub-run-queued" ? event.queuePosition : -1)).toEqual([0, 1]);
+    expect(started.map((event) => event.type === "sub-run-started" ? event.parentDecisionArrayIndex : -1)).toEqual([0, 1, 2]);
+    expect(completed.map((event) => event.type === "sub-run-completed" ? event.parentDecisionArrayIndex : -1)).toEqual([0, 1, 2]);
+  });
+
   it("dispatches a delegate to sequential and threads result back into the next coordinator prompt", async () => {
     const planRequests: ModelRequest[] = [];
     const childProtocolSeen: string[] = [];
