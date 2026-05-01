@@ -43,6 +43,46 @@ and reconciled cost accounting.
 
 - Internal contract guarantee (no public-surface delta): parent termination policies (`budget`, `convergence`, `judge`, `firstOf`) operate over parent-level events / iterations only — child agent-turn events bubbled into the parent stream do not count toward parent iteration limits, and `minTurns`/`minRounds` floors are per-protocol-instance (parent and child read their own protocol config independently). One `sub-run-completed` counts as exactly one parent iteration via the synthetic `delegate-result` transcript entry. Locked by contract tests in `src/tests/budget-first-stop.test.ts` and `src/runtime/coordinator.test.ts`.
 
+### Added — Recursive coordination: provider locality and bounded concurrency (Phase 3)
+
+The PROVIDER-* and CONCURRENCY-* requirements ship together so recursive
+coordinator runs can safely fan out work while protecting local model providers
+from accidental self-inflicted overload.
+
+#### Provider locality (PROVIDER-01..03)
+
+- `ConfiguredModelProvider.metadata?.locality?: "local" | "remote"` is an optional readonly hint used by coordinator concurrency clamping. Omitted metadata is treated as remote for clamping.
+- `createOpenAICompatibleProvider` auto-detects `metadata.locality` from `baseURL`: loopback (`localhost`, `127/8`, `::1`), RFC1918 (`10/8`, `172.16/12`, `192.168/16`), IPv4 link-local (`169.254/16`), IPv6 ULA (`fc00::/7`), IPv6 link-local (`fe80::/10`), and `*.local` mDNS hostnames classify as `"local"`.
+- Caller `locality: "local"` always wins. Caller `locality: "remote"` on a detected-local OpenAI-compatible host now throws `DogpileError({ code: "invalid-configuration", detail: { reason: "remote-override-on-local-host" } })` so a localhost Ollama-style endpoint cannot silently bypass the local clamp.
+- `classifyHostLocality(host)` is exported from the OpenAI-compatible provider module for advanced callers and tests.
+- Provider locality is validated at adapter construction time and at engine run start, including custom provider objects that bypass TypeScript.
+
+#### Bounded child concurrency (CONCURRENCY-01)
+
+- `maxConcurrentChildren` config is available on `createEngine`, `Dogpile.pile` / `run` / `stream`, and per coordinator `delegate` decision. Default is `4`; effective concurrency is `min(engine, run ?? Infinity, decision ?? Infinity)`, so per-run and per-decision values can only lower the engine ceiling. Values must be positive integers.
+- Coordinator agents can fan out up to 8 delegates in one plan turn by returning a fenced JSON array of delegate decisions. Mixed `participate` plus `delegate` remains invalid.
+- New `RunEvent` variant `sub-run-queued` records delegates that waited for a concurrency slot. No-pressure runs do not emit queued events; pressure runs follow `sub-run-queued` → `sub-run-started` → `sub-run-completed` / `sub-run-failed`.
+- `parentDecisionArrayIndex: number` was added to `sub-run-queued`, `sub-run-started`, `sub-run-completed`, and `sub-run-failed` so a delegate is uniquely identified by `parentDecisionId` plus its array index without changing the existing `parentDecisionId` format.
+- When one fan-out delegate fails, in-flight siblings continue and queued siblings are drained with synthetic `sub-run-failed` events using `error.code: "aborted"`, `error.detail.reason: "sibling-failed"`, and zero `partialCost`.
+- Delegate result transcript entries are appended in completion order under fan-out; replay determinism is preserved by stable `parentDecisionId` plus `parentDecisionArrayIndex`.
+- New `ReplayTraceProtocolDecisionType` literal `queue-sub-run` pairs with `sub-run-queued` events.
+
+#### Local-provider clamp (CONCURRENCY-02)
+
+- New `RunEvent` variant `sub-run-concurrency-clamped` is emitted once per coordinator run when any active provider declares `metadata.locality === "local"`. Payload is `{ requestedMax, effectiveMax: 1, reason: "local-provider-detected", providerId }`.
+- Local-provider detection walks the active tree at each delegate fan-out: the parent `options.model` first, then future-compatible `agent.model` entries if present. The first local provider id is recorded on the clamp event.
+- Effective child concurrency is silently clamped to 1 for local providers regardless of caller config, including explicit `maxConcurrentChildren: 8`. The clamp does not throw and does not write to console; the event is the warning surface.
+- The clamp-emitted flag is scoped to the individual run, so concurrent runs do not suppress each other's `sub-run-concurrency-clamped` event.
+- New `ReplayTraceProtocolDecisionType` literal `mark-sub-run-concurrency-clamped` pairs with `sub-run-concurrency-clamped` events.
+
+#### Public-surface tests
+
+- `src/tests/event-schema.test.ts` now locks 17 run event variants, including `sub-run-queued` and `sub-run-concurrency-clamped`.
+- `src/tests/result-contract.test.ts` verifies the new public event types are reachable from the root `@dogpile/sdk` type re-exports.
+- `src/tests/config-validation.test.ts` locks invalid locality and `maxConcurrentChildren` validation.
+- `src/tests/cancellation-contract.test.ts` locks public detail/reason strings including `sibling-failed`, `local-provider-detected`, and `remote-override-on-local-host`.
+- `src/runtime/coordinator.test.ts` covers fan-out queuing, completion-order transcript behavior, sibling-failed queue drain, local-provider clamp-once behavior, remote-only no-op behavior, explicit override clamping, and per-run clamp isolation.
+
 ### Notes
 
 - No package `exports` / `files` change. All new public types ship through the existing `@dogpile/sdk` root entry. `recomputeAccountingFromTrace` and the depth-gate helpers (`assertDepthWithinLimit`, `depthOverflowError`) remain runtime-internal.
