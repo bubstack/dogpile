@@ -665,7 +665,7 @@ describe("SDK streaming API", () => {
     expect(parentRunIdsOf(replayedGrandchild)).toEqual(parentRunIdsOf(liveGrandchild));
   });
 
-  it("STREAM-03 emits in-flight parent-aborted failures before aborted and terminal error on cancel", async () => {
+  it("STREAM-03 late-event suppression emits in-flight parent-aborted failures before aborted and terminal error on cancel", async () => {
     const provider = createAbortableFanOutProvider("stream-03-cancel-fan-out-model");
     const handle = stream({
       intent: "Cancel during child fan-out.",

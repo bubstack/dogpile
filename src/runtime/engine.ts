@@ -1,5 +1,6 @@
 import { DogpileError } from "../types.js";
 import type {
+  AbortedEvent,
   BudgetTier,
   DogpileOptions,
   Engine,
@@ -20,7 +21,7 @@ import type {
   Trace
 } from "../types.js";
 import { runBroadcast } from "./broadcast.js";
-import { runCoordinator } from "./coordinator.js";
+import { runCoordinator, type AbortDrainFn } from "./coordinator.js";
 import {
   createReplayTraceFinalOutput,
   createReplayTraceBudgetStateChanges,
@@ -162,6 +163,7 @@ export function createEngine(options: EngineOptions): Engine {
       let complete = false;
       let lastRunId = "";
       let pendingFinalEvent: FinalEvent | undefined;
+      let activeAbortDrain: AbortDrainFn | undefined;
       let status: StreamHandleStatus = "running";
       let resolveResult!: (result: RunResult) => void;
       let rejectResult!: (error: unknown) => void;
@@ -253,6 +255,9 @@ export function createEngine(options: EngineOptions): Engine {
                 return;
               }
               publish(event);
+            },
+            registerAbortDrain(drain: AbortDrainFn): void {
+              activeAbortDrain = drain;
             }
           }));
           if (status !== "running") {
@@ -280,6 +285,10 @@ export function createEngine(options: EngineOptions): Engine {
 
           const runtimeError = timeoutLifecycle.translateError(error);
           status = isCancellationError(runtimeError) ? "cancelled" : "failed";
+          if (shouldPublishAborted(runtimeError)) {
+            activeAbortDrain?.(runtimeError);
+            publish(createStreamAbortedEvent(runtimeError, lastRunId));
+          }
           publish(createStreamErrorEvent(runtimeError, lastRunId));
           closeStream();
           rejectResult(runtimeError);
@@ -292,9 +301,11 @@ export function createEngine(options: EngineOptions): Engine {
         }
 
         const error = createStreamCancellationError(options.model.id, cause);
-        status = "cancelled";
         abortController.abort(error);
+        activeAbortDrain?.(error);
+        publish(createStreamAbortedEvent(error, lastRunId));
         publish(createStreamErrorEvent(error, lastRunId));
+        status = "cancelled";
         closeStream();
         rejectResult(error);
       }
@@ -521,6 +532,28 @@ function readAbortSignalReason(signal: AbortSignal | undefined): unknown {
   return signal?.aborted ? signal.reason : undefined;
 }
 
+function createStreamAbortedEvent(error: unknown, runId: string): AbortedEvent {
+  return {
+    type: "aborted",
+    runId,
+    at: new Date().toISOString(),
+    reason: streamAbortedReason(error)
+  };
+}
+
+function shouldPublishAborted(error: unknown): boolean {
+  return DogpileError.isInstance(error) && (error.code === "aborted" || error.code === "timeout");
+}
+
+function streamAbortedReason(error: unknown): AbortedEvent["reason"] {
+  if (DogpileError.isInstance(error)) {
+    if (error.code === "timeout" || error.detail?.["reason"] === "timeout") {
+      return "timeout";
+    }
+  }
+  return "parent-aborted";
+}
+
 function createStreamErrorEvent(error: unknown, runId: string): StreamErrorEvent {
   if (DogpileError.isInstance(error)) {
     return {
@@ -610,6 +643,7 @@ interface RunProtocolOptions {
    * neither the parent nor the decision specifies a `budget.timeoutMs`.
    */
   readonly defaultSubRunTimeoutMs?: number;
+  readonly registerAbortDrain?: (drain: AbortDrainFn) => void;
 }
 
 type NonStreamingProtocolOptions = Omit<RunProtocolOptions, "emit"> & Pick<EngineOptions, "evaluate">;
@@ -753,6 +787,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.defaultSubRunTimeoutMs !== undefined
           ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
           : {}),
+        ...(options.registerAbortDrain !== undefined ? { registerAbortDrain: options.registerAbortDrain } : {}),
         runProtocol: (childInput) =>
           runProtocol({
             ...childInput,

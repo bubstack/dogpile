@@ -86,7 +86,10 @@ export type RunProtocolFn = (input: {
    * neither the parent nor the decision specifies a `budget.timeoutMs`.
    */
   readonly defaultSubRunTimeoutMs?: number;
+  readonly registerAbortDrain?: (drain: AbortDrainFn) => void;
 }) => Promise<RunResult>;
+
+export type AbortDrainFn = (reason?: unknown) => void;
 
 interface CoordinatorRunOptions {
   readonly intent: string;
@@ -133,6 +136,7 @@ interface CoordinatorRunOptions {
    * neither the parent nor the decision specifies a `budget.timeoutMs`.
    */
   readonly defaultSubRunTimeoutMs?: number;
+  readonly registerAbortDrain?: (drain: AbortDrainFn) => void;
 }
 
 /**
@@ -211,6 +215,7 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
   const transcript: TranscriptEntry[] = [];
   const protocolDecisions: ReplayTraceProtocolDecision[] = [];
   const providerCalls: ReplayTraceProviderCall[] = [];
+  const dispatchedChildren = new Map<string, DispatchedChild>();
   let totalCost = emptyCost();
   let concurrencyClampEmitted = false; // D-12: emit once per run, never per-engine.
   const maxTurns = options.protocol.maxTurns ?? options.agents.length;
@@ -242,6 +247,63 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
       createReplayTraceProtocolDecision("coordinator", event, events.length - 1, decisionOptions)
     );
   };
+
+  const drainOnParentAbort = (reasonSource?: unknown): void => {
+    const reason = classifyAbortReason(reasonSource);
+    for (const child of dispatchedChildren.values()) {
+      if (child.closed) {
+        continue;
+      }
+      const partialCost = child.started
+        ? lastCostBearingEventCost(child.childEvents) ?? emptyCost()
+        : emptyCost();
+      const partialTrace = buildPartialTrace({
+        childRunId: child.childRunId,
+        events: [...child.childEvents],
+        startedAtMs: child.startedAtMs,
+        protocol: child.decision.protocol,
+        tier: options.tier,
+        modelProviderId: options.model.id,
+        agents: options.agents,
+        intent: child.decision.intent,
+        temperature: options.temperature,
+        ...(child.childTimeoutMs !== undefined ? { childTimeoutMs: child.childTimeoutMs } : {}),
+        ...(options.seed !== undefined ? { seed: options.seed } : {})
+      });
+      const failedEvent: SubRunFailedEvent = {
+        type: "sub-run-failed",
+        runId,
+        at: new Date().toISOString(),
+        childRunId: child.childRunId,
+        parentRunId: runId,
+        parentDecisionId: child.parentDecisionId,
+        parentDecisionArrayIndex: child.parentDecisionArrayIndex,
+        error: child.started
+          ? {
+            code: "aborted",
+            message: "Parent run aborted.",
+            detail: {
+              reason
+            }
+          }
+          : {
+            code: "aborted",
+            message: "Sibling delegate failed; queued delegate never started.",
+            detail: {
+              reason: "sibling-failed"
+            }
+          },
+        partialTrace,
+        partialCost
+      };
+      child.closed = true;
+      totalCost = addCost(totalCost, partialCost);
+      emit(failedEvent);
+      recordProtocolDecision(failedEvent);
+    }
+  };
+
+  options.registerAbortDrain?.(drainOnParentAbort);
 
   const toolExecutor = createRuntimeToolExecutor({
     runId,
@@ -361,6 +423,28 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
         }
         const semaphore = createSemaphore(effectiveForTurn);
         const childRunIds = delegates.map(() => createRunId());
+        const dispatchedForTurn = delegates.map((delegate, index): DispatchedChild => {
+          const childRunId = childRunIds[index];
+          if (childRunId === undefined) {
+            throw new Error("missing child run id");
+          }
+          const dispatchedChild: DispatchedChild = {
+            childRunId,
+            decision: delegate,
+            parentDecisionId,
+            parentDecisionArrayIndex: index,
+            parentDepth,
+            controller: new AbortController(),
+            removeParentListener: undefined,
+            childEvents: [],
+            started: false,
+            closed: false,
+            startedAtMs: Date.now(),
+            childTimeoutMs: undefined
+          };
+          dispatchedChildren.set(childRunId, dispatchedChild);
+          return dispatchedChild;
+        });
         const dispatchResults: Array<{ readonly index: number; readonly result: DispatchDelegateResult }> = [];
         let firstFailureIndex: number | undefined;
 
@@ -389,7 +473,22 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
 
           await semaphore.acquire();
           try {
+            const dispatchedChild = dispatchedForTurn[index];
+            if (!dispatchedChild) {
+              throw new Error("missing dispatched child");
+            }
             if (firstFailureIndex !== undefined) {
+              if (dispatchedChild.closed) {
+                dispatchResults.push({
+                  index,
+                  result: {
+                    nextInput: "",
+                    taggedText: `[sub-run ${childRunId}]: skipped because the parent run aborted`,
+                    completedAtMs: Date.now()
+                  }
+                });
+                return;
+              }
               const partialCost = emptyCost();
               const partialTrace = buildPartialTrace({
                 childRunId,
@@ -423,6 +522,7 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
               };
               emit(failedEvent);
               recordProtocolDecision(failedEvent);
+              dispatchedChild.closed = true;
               dispatchResults.push({
                 index,
                 result: {
@@ -446,7 +546,8 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
               recordProtocolDecision,
               recordSubRunCost: (cost: CostSummary): void => {
                 totalCost = addCost(totalCost, cost);
-              }
+              },
+              dispatchedChild
             });
             dispatchResults.push({ index, result });
           } catch (error) {
@@ -1016,6 +1117,7 @@ interface DispatchDelegateOptions {
    * final.cost" invariant survives unchanged.
    */
   readonly recordSubRunCost: (cost: CostSummary) => void;
+  readonly dispatchedChild: DispatchedChild;
 }
 
 interface DispatchDelegateResult {
@@ -1026,8 +1128,17 @@ interface DispatchDelegateResult {
 
 interface DispatchedChild {
   readonly childRunId: string;
+  readonly decision: DelegateAgentDecision;
+  readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
+  readonly parentDepth: number;
   readonly controller: AbortController;
-  readonly removeParentListener: (() => void) | undefined;
+  removeParentListener: (() => void) | undefined;
+  readonly childEvents: RunEvent[];
+  started: boolean;
+  closed: boolean;
+  startedAtMs: number;
+  childTimeoutMs: number | undefined;
   /** STREAM-03 hook (Phase 4). Reserved; do not use. */
   readonly streamHandle?: never;
 }
@@ -1115,10 +1226,13 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
   }
 
   // Buffered tee for partialTrace capture — see Plan 03 step 8.
-  const childEvents: RunEvent[] = [];
+  const childEvents = input.dispatchedChild.childEvents;
   const parentEmit = input.emit;
   const teedEmit = (event: RunEvent): void => {
     childEvents.push(event);
+    if (input.dispatchedChild.closed) {
+      return;
+    }
     if (options.streamEvents && options.emit) {
       const inbound = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
       options.emit({
@@ -1128,6 +1242,7 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     }
   };
   const childStartedAt = Date.now();
+  input.dispatchedChild.startedAtMs = childStartedAt;
 
   // BUDGET-02 / D-12: emit clamp event BEFORE sub-run-started so the trace
   // records "this child's requested timeout was reduced to fit parent's
@@ -1169,14 +1284,13 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
   // detail.reason classification (parent-aborted vs timeout) is preserved.
   // Phase 4 STREAM-03 hook: per-child cancel handle attaches here.
   const parentSignal = options.signal;
-  const childController = new AbortController();
   let removeParentAbortListener: (() => void) | undefined;
   if (parentSignal !== undefined) {
     if (parentSignal.aborted) {
-      childController.abort(parentSignal.reason);
+      input.dispatchedChild.controller.abort(parentSignal.reason);
     } else {
       const handler = (): void => {
-        childController.abort(parentSignal.reason);
+        input.dispatchedChild.controller.abort(parentSignal.reason);
       };
       parentSignal.addEventListener("abort", handler, { once: true });
       removeParentAbortListener = (): void => {
@@ -1184,11 +1298,9 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
       };
     }
   }
-  const dispatchedChild: DispatchedChild = {
-    childRunId,
-    controller: childController,
-    removeParentListener: removeParentAbortListener
-  };
+  input.dispatchedChild.removeParentListener = removeParentAbortListener;
+  input.dispatchedChild.started = true;
+  input.dispatchedChild.childTimeoutMs = childTimeoutMs;
 
   const childOptions = {
     intent: decision.intent,
@@ -1199,7 +1311,7 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     tools: options.tools,
     temperature: options.temperature,
     ...(childTimeoutMs !== undefined ? { budget: { timeoutMs: childTimeoutMs } } : {}),
-    signal: dispatchedChild.controller.signal,
+    signal: input.dispatchedChild.controller.signal,
     emit: teedEmit,
     ...(options.streamEvents !== undefined ? { streamEvents: options.streamEvents } : {}),
     currentDepth: input.parentDepth + 1,
@@ -1220,6 +1332,13 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     subResult = await options.runProtocol(childOptions);
   } catch (error) {
     removeParentAbortListener?.();
+    if (input.dispatchedChild.closed) {
+      const enrichedError = enrichAbortErrorWithParentReason(error, parentSignal);
+      if (DogpileError.isInstance(enrichedError)) {
+        throw enrichedError;
+      }
+      throw error;
+    }
 
     const failedDecision: JsonObject = {
       type: "delegate",
@@ -1269,6 +1388,7 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     };
     parentEmit(failEvent);
     input.recordProtocolDecision(failEvent);
+    input.dispatchedChild.closed = true;
 
     // Re-throw a DogpileError so the parent run terminates with a typed error.
     if (DogpileError.isInstance(enrichedError)) {
@@ -1306,6 +1426,7 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
   };
   parentEmit(completedEvent);
   input.recordProtocolDecision(completedEvent);
+  input.dispatchedChild.closed = true;
 
   // BUDGET-01 / D-10: parent.signal aborted AFTER the child completed but
   // before we advance to the next coordinator turn. Emit a marker event so

@@ -151,7 +151,8 @@ describe("caller cancellation contract", () => {
     await result;
 
     const syntheticFailures = events.filter(
-      (event) => event.type === "sub-run-failed" && event.error.detail?.["reason"] === "parent-aborted"
+      (event): event is Extract<StreamEvent, { readonly type: "sub-run-failed" }> =>
+        event.type === "sub-run-failed" && event.error.detail?.["reason"] === "parent-aborted"
     );
 
     expect(syntheticFailures).toHaveLength(2);
@@ -474,6 +475,7 @@ describe("caller cancellation contract", () => {
     await resultRejection;
     await expect(eventsPromise).resolves.toMatchObject([
       { type: "role-assignment" },
+      { type: "aborted", reason: "parent-aborted" },
       {
         type: "error",
         name: "DogpileError",
@@ -539,6 +541,7 @@ describe("caller cancellation contract", () => {
       await resultRejection;
       await expect(eventsPromise).resolves.toMatchObject([
         { type: "role-assignment" },
+        { type: "aborted", reason: "timeout" },
         {
           type: "error",
           name: "DogpileError",
@@ -616,6 +619,7 @@ describe("caller cancellation contract", () => {
       await resultRejection;
       await expect(eventsPromise).resolves.toMatchObject([
         { type: "role-assignment" },
+        { type: "aborted", reason: "parent-aborted" },
         {
           type: "error",
           name: "DogpileError",
@@ -696,6 +700,7 @@ describe("caller cancellation contract", () => {
     await expect(eventsPromise).resolves.toMatchObject([
       { type: "role-assignment", agentId: "writer" },
       { type: "role-assignment", agentId: "critic" },
+      { type: "aborted", reason: "parent-aborted" },
       {
         type: "error",
         name: "DogpileError",
@@ -766,6 +771,13 @@ describe("caller cancellation contract", () => {
       }
     });
     expect(handle.status).toBe("cancelled");
+    await expect(iterator.next()).resolves.toMatchObject({
+      done: false,
+      value: {
+        type: "aborted",
+        reason: "parent-aborted"
+      }
+    });
     await expect(iterator.next()).resolves.toMatchObject({
       done: false,
       value: {
@@ -847,6 +859,7 @@ describe("caller cancellation contract", () => {
     await resultRejection;
     await expect(eventsPromise).resolves.toMatchObject([
       { type: "role-assignment" },
+      { type: "aborted", reason: "parent-aborted" },
       {
         type: "error",
         name: "DogpileError",
@@ -859,8 +872,8 @@ describe("caller cancellation contract", () => {
         }
       }
     ]);
-    expect((await eventsPromise).map((event) => event.type)).toEqual(["role-assignment", "error"]);
-    expect(subscribedEvents.map((event) => event.type)).toEqual(["role-assignment", "error"]);
+    expect((await eventsPromise).map((event) => event.type)).toEqual(["role-assignment", "aborted", "error"]);
+    expect(subscribedEvents.map((event) => event.type)).toEqual(["role-assignment", "aborted", "error"]);
   });
 });
 
