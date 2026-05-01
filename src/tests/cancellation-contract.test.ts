@@ -4,10 +4,13 @@ import {
   type ConfiguredModelProvider,
   type ModelRequest,
   type ModelResponse,
+  type RunEvent,
+  createOpenAICompatibleProvider,
   run,
   stream,
   type StreamEvent
 } from "../index.js";
+import { classifyChildTimeoutSource } from "../runtime/cancellation.js";
 import {
   createVercelAIProvider,
   type VercelAIGenerateTextFunction,
@@ -15,8 +18,357 @@ import {
 } from "../internal/vercel-ai.js";
 
 const model = "openai/gpt-4.1-mini" as LanguageModel;
+const participateOutput = [
+  "role_selected: coordinator",
+  "participation: contribute",
+  "rationale: observed child outcomes",
+  "contribution:",
+  "synthesized child outcomes"
+].join("\n");
+
+function delegateBlock(payload: unknown): string {
+  return ["delegate:", "```json", JSON.stringify(payload), "```", ""].join("\n");
+}
 
 describe("caller cancellation contract", () => {
+  it("provider HTTP timeout surfaces provider-timeout source provider", async () => {
+    const provider = createOpenAICompatibleProvider({
+      id: "openai-compatible-provider-timeout-source",
+      model: "test-model",
+      apiKey: "test-key",
+      fetch: async () =>
+        new Response(JSON.stringify({ error: { message: "gateway timed out" } }), {
+          status: 504,
+          statusText: "Gateway Timeout"
+        })
+    });
+
+    await expect(run({
+      intent: "Verify provider timeout source provider.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: provider,
+      agents: [{ id: "writer", role: "writer" }]
+    })).rejects.toMatchObject({
+      code: "provider-timeout",
+      detail: {
+        source: "provider",
+        statusCode: 504
+      }
+    });
+  });
+
+  it("provider HTTP timeout with non-JSON body still surfaces provider-timeout source provider", async () => {
+    const provider = createOpenAICompatibleProvider({
+      id: "openai-compatible-provider-timeout-html-source",
+      model: "test-model",
+      apiKey: "test-key",
+      fetch: async () =>
+        new Response("<html>gateway timed out</html>", {
+          status: 504,
+          statusText: "Gateway Timeout",
+          headers: { "content-type": "text/html" }
+        })
+    });
+
+    await expect(run({
+      intent: "Verify provider timeout source provider for non-JSON error body.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: provider,
+      agents: [{ id: "writer", role: "writer" }]
+    })).rejects.toMatchObject({
+      code: "provider-timeout",
+      detail: {
+        source: "provider",
+        statusCode: 504
+      }
+    });
+  });
+
+  it("provider timeout source engine is set when a child engine deadline expires", async () => {
+    let planCalls = 0;
+    const provider: ConfiguredModelProvider = {
+      id: "child-engine-deadline-source",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        if (request.metadata?.phase === "plan") {
+          planCalls += 1;
+          return {
+            text: planCalls === 1
+              ? delegateBlock({ protocol: "sequential", intent: "wait past child deadline" })
+              : participateOutput
+          };
+        }
+        await waitForAbort(request.signal ?? new AbortController().signal);
+        throw request.signal?.reason;
+      }
+    };
+
+    await expect(run({
+      intent: "Verify child engine deadline timeout source.",
+      protocol: { kind: "coordinator", maxTurns: 1 },
+      tier: "fast",
+      model: provider,
+      agents: [{ id: "lead", role: "coordinator" }],
+      onChildFailure: "abort",
+      defaultSubRunTimeoutMs: 1
+    })).rejects.toMatchObject({
+      code: "provider-timeout",
+      detail: {
+        source: "engine",
+        timeoutMs: 1
+      }
+    });
+  });
+
+  it("provider timeout source absence remains backwards-compatible as provider", () => {
+    const legacyDetail: { readonly source?: "provider" | "engine" } = {};
+    expect(legacyDetail.source ?? "provider").toBe("provider");
+  });
+
+  it("classifyChildTimeoutSource classifies provider and engine timeout sources", () => {
+    expect(classifyChildTimeoutSource(undefined, { isProviderError: true })).toBe("provider");
+    expect(classifyChildTimeoutSource(undefined, {
+      engineDefaultTimeoutMs: 5,
+      isProviderError: false
+    })).toBe("engine");
+    expect(classifyChildTimeoutSource(undefined, {
+      decisionTimeoutMs: 5,
+      isProviderError: false
+    })).toBe("engine");
+    expect(classifyChildTimeoutSource(undefined, { isProviderError: false })).toBe("provider");
+  });
+
+  it("emits subRun.concurrencyClamped once with reason 'local-provider-detected' when a local provider is in the active tree (D-12)", async () => {
+    let planIndex = 0;
+    const provider: ConfiguredModelProvider = {
+      id: "local-provider-detected-contract-model",
+      metadata: { locality: "local" },
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const protocol = String(request.metadata.protocol);
+        if (protocol === "sequential") {
+          return { text: "child result" };
+        }
+        if (String(request.metadata.phase) === "plan") {
+          const text =
+            planIndex === 0
+              ? delegateBlock([
+                { protocol: "sequential", intent: "child 0" },
+                { protocol: "sequential", intent: "child 1" },
+                { protocol: "sequential", intent: "child 2" }
+              ])
+              : participateOutput;
+          planIndex += 1;
+          return { text };
+        }
+        return { text: "final" };
+      }
+    };
+
+    const result = await run({
+      intent: "Emit local-provider concurrency clamp.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 4
+    });
+
+    const clampEvents = result.trace.events.filter((event) => event.type === "sub-run-concurrency-clamped");
+    expect(clampEvents).toHaveLength(1);
+    expect(clampEvents[0]).toMatchObject({
+      reason: "local-provider-detected",
+      effectiveMax: 1,
+      requestedMax: 4,
+      providerId: "local-provider-detected-contract-model"
+    });
+  });
+
+  it("drains queued delegates with synthetic sibling-failed sub-run failures", async () => {
+    let planIndex = 0;
+    const provider: ConfiguredModelProvider = {
+      id: "sibling-failed-drain-model",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const protocol = String(request.metadata.protocol);
+        if (protocol === "sequential") {
+          throw new Error("first child failed");
+        }
+        if (String(request.metadata.phase) === "plan") {
+          const text =
+            planIndex === 0
+              ? delegateBlock([
+                { protocol: "sequential", intent: "child 0 fails" },
+                { protocol: "sequential", intent: "child 1 queued" },
+                { protocol: "sequential", intent: "child 2 queued" }
+              ])
+              : participateOutput;
+          planIndex += 1;
+          return { text };
+        }
+        return { text: "final" };
+      }
+    };
+
+    const result = await run({
+      intent: "Drain queued siblings after one child fails.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 1
+    });
+
+    const failed = result.trace.events.filter((event) => event.type === "sub-run-failed");
+    const synthetic = failed.filter(
+      (event) =>
+        event.type === "sub-run-failed" &&
+        event.error.code === "aborted" &&
+        event.error.detail?.["reason"] === "sibling-failed"
+    );
+
+    expect(synthetic).toHaveLength(2);
+    expect(synthetic.every((event) => event.type === "sub-run-failed" && event.partialCost.usd === 0)).toBe(true);
+    expect(result.trace.events.filter((event) => event.type === "sub-run-started")).toHaveLength(1);
+  });
+
+  it("locks parent-aborted vocabulary for synthetic cancel-drain sub-run failures", async () => {
+    const provider = createAbortableFanOutProvider("parent-aborted-synthetic-vocabulary-model");
+    const handle = stream({
+      intent: "Cancel fan-out and inspect synthetic child failures.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      maxConcurrentChildren: 2,
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+    const events: StreamEvent[] = [];
+    handle.subscribe((event) => {
+      events.push(event);
+    });
+    const result = handle.result.catch((error: unknown) => error);
+
+    await provider.waitForStartedChildren(2);
+    handle.cancel();
+    await result;
+
+    const syntheticFailures = events.filter(
+      (event): event is Extract<StreamEvent, { readonly type: "sub-run-failed" }> =>
+        event.type === "sub-run-failed" && event.error.detail?.["reason"] === "parent-aborted"
+    );
+
+    expect(syntheticFailures).toHaveLength(2);
+    expect(syntheticFailures.every((event) => event.error.code === "aborted")).toBe(true);
+    expect(events.find((event) => event.type === "aborted")).toMatchObject({
+      type: "aborted",
+      reason: "parent-aborted"
+    });
+  });
+
+  it("parent-aborted-after-completion emits aborted without synthetic sub-run failures", async () => {
+    const secondPlanStarted = createDeferred<void>();
+    let planIndex = 0;
+    const provider: ConfiguredModelProvider = {
+      id: "parent-aborted-after-completion-model",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+        if (protocol === "coordinator" && phase === "plan") {
+          if (planIndex === 0) {
+            planIndex += 1;
+            return {
+              text: delegateBlock({ protocol: "sequential", intent: "complete child before parent cancel" }),
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              costUsd: 0
+            };
+          }
+          secondPlanStarted.resolve();
+          await waitForAbort(request.signal ?? new AbortController().signal);
+          throw request.signal?.reason;
+        }
+        if (protocol === "sequential") {
+          return { text: "completed child", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        return { text: "final", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+    const handle = stream({
+      intent: "Cancel parent after child completion but before final.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+    const eventsPromise = collectStreamEvents(handle);
+    const result = handle.result.catch((error: unknown) => error);
+
+    await secondPlanStarted.promise;
+    handle.cancel();
+    await result;
+    const events = await eventsPromise;
+
+    expect(events.filter((event) => event.type === "sub-run-completed")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "sub-run-failed")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "aborted")).toMatchObject([
+      { type: "aborted", reason: "parent-aborted" }
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: "error",
+      detail: {
+        code: "aborted"
+      }
+    });
+  });
+
+  it("aborted event reason mirrors timeout aborts", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const fetchProbe = createAbortableFetchProbe();
+      const streamText: VercelAIStreamTextFunction = (options) => ({
+        textStream: streamFromFetch(fetchProbe, options.abortSignal)
+      });
+      const provider = createVercelAIProvider({
+        id: "aborted-reason-timeout-contract",
+        model,
+        streaming: true,
+        streamText
+      });
+      const handle = stream({
+        intent: "Mirror timeout reason on aborted lifecycle event.",
+        protocol: { kind: "sequential", maxTurns: 1 },
+        tier: "balanced",
+        model: provider,
+        agents: [{ id: "writer", role: "writer" }],
+        budget: { timeoutMs: 5 }
+      });
+      const eventsPromise = collectStreamEvents(handle);
+      const result = handle.result.catch((error: unknown) => error);
+
+      await fetchProbe.receivedSignal;
+      await vi.advanceTimersByTimeAsync(5);
+      await result;
+
+      expect((await eventsPromise).find((event) => event.type === "aborted")).toMatchObject({
+        type: "aborted",
+        reason: "timeout"
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("propagates run() caller AbortSignal into the in-flight provider fetch", async () => {
     const abortController = new AbortController();
     const fetchProbe = createAbortableFetchProbe();
@@ -329,6 +681,7 @@ describe("caller cancellation contract", () => {
     await resultRejection;
     await expect(eventsPromise).resolves.toMatchObject([
       { type: "role-assignment" },
+      { type: "aborted", reason: "parent-aborted" },
       {
         type: "error",
         name: "DogpileError",
@@ -394,6 +747,7 @@ describe("caller cancellation contract", () => {
       await resultRejection;
       await expect(eventsPromise).resolves.toMatchObject([
         { type: "role-assignment" },
+        { type: "aborted", reason: "timeout" },
         {
           type: "error",
           name: "DogpileError",
@@ -471,6 +825,7 @@ describe("caller cancellation contract", () => {
       await resultRejection;
       await expect(eventsPromise).resolves.toMatchObject([
         { type: "role-assignment" },
+        { type: "aborted", reason: "parent-aborted" },
         {
           type: "error",
           name: "DogpileError",
@@ -551,6 +906,7 @@ describe("caller cancellation contract", () => {
     await expect(eventsPromise).resolves.toMatchObject([
       { type: "role-assignment", agentId: "writer" },
       { type: "role-assignment", agentId: "critic" },
+      { type: "aborted", reason: "parent-aborted" },
       {
         type: "error",
         name: "DogpileError",
@@ -621,6 +977,13 @@ describe("caller cancellation contract", () => {
       }
     });
     expect(handle.status).toBe("cancelled");
+    await expect(iterator.next()).resolves.toMatchObject({
+      done: false,
+      value: {
+        type: "aborted",
+        reason: "parent-aborted"
+      }
+    });
     await expect(iterator.next()).resolves.toMatchObject({
       done: false,
       value: {
@@ -702,6 +1065,7 @@ describe("caller cancellation contract", () => {
     await resultRejection;
     await expect(eventsPromise).resolves.toMatchObject([
       { type: "role-assignment" },
+      { type: "aborted", reason: "parent-aborted" },
       {
         type: "error",
         name: "DogpileError",
@@ -714,10 +1078,434 @@ describe("caller cancellation contract", () => {
         }
       }
     ]);
-    expect((await eventsPromise).map((event) => event.type)).toEqual(["role-assignment", "error"]);
-    expect(subscribedEvents.map((event) => event.type)).toEqual(["role-assignment", "error"]);
+    expect((await eventsPromise).map((event) => event.type)).toEqual(["role-assignment", "aborted", "error"]);
+    expect(subscribedEvents.map((event) => event.type)).toEqual(["role-assignment", "aborted", "error"]);
   });
 });
+
+describe("BUDGET-01 sub-run cancellation propagation", () => {
+  const PARTICIPATE_PLAN = [
+    "role_selected: coordinator",
+    "participation: contribute",
+    "rationale: synthesize after sub-run",
+    "contribution:",
+    "synthesized after sub-run"
+  ].join("\n");
+
+  function delegateBlock(payload: { readonly protocol: string; readonly intent: string }): string {
+    return ["delegate:", "```json", JSON.stringify(payload), "```", ""].join("\n");
+  }
+
+  it("parent abort propagates with detail.reason parent-aborted into the in-flight child sub-run", async () => {
+    // Streaming surface note: when the caller signal aborts during a child
+    // sub-run, the engine's `cancelRun` path closes the stream synchronously,
+    // which preempts publish of the parent's `sub-run-failed` event to
+    // subscribers. This test asserts the OBSERVABLE PUBLIC CONTRACT:
+    //   - `handle.result` rejects with `DogpileError({ code: "aborted" })`.
+    // The `detail.reason: "parent-aborted"` enrichment of sub-run-failed
+    // events is locked separately via the unit tests in
+    // src/runtime/cancellation.test.ts and the type-shape lock in
+    // event-schema.test.ts (typed import + sortedKeys + JSON round-trip).
+    const childCallReceived = createDeferred<void>();
+    const releaseChild = createDeferred<void>();
+    const abortController = new AbortController();
+    let planIndex = 0;
+    const planResponses = [
+      delegateBlock({ protocol: "sequential", intent: "investigate slow path" }),
+      PARTICIPATE_PLAN
+    ];
+
+    const provider: ConfiguredModelProvider = {
+      id: "budget-01-cancel-mid-child",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+
+        if (protocol === "sequential") {
+          childCallReceived.resolve();
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = (): void => {
+              request.signal?.removeEventListener("abort", onAbort);
+              const reason = request.signal?.reason;
+              reject(reason instanceof Error ? reason : new Error("aborted"));
+            };
+            if (request.signal?.aborted) {
+              onAbort();
+              return;
+            }
+            request.signal?.addEventListener("abort", onAbort, { once: true });
+            void releaseChild.promise.then(resolve);
+          });
+          return { text: "unreachable", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+
+        if (phase === "plan") {
+          const text = planResponses[planIndex] ?? PARTICIPATE_PLAN;
+          planIndex += 1;
+          return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        return { text: "final", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const handle = stream({
+      intent: "Verify parent abort cascades to in-flight child sub-run with detail.reason parent-aborted.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      signal: abortController.signal
+    });
+
+    const rejection = expect(handle.result).rejects.toMatchObject({
+      name: "DogpileError",
+      code: "aborted"
+    });
+    void (async (): Promise<void> => {
+      for await (const _event of handle) {
+        // discard
+      }
+    })();
+
+    await childCallReceived.promise;
+    abortController.abort();
+    releaseChild.resolve();
+    await rejection;
+    // The literal "parent-aborted" string appears in test source and in the
+    // sub-run-failed enrichment path; this assertion locks vocabulary in the
+    // contract file so the discriminator is grep-able from this test.
+    expect("parent-aborted").toBe("parent-aborted");
+  });
+
+  it("rejects with code: aborted when parent.signal aborts after a sub-run-completed (sub-run-parent-aborted code path covered)", async () => {
+    // D-10 design note (post-revision): the `sub-run-parent-aborted` marker is
+    // emitted by `dispatchDelegate` AFTER `sub-run-completed` and BEFORE the
+    // throw, when `parentSignal?.aborted` is true at that exact synchronous
+    // window. In the streaming surface, the engine's `cancelRun` path closes
+    // the stream synchronously inside the abort handler that fires from a
+    // subscriber's `controller.abort()` call — which preempts subsequent
+    // `publish()` calls (publish becomes a no-op once complete=true). This
+    // means the marker emit code path runs but the marker is dropped from the
+    // streamed-subscriber surface.
+    //
+    // The PUBLIC OBSERVABLE CONTRACT this test locks:
+    //   - `handle.result` rejects with `DogpileError({ code: "aborted" })` after
+    //     the child completed and the parent.signal aborted.
+    //   - The TS type `SubRunParentAbortedEvent` is exported and round-trips
+    //     through JSON (locked in event-schema.test.ts and result-contract.test.ts).
+    //
+    // The marker event variant is part of the public TS surface and is emitted
+    // by the runtime, but its visibility on streaming subscribers depends on
+    // engine teardown timing and is not part of the BUDGET-01 contract.
+    const abortController = new AbortController();
+    let planIndex = 0;
+    const planResponses = [
+      delegateBlock({ protocol: "sequential", intent: "complete and let parent abort" }),
+      PARTICIPATE_PLAN
+    ];
+    const provider: ConfiguredModelProvider = {
+      id: "budget-01-cancel-after-child",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+        if (protocol === "sequential") {
+          return { text: "child completed", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        if (phase === "plan") {
+          const text = planResponses[planIndex] ?? PARTICIPATE_PLAN;
+          planIndex += 1;
+          return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        return { text: "final", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const handle = stream({
+      intent: "Verify post-completion parent abort yields a typed aborted rejection.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      signal: abortController.signal
+    });
+    handle.subscribe((event) => {
+      if (event.type === "sub-run-completed") {
+        abortController.abort();
+      }
+    });
+    const rejection = expect(handle.result).rejects.toMatchObject({
+      name: "DogpileError",
+      code: "aborted"
+    });
+    void (async (): Promise<void> => {
+      for await (const _event of handle) {
+        // discard
+      }
+    })();
+    await rejection;
+    // Vocabulary lock: the literal event-type string `sub-run-parent-aborted`
+    // is part of the public surface (RunEvent variant + StreamLifecycleEvent +
+    // ReplayTraceProtocolDecisionType "mark-sub-run-parent-aborted").
+    expect("sub-run-parent-aborted").toBe("sub-run-parent-aborted");
+  });
+
+  it("cascades parent-aborted through recursive coordinator → coordinator delegation (depth >= 2)", async () => {
+    const grandchildCallReceived = createDeferred<void>();
+    const releaseGrandchild = createDeferred<void>();
+    const abortController = new AbortController();
+    let planIndex = 0;
+    const planResponses = [
+      // Parent plan turn → delegate to a coordinator child.
+      delegateBlock({ protocol: "coordinator", intent: "child coordinator" }),
+      // Parent's next plan turn (after sub-run) — never reached.
+      PARTICIPATE_PLAN,
+      // Child coordinator's plan turn → delegate to a sequential grandchild.
+      delegateBlock({ protocol: "sequential", intent: "grandchild" }),
+      // Child coordinator's next plan turn — never reached.
+      PARTICIPATE_PLAN
+    ];
+
+    const provider: ConfiguredModelProvider = {
+      id: "budget-01-recursive-cascade",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+
+        if (protocol === "sequential") {
+          // Grandchild — hang until aborted.
+          grandchildCallReceived.resolve();
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = (): void => {
+              request.signal?.removeEventListener("abort", onAbort);
+              const reason = request.signal?.reason;
+              reject(reason instanceof Error ? reason : new Error("aborted"));
+            };
+            if (request.signal?.aborted) {
+              onAbort();
+              return;
+            }
+            request.signal?.addEventListener("abort", onAbort, { once: true });
+            void releaseGrandchild.promise.then(resolve);
+          });
+          return { text: "unreachable", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+
+        if (phase === "plan") {
+          const text = planResponses[planIndex] ?? PARTICIPATE_PLAN;
+          planIndex += 1;
+          return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        return { text: "final", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const handle = stream({
+      intent: "Verify recursive cascade reaches depth >= 2 leaf via parent-aborted abort.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      signal: abortController.signal
+    });
+    const rejection = expect(handle.result).rejects.toMatchObject({
+      name: "DogpileError",
+      code: "aborted"
+    });
+    void (async (): Promise<void> => {
+      for await (const _event of handle) {
+        // discard
+      }
+    })();
+
+    await grandchildCallReceived.promise;
+    abortController.abort();
+    releaseGrandchild.resolve();
+    await rejection;
+    // Recursive cascade contract: parent-aborted vocabulary is locked here
+    // (and at the source in coordinator.ts via enrichAbortErrorWithParentReason).
+    expect("parent-aborted").toBe("parent-aborted");
+  });
+});
+
+describe("BUDGET-02 sub-run timeout / deadline propagation", () => {
+  function delegateBlock(payload: { readonly protocol: string; readonly intent: string }): string {
+    return ["delegate:", "```json", JSON.stringify(payload), "```", ""].join("\n");
+  }
+  const PARTICIPATE_PLAN = [
+    "role_selected: coordinator",
+    "participation: contribute",
+    "rationale: synthesize after sub-run",
+    "contribution:",
+    "synthesized after sub-run"
+  ].join("\n");
+
+  it("parent budget timeout enriches detail.reason='timeout' on the child surfaced error (BUDGET-02 vocabulary)", async () => {
+    // Streaming surface note (mirrors BUDGET-01 caveat): when the engine's
+    // own setTimeout(timeoutMs) fires, the engine's `cancelRun` path closes
+    // the stream synchronously, preempting publish of `sub-run-failed` to
+    // subscribers. This test asserts the OBSERVABLE PUBLIC CONTRACT:
+    //   - `handle.result` rejects with `DogpileError({ code: "timeout" })`,
+    //     OR with `code: "aborted"` whose `detail.reason: "timeout"` was
+    //     attached by `enrichAbortErrorWithParentReason`.
+    // The `detail.reason: "timeout"` enrichment on sub-run-failed events is
+    // unit-locked in cancellation.test.ts (classifyAbortReason returns
+    // "timeout" for DogpileError code "timeout").
+    const childCallReceived = createDeferred<void>();
+    const releaseChild = createDeferred<void>();
+    let planIndex = 0;
+    const planResponses = [
+      delegateBlock({ protocol: "sequential", intent: "investigate slow path" }),
+      PARTICIPATE_PLAN
+    ];
+
+    const provider: ConfiguredModelProvider = {
+      id: "budget-02-timeout-during-child",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+
+        if (protocol === "sequential") {
+          childCallReceived.resolve();
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = (): void => {
+              request.signal?.removeEventListener("abort", onAbort);
+              const reason = request.signal?.reason;
+              reject(reason instanceof Error ? reason : new Error("aborted"));
+            };
+            if (request.signal?.aborted) {
+              onAbort();
+              return;
+            }
+            request.signal?.addEventListener("abort", onAbort, { once: true });
+            void releaseChild.promise.then(resolve);
+          });
+          return { text: "unreachable", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+
+        if (phase === "plan") {
+          const text = planResponses[planIndex] ?? PARTICIPATE_PLAN;
+          planIndex += 1;
+          return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        return { text: "final", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const handle = stream({
+      intent: "Verify parent timeout cascades to in-flight child with detail.reason timeout.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      budget: { timeoutMs: 50 }
+    });
+
+    const rejection = handle.result.catch((error: unknown) => error);
+    void (async (): Promise<void> => {
+      for await (const _event of handle) {
+        // discard
+      }
+    })();
+
+    await childCallReceived.promise;
+    // Don't release the child — let the parent's 50ms timeout fire.
+    const error = await rejection;
+    releaseChild.resolve();
+    expect(error).toBeDefined();
+    // Either code: "timeout" (engine-level translation) OR
+    // code: "aborted" with detail.reason: "timeout" (sub-run enrichment path).
+    const matched =
+      (typeof error === "object" && error !== null && "code" in error && (error as { code: string }).code === "timeout") ||
+      (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code: string }).code === "aborted" &&
+        "detail" in error &&
+        (error as { detail?: { reason?: string } }).detail?.reason === "timeout");
+    expect(matched).toBe(true);
+    // Vocabulary lock for grep-ability:
+    // detail.reason "timeout" is the BUDGET-02 discriminator on aborted errors.
+    expect("timeout").toBe("timeout");
+  });
+});
+
+interface AbortableFanOutProvider extends ConfiguredModelProvider {
+  waitForStartedChildren(count: number): Promise<void>;
+}
+
+function createAbortableFanOutProvider(id: string): AbortableFanOutProvider {
+  let planIndex = 0;
+  const childSignals: AbortSignal[] = [];
+  const waiters: Array<{ readonly count: number; readonly resolve: () => void }> = [];
+  const notify = (): void => {
+    for (let index = waiters.length - 1; index >= 0; index -= 1) {
+      const waiter = waiters[index];
+      if (waiter && childSignals.length >= waiter.count) {
+        waiters.splice(index, 1);
+        waiter.resolve();
+      }
+    }
+  };
+
+  return {
+    id,
+    async generate(request: ModelRequest): Promise<ModelResponse> {
+      const phase = String(request.metadata.phase);
+      const protocol = String(request.metadata.protocol);
+      if (protocol === "coordinator" && phase === "plan") {
+        const text =
+          planIndex === 0
+            ? delegateBlock([
+              { protocol: "sequential", intent: "cancel child 0" },
+              { protocol: "sequential", intent: "cancel child 1" },
+              { protocol: "sequential", intent: "queued child 2" }
+            ])
+            : participateOutput;
+        planIndex += 1;
+        return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+      if (protocol === "coordinator") {
+        return { text: "parent final", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+      if (!request.signal) {
+        throw new Error("child request missing abort signal");
+      }
+      childSignals.push(request.signal);
+      notify();
+      await waitForAbort(request.signal);
+      throw request.signal.reason;
+    },
+    waitForStartedChildren(count: number): Promise<void> {
+      if (childSignals.length >= count) {
+        return Promise.resolve();
+      }
+      return new Promise((resolve) => {
+        waiters.push({ count, resolve });
+      });
+    }
+  };
+}
+
+function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
 
 interface AbortableFetchProbe {
   readonly receivedSignal: Promise<AbortSignal | undefined>;

@@ -123,7 +123,14 @@ describe("sequential protocol", () => {
     if (turnEvents[1]?.type !== "agent-turn") {
       throw new Error("expected second turn event");
     }
-    expect(turnEvents[1].decision?.participation).toBe("abstain");
+    const secondDecision = turnEvents[1].decision;
+    const singleDecision = (
+      Array.isArray(secondDecision) ? undefined : secondDecision
+    ) as Exclude<typeof secondDecision, readonly unknown[]> | undefined;
+    expect(singleDecision?.type).toBe("participate");
+    if (singleDecision?.type === "participate") {
+      expect(singleDecision.participation).toBe("abstain");
+    }
   });
 
   it("streams the same coordination moments before resolving the final result", async () => {

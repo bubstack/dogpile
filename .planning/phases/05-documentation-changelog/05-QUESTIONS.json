@@ -1,0 +1,587 @@
+{
+  "phase": "05-documentation-changelog",
+  "generated_at": "2026-05-01T00:00:00Z",
+  "stats": {
+    "total": 20,
+    "answered": 20,
+    "chat_more": 0,
+    "remaining": 0
+  },
+  "sections": [
+    {
+      "id": "docs-page",
+      "title": "docs/recursive-coordination.md (DOCS-01)",
+      "questions": [
+        {
+          "id": "Q-01",
+          "title": "Narrative arc for the docs page",
+          "context": "DOCS-01 requires the page to cover: delegate decision shape, propagation rules (abort/timeout/cost), concurrency, locality, trace embedding, with at least one worked example. Existing docs/developer-usage.md uses an API-first table (lines 39-47). The page can lead with concepts, with API surface, or with a worked scenario.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Concept-first",
+              "description": "Open with the recursive-coordination mental model (what `delegate` is for, how children embed in the parent trace), then walk through propagation/concurrency/locality, then show a worked example at the end. Best for readers who haven't seen recursive coordination before. Risk: API surface buried."
+            },
+            {
+              "id": "b",
+              "label": "API-first (matches developer-usage.md)",
+              "description": "Open with `delegate` decision shape and `RunCallOptions.maxDepth` table, then propagation rules in subsections, then example. Consistent with existing docs voice. Risk: assumes readers already understand WHY they would delegate."
+            },
+            {
+              "id": "c",
+              "label": "Scenario-first (worked example up top)",
+              "description": "Lead with a runnable example (coordinator plans → delegates broadcast → synthesizes), THEN unpack each surface (delegate, parentRunIds, propagation, locality). Mirrors how the paper presents the protocol. Risk: requires the reader to scroll back for definitions."
+            },
+            {
+              "id": "d",
+              "label": "Hybrid: short concept blurb → API table → progressive worked example",
+              "description": "Two-paragraph concept opener, an API surface table (`delegate`, `subRun.*`, `locality`, `maxConcurrentChildren`, `maxDepth`), then a worked example that grows in complexity (pile → stream → failure handling). Most navigable; longest page."
+            }
+          ],
+          "answer": "d",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-02",
+          "title": "Worked example placement and count",
+          "context": "DOCS-01 says 'at least one worked example.' Phase 4 D-XX decisions added several public-surface concepts (parentRunIds chain, structured failures, partial trace). Each concept could ride one big example or get its own snippet.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Single end-to-end example at the bottom",
+              "description": "One coordinator-delegates-broadcast scenario, walked through start to finish with output. Reader sees one canonical shape. Risk: long block; harder to skim."
+            },
+            {
+              "id": "b",
+              "label": "Multiple small fragments interleaved with concepts",
+              "description": "Each subsection has a 5-15 line fragment showing just that concept (e.g., propagation section shows abort + clamp event, concurrency section shows maxConcurrentChildren). No single end-to-end. Risk: no canonical 'what does the trace look like' moment."
+            },
+            {
+              "id": "c",
+              "label": "Both — fragments per concept + one canonical end-to-end at the end",
+              "description": "Each subsection has its focused fragment; the page closes with a complete worked example exercising every surface. Best comprehension, longest page."
+            },
+            {
+              "id": "d",
+              "label": "Two examples: a minimal pile() and a stream() that demuxes parentRunIds",
+              "description": "Two complete examples showing the two API entry points; concepts referenced inline in each. Strong for the parent/child demux story; light on propagation/concurrency depth."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-03",
+          "title": "Page length / split strategy",
+          "context": "developer-usage.md is 575 lines. The recursive-coordination surface is large (delegate, subRun.*, locality, maxConcurrentChildren, maxDepth, parentRunIds chain, structured failures, partial trace, replay parity).",
+          "options": [
+            {
+              "id": "a",
+              "label": "Single focused page (~300-450 lines)",
+              "description": "Concept + API + one example. Defer deep API reference to inline JSDoc / docs/reference.md. Easiest to maintain; risk of underexposing edge cases."
+            },
+            {
+              "id": "b",
+              "label": "Single comprehensive page (~700-900 lines)",
+              "description": "Cover every concept, every event variant, every error shape, replay parity, locality clamp, depth overflow. Single source of truth. Risk: long, but discoverable via TOC."
+            },
+            {
+              "id": "c",
+              "label": "Split: concepts + API reference pages",
+              "description": "`recursive-coordination.md` = concepts + worked example; new `recursive-coordination-reference.md` = exhaustive event/error/option tables. Adds public-surface page count (more files in `docs/`)."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-04",
+          "title": "How prominently to feature the parentRunIds chain demux pattern",
+          "context": "Phase 4 D-02 adds `parentRunIds: readonly string[]` to every event flowing through a parent stream. Demux pattern: `event.parentRunIds?.[event.parentRunIds.length - 1] === handle.runId`. This is the SDK-facing change most stream consumers will hit.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Dedicated subsection with snippet + ASCII diagram",
+              "description": "Show a parent → child → grandchild tree with chain values at each level; show the immediate-parent vs ancestry demux idioms. Maximum clarity for stream consumers."
+            },
+            {
+              "id": "b",
+              "label": "Inline mention in the streaming example",
+              "description": "Reference parentRunIds where stream() output is shown; one-line demux idiom; no diagram. Lighter touch."
+            },
+            {
+              "id": "c",
+              "label": "Brief callout + link to event-schema.test.ts",
+              "description": "One paragraph, point readers at the test for the canonical contract. Minimum doc surface; assumes readers will read tests."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-05",
+          "title": "Document the structured `failures` block in coordinator prompts",
+          "context": "Phase 4 D-07 adds a structured `failures: ReadonlyArray<{ childRunId, code, message, partialCost }>` section to coordinator plan-turn prompts (in addition to the legacy `[sub-run X failed]:` transcript line). This affects how coordinator agents reason about retries.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Yes — dedicated subsection with the prompt template excerpt",
+              "description": "Show the exact section a coordinator agent will see; lock the format readers can rely on."
+            },
+            {
+              "id": "b",
+              "label": "Brief mention with link to coordinator.ts source",
+              "description": "One paragraph noting the surface exists; readers grep the code for the exact shape."
+            },
+            {
+              "id": "c",
+              "label": "Skip — this is internal prompt machinery, not public surface",
+              "description": "Document only the trace-side `sub-run-failed` event + partialCost. Don't lock the prompt template."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-06",
+          "title": "Out-of-scope / deferral callouts on the docs page",
+          "context": "PROJECT.md milestone goal: 'Agent-driven nesting only — caller-defined trees (Dogpile.nest) are deferred.' The docs page can name these explicitly or leave them unmentioned.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Explicit 'Not in v0.4.0' section",
+              "description": "List: caller-defined trees (`Dogpile.nest`), worker delegation (only coordinator plan-turn delegates), final-synthesis-turn delegation. Sets reader expectations; preempts issues."
+            },
+            {
+              "id": "b",
+              "label": "Inline notes only where relevant (e.g., 'plan turn only')",
+              "description": "Mention the limit at the spot it matters (delegate parsing rejects worker delegation), don't enumerate. Less explicit; less wall of caveats."
+            },
+            {
+              "id": "c",
+              "label": "No callouts — let the API surface speak",
+              "description": "If it's not in the docs, it's not supported. Cleanest reading experience; relies on errors to teach the boundary."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "example",
+      "title": "examples/recursive-coordination/ (DOCS-02)",
+      "questions": [
+        {
+          "id": "Q-07",
+          "title": "Example scenario — what mission does it actually solve?",
+          "context": "DOCS-02 requires `examples/recursive-coordination/` runnable against `createOpenAICompatibleProvider` exercising a real `delegate` flow end-to-end. The existing example (`examples/huggingface-upload-gui`) plans an upload GUI across all four protocols. The recursive example needs to demonstrate `delegate` specifically.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Research-and-synthesize",
+              "description": "Top-level coordinator decomposes a research question, delegates a `broadcast` of researchers (one per angle), then a `sequential` synthesis pass. Shows fan-out + sequential consolidation. Familiar shape; matches paper-style multi-agent."
+            },
+            {
+              "id": "b",
+              "label": "Code review fan-out",
+              "description": "Coordinator delegates parallel reviewers (security/perf/style) via `broadcast`, escalates failures, synthesizes verdict. Concrete tech scenario; shows error escalation cleanly."
+            },
+            {
+              "id": "c",
+              "label": "Plan-then-build (recursive coordinator)",
+              "description": "Coordinator plans a feature, delegates a sub-`coordinator` for one sub-task that itself delegates. Demonstrates true recursion (depth ≥ 2) and `recursive: true` flag on sub-run-started. Strongest demo of the milestone's headline feature."
+            },
+            {
+              "id": "d",
+              "label": "Mirror huggingface-upload-gui — same prompt, coordinator-with-delegate variant",
+              "description": "Reuse the existing example's mission (Hugging Face upload GUI plan), wrap it in a coordinator that delegates each sub-step. Continuity with prior example; risk of duplication."
+            },
+            {
+              "id": "e",
+              "label": "Generic 'plan/dispatch/synthesize' demo",
+              "description": "Synthetic minimal scenario optimized to exercise every surface (delegate, propagation, concurrency, locality, parentRunIds, failure escalation). Best surface coverage; least story."
+            }
+          ],
+          "answer": "d",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-08",
+          "title": "Provider configuration in the example",
+          "context": "The huggingface example (examples/README.md lines 11-26) defaults to a local deterministic provider and opts into OpenAI-compatible via env vars (`DOGPILE_EXAMPLE_PROVIDER=openai-compatible`, `OPENAI_API_KEY`). DOCS-02 explicitly requires the example to be 'wired against `createOpenAICompatibleProvider`'.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Mirror huggingface — deterministic default + opt-in OpenAI-compatible",
+              "description": "Repeatable without network/keys; DOCS-02 'wired against' satisfied by env-var path. Maximum parity with existing example."
+            },
+            {
+              "id": "b",
+              "label": "Live-only (createOpenAICompatibleProvider as the only path)",
+              "description": "Strict reading of DOCS-02. Simpler example; requires `OPENAI_API_KEY` to run anything. Risk: no offline reproduction; CI smoke can't run it."
+            },
+            {
+              "id": "c",
+              "label": "Deterministic default + documented live-mode in README",
+              "description": "Default deterministic; README shows the live env-var snippet. DOCS-02 is satisfied by 'wired against' (the code path exists), even if default is deterministic. Same as (a) but with cleaner README phrasing."
+            },
+            {
+              "id": "d",
+              "label": "Two files: `run-deterministic.mjs` and `run-live.mjs`",
+              "description": "Explicit split; readers pick. Verbose; doubles file count."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-09",
+          "title": "Example package shape",
+          "context": "huggingface-upload-gui is a single `.mjs` script run from repo root after `pnpm run build` — no package.json. The repo's `files` allowlist excludes examples (they're repo-only). The recursive example could match or upgrade.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Single .mjs script (matches huggingface)",
+              "description": "Run from repo root via `node examples/recursive-coordination/run.mjs`. Zero new package surface. Imports use `@dogpile/sdk` from built `dist/`."
+            },
+            {
+              "id": "b",
+              "label": "Proper package with its own package.json",
+              "description": "Adds a `package.json` declaring `@dogpile/sdk` as a dep (workspace ref). Closer to how a real consumer would shape things; adds workspace complexity."
+            },
+            {
+              "id": "c",
+              "label": "TypeScript file run via tsx",
+              "description": "Shows TS-first usage; matches typical consumer reality. Adds tsx as an example-only dev dep. Risk: more setup than the existing example."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-10",
+          "title": "Which API entry point(s) does the example demonstrate?",
+          "context": "Public surface: `Dogpile.pile()` (single mission, returns result), `Dogpile.stream()` (live event stream + final result). Phase 4's parentRunIds chain only matters when streaming.",
+          "options": [
+            {
+              "id": "a",
+              "label": "stream() — surfaces bubbled child events live",
+              "description": "Best demo of parentRunIds demux + live trace. Output more interesting (event log). Slightly more code."
+            },
+            {
+              "id": "b",
+              "label": "pile() — clean result.trace at the end",
+              "description": "Shorter; shows replay-friendly artifact. Doesn't surface bubbled events visually."
+            },
+            {
+              "id": "c",
+              "label": "Both — stream() example + a pile() comparison",
+              "description": "Best coverage; longest example. Risk: scope creep (DOCS-02 says 'a delegate flow,' singular)."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-11",
+          "title": "Demonstrate failure escalation explicitly?",
+          "context": "Phase 4 D-06/D-07 cover sub-run failure handling: synthetic `sub-run-failed` events with `partialTrace` and `partialCost`, plus structured `failures` block in the coordinator prompt. The example can show happy path only or include an intentional failure.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Yes — include a child that intentionally fails (e.g., budget exhaustion)",
+              "description": "Shows partial-trace shape, structured failures, retry decision in coordinator. Strongest demo of the propagation work."
+            },
+            {
+              "id": "b",
+              "label": "Happy path only — failure handling is in the docs page",
+              "description": "Keeps the example readable; failure scenarios ride the docs page. DOCS-02 doesn't require failure path."
+            },
+            {
+              "id": "c",
+              "label": "Optional flag (`--simulate-failure`)",
+              "description": "Run defaults to happy path; flag adds the failure variant. Explicit, but adds CLI flag plumbing."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-12",
+          "title": "Demonstrate locality auto-clamp?",
+          "context": "Phase 3 D-XX: providers with `locality: 'local'` auto-clamp `maxConcurrentChildren` to 1; emits `sub-run-concurrency-clamped`. Pure visibility win; not required by DOCS-02 (which only mandates a delegate flow).",
+          "options": [
+            {
+              "id": "a",
+              "label": "Yes — show a local provider with the clamp event in output",
+              "description": "Demonstrates a phase-3 surface that's otherwise invisible to readers. Adds setup."
+            },
+            {
+              "id": "b",
+              "label": "Comment-only — note the clamp behavior in code without exercising it",
+              "description": "Surfaces the option without runtime path; lighter touch."
+            },
+            {
+              "id": "c",
+              "label": "Skip — covered in the docs page only",
+              "description": "Example focuses on delegate + propagation; locality stays in the page. Cleanest example scope."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "readme",
+      "title": "README + examples/README cross-doc (DOCS-03)",
+      "questions": [
+        {
+          "id": "Q-13",
+          "title": "README 'Choose Your Path' row wording",
+          "context": "Existing rows (README.md lines 67-75) follow `<need>` → `<entry-point-snippet>`. DOCS-03 requires a row pointing at `delegate` / recursive coordination.",
+          "options": [
+            {
+              "id": "a",
+              "label": "'Run nested missions' → 'Coordinator agent emits `{ type: \"delegate\", ... }`'",
+              "description": "Need-focused. Action verb in left column matches sibling rows. Right column shows the decision shape verbatim."
+            },
+            {
+              "id": "b",
+              "label": "'Dispatch sub-missions from a coordinator' → 'Use `delegate` decisions; see `docs/recursive-coordination.md`'",
+              "description": "Says 'sub-mission' explicitly (matches PROJECT.md vocabulary). Right column points at docs page rather than showing code."
+            },
+            {
+              "id": "c",
+              "label": "'Recursive coordination' → 'Coordinator → `delegate` → child run; see `docs/recursive-coordination.md`'",
+              "description": "Matches feature name. Right column compact + arrow notation. Mostly points at docs."
+            },
+            {
+              "id": "d",
+              "label": "'Run a coordinator that fans out into other Dogpile runs' → '`delegate` decision; `docs/recursive-coordination.md`'",
+              "description": "Most descriptive left column; mirrors how a developer would Google this."
+            }
+          ],
+          "answer": "d",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-14",
+          "title": "Where does the new row go in the table?",
+          "context": "README 'Choose Your Path' table currently has 6 rows (lines 69-75) ordered roughly: pile → stream → protocol → engine → replay → openai-compat.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Append at the end (after openai-compat)",
+              "description": "Lowest churn. Implies recursive coordination is a 'see also' rather than a top-line use case."
+            },
+            {
+              "id": "b",
+              "label": "Insert after 'Compare coordination strategies'",
+              "description": "Groups protocol-related concerns together. Natural reading flow: protocols → recursion."
+            },
+            {
+              "id": "c",
+              "label": "Insert after 'Reuse fixed settings' (engine row)",
+              "description": "Recursive coordination uses createEngine's surfaces (maxDepth, defaultSubRunTimeoutMs). Conceptually paired."
+            },
+            {
+              "id": "d",
+              "label": "Insert second (right after pile)",
+              "description": "Front-load the milestone's headline feature. Highest visibility; risks pushing the foundational rows down."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-15",
+          "title": "examples/README.md update shape",
+          "context": "examples/README.md currently has one section (Hugging Face Upload GUI Plans) with its own header, run command, env-var table, and artifact path note.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Full subsection mirroring huggingface (header + run + env vars + artifact dir)",
+              "description": "Symmetrical with existing entry. Self-contained for readers who land on examples/."
+            },
+            {
+              "id": "b",
+              "label": "Minimal subsection (header + one-line description + run command)",
+              "description": "Lighter; defers detail to docs/recursive-coordination.md and the example's own README if it has one."
+            },
+            {
+              "id": "c",
+              "label": "One-line link only",
+              "description": "Just '`examples/recursive-coordination/` — see `docs/recursive-coordination.md`'. Minimum surface."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "changelog",
+      "title": "CHANGELOG.md (DOCS-04)",
+      "questions": [
+        {
+          "id": "Q-16",
+          "title": "v0.4.0 changelog structure",
+          "context": "CHANGELOG.md currently has v0.4.0 grouped by phase: top-level Breaking + Added (Phase 1), then `### Added — ... (Phase 2)`, `(Phase 3)`. Phase 4 entries are not yet written. DOCS-04 requires ALL public-surface additions listed: `delegate` decision variant, `subRun.*` events, `locality` field, `maxConcurrentChildren` config, `maxDepth` config (and Phase 4 additions).",
+          "options": [
+            {
+              "id": "a",
+              "label": "Keep phase-grouped (existing structure)",
+              "description": "Add Phase 4 + Phase 5 sections. Lowest churn; preserves history of how the milestone landed. Risk: readers don't think in 'phases.'"
+            },
+            {
+              "id": "b",
+              "label": "Flatten to thematic groups (Breaking, Added — delegate, Added — propagation, Added — locality/concurrency, Added — streaming/errors, Added — docs)",
+              "description": "Reader-focused; matches how npm consumers think. Loses phase tags. Significant rewrite of existing entries."
+            },
+            {
+              "id": "c",
+              "label": "Hybrid: thematic top-level with phase tags inline",
+              "description": "Themed sections with `(Phase N)` annotations preserved. Best of both; moderate rewrite."
+            },
+            {
+              "id": "d",
+              "label": "Flat 'Breaking + Added' lists with NO phase grouping at all",
+              "description": "Standard Keep-A-Changelog shape. Cleanest for npm readers. Largest rewrite of existing entries."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-17",
+          "title": "AgentDecision breaking-change migration callout",
+          "context": "CHANGELOG.md line 5 already documents the AgentDecision discriminated-union breaking change ('Consumers must narrow on decision.type === participate before reading paper-style fields'). v0.3.x → v0.4.0 callers reading those fields directly will break.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Dedicated 'Migration' subsection with before/after code snippet",
+              "description": "10-20 line code block showing v0.3 vs v0.4 narrowing. Most user-friendly; anchors a docs link."
+            },
+            {
+              "id": "b",
+              "label": "Keep current inline note in Breaking section, add a link to docs",
+              "description": "Existing wording is technically complete. Add `→ see docs/recursive-coordination.md#agentdecision-narrowing`. Low churn."
+            },
+            {
+              "id": "c",
+              "label": "Inline before/after snippet in the existing Breaking entry",
+              "description": "Same Breaking entry, expanded with a fenced TS block. No new section header."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-18",
+          "title": "Release timing — date-stamp v0.4.0 in this phase?",
+          "context": "CHANGELOG.md heading is currently `## [Unreleased] — v0.4.0`. The release gate (`pnpm run verify`) and `npm publish` flow is separate from documentation. PROJECT.md does not list a release task.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Date-stamp in this phase: `## [0.4.0] — 2026-05-01`",
+              "description": "Phase 5 ships the version. Phase 5 includes the actual `npm publish` / git tag step. Strongest 'shipped' signal."
+            },
+            {
+              "id": "b",
+              "label": "Leave as `[Unreleased]` — release is a separate concern",
+              "description": "Phase 5 = docs only. A subsequent action (manual release) flips Unreleased → 0.4.0 with the date. Cleanest scope split."
+            },
+            {
+              "id": "c",
+              "label": "Date-stamp the heading but DO NOT publish in this phase",
+              "description": "Heading reads `## [0.4.0] — <release-target-date>` even before npm publish. Risk: the date is wrong if publish slips."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "cross-doc",
+      "title": "Cross-doc updates (beyond ROADMAP requirements)",
+      "questions": [
+        {
+          "id": "Q-19",
+          "title": "Update docs/developer-usage.md?",
+          "context": "developer-usage.md is the long-form usage guide (575 lines). It does not currently mention `delegate`, `sub-run`, or recursive coordination. New readers may land here first via the README link.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Add a 'Recursive coordination' section (~50-80 lines) summarizing + linking to docs/recursive-coordination.md",
+              "description": "Keeps developer-usage discoverability; avoids duplicating the full surface. Maintenance: two places to update."
+            },
+            {
+              "id": "b",
+              "label": "Add a one-paragraph 'See also' callout near the coordinator section",
+              "description": "Light touch; minimal duplication. Risk: readers in developer-usage may miss it."
+            },
+            {
+              "id": "c",
+              "label": "Leave developer-usage alone",
+              "description": "Single source of truth in the new docs page. Cleanest content split. Risk: readers in developer-usage don't discover the new surface."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-20",
+          "title": "AGENTS.md / docs/reference.md / CLAUDE.md sync",
+          "context": "CLAUDE.md says 'AGENTS.md — repository guidelines (overlaps with this file; keep them consistent).' docs/reference.md lists exports. CLAUDE.md itself currently has no recursive-coordination text.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Update all three (AGENTS.md, docs/reference.md, CLAUDE.md)",
+              "description": "Maintains stated invariants. Largest surface; most maintenance."
+            },
+            {
+              "id": "b",
+              "label": "Update AGENTS.md + docs/reference.md only",
+              "description": "AGENTS mirrors CLAUDE; reference.md mirrors exports. Skip CLAUDE.md (it's project-internal AI guidance, the recursive surface lives in docs/)."
+            },
+            {
+              "id": "c",
+              "label": "Update docs/reference.md only",
+              "description": "Reference.md is the export catalog — must stay accurate. AGENTS.md / CLAUDE.md left as-is unless they actively mislead."
+            },
+            {
+              "id": "d",
+              "label": "Update none — recursive-coordination.md is the canonical home",
+              "description": "Phase 5 strictly delivers what ROADMAP.md scopes. Cross-doc sweep happens in a follow-up."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    }
+  ]
+}

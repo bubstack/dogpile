@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Phase 1: Delegate Decision &amp; Sub-Run Traces — Discussion Questions</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --card: #ffffff;
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --accent: #2563eb;
+    --green: #22c55e;
+    --green-bg: #f0fdf4;
+    --orange: #f97316;
+    --orange-bg: #fff7ed;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+    padding: 16px 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  h1 { margin: 0 0 8px; font-size: 18px; }
+  .stats {
+    display: flex; gap: 24px; align-items: center; flex-wrap: wrap;
+    font-size: 13px; color: var(--muted);
+  }
+  .stats strong { color: var(--ink); font-weight: 600; }
+  .progress {
+    flex: 1; min-width: 200px; max-width: 400px;
+    height: 8px; background: var(--line); border-radius: 4px; overflow: hidden;
+  }
+  .progress-fill { height: 100%; background: var(--green); transition: width .25s; }
+  .actions { display: flex; gap: 8px; }
+  button {
+    font: inherit; cursor: pointer; padding: 8px 16px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    border-radius: 6px;
+  }
+  button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  button:hover { filter: brightness(0.97); }
+  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+  .instructions {
+    background: #fef3c7; border: 1px solid #fbbf24; border-radius: 6px;
+    padding: 12px 16px; margin-bottom: 24px; font-size: 13px;
+  }
+  section { margin-bottom: 32px; }
+  .section-header {
+    cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 0; border-bottom: 2px solid var(--line);
+    font-size: 16px; font-weight: 600;
+  }
+  .section-header .caret { font-size: 12px; transition: transform .2s; }
+  .section-header.collapsed .caret { transform: rotate(-90deg); }
+  .section-header .count {
+    margin-left: auto; font-size: 12px; color: var(--muted); font-weight: 500;
+  }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 16px; margin-top: 16px;
+  }
+  .grid.collapsed { display: none; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 16px;
+    transition: border-color .2s, background .2s;
+  }
+  .card.answered { border: 2px solid var(--green); background: var(--green-bg); }
+  .card-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .qid {
+    font: 600 11px/1 monospace;
+    background: var(--ink); color: white;
+    padding: 4px 6px; border-radius: 3px;
+  }
+  .card.answered .qid { background: var(--green); }
+  .qtitle { font-weight: 600; font-size: 14px; }
+  .context {
+    font-style: italic; color: var(--muted); font-size: 12px;
+    margin: 0 0 12px; padding: 8px 10px;
+    background: #f1f5f9; border-left: 3px solid var(--line); border-radius: 3px;
+  }
+  .options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+  .opt {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 8px; border: 1px solid transparent; border-radius: 4px;
+    cursor: pointer;
+  }
+  .opt:hover { background: rgba(37,99,235,0.04); }
+  .opt input { margin-top: 3px; flex-shrink: 0; }
+  .opt-label { font-weight: 600; font-size: 13px; }
+  .opt-desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .opt input:checked + .opt-text .opt-label { color: var(--accent); }
+  textarea {
+    width: 100%; min-height: 60px; resize: vertical;
+    font: inherit; padding: 8px;
+    border: 1px solid var(--line); border-radius: 4px;
+    background: var(--card);
+  }
+  textarea.has-content { border: 2px solid var(--orange); background: var(--orange-bg); }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .footer { padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Phase 1: Delegate Decision &amp; Sub-Run Traces — Discussion Questions</h1>
+  <div class="stats">
+    <span><strong id="stat-total">0</strong> total</span>
+    <span><strong id="stat-answered">0</strong> answered</span>
+    <span><strong id="stat-remaining">0</strong> remaining</span>
+    <span><strong id="stat-chatmore">0</strong> with notes</span>
+    <div class="progress"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    <div class="actions">
+      <button id="btn-save" class="primary">Save answers</button>
+      <button id="btn-download">Download JSON</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="instructions">
+    <strong>How to use:</strong> Pick an option for each question (or type a custom answer in the notes box). Click <em>Save answers</em> to write directly to the JSON file (browser will ask permission once), OR click <em>Download JSON</em> and replace <code>01-QUESTIONS.json</code> manually. Then return to Claude and say <code>refresh</code> (to re-read your progress) or <code>finalize</code> (to generate CONTEXT.md).
+  </div>
+  <div id="content"></div>
+</main>
+
+<div class="footer">
+  <button id="btn-save-bottom" class="primary">Save answers</button>
+</div>
+
+<script id="embedded-data" type="application/json">{
+  "phase": "01-delegate-decision-sub-run-traces",
+  "generated_at": "2026-04-30T20:03:07Z",
+  "stats": {
+    "total": 18,
+    "answered": 0,
+    "chat_more": 0,
+    "remaining": 18
+  },
+  "sections": [
+    {
+      "id": "decision-shape",
+      "title": "Decision Shape & Parsing",
+      "questions": [
+        {
+          "id": "Q-01",
+          "title": "How does delegate coexist with the existing AgentDecision shape?",
+          "context": "Today src/types/events.ts:214 defines AgentDecision as `{ selectedRole, participation, rationale, contribution }` — flat, no `type` discriminator. The roadmap calls for `{ type: 'delegate', protocol, intent, model?, budget? }`. These are structurally incompatible.",
+          "options": [
+            {"id": "a", "label": "Discriminated union: add `type?: 'participate' | 'delegate'` (default 'participate')", "description": "Existing shape becomes the 'participate' variant; old parsed decisions stay valid because `type` is optional and defaults. Clean forward; minor existing-test churn."},
+            {"id": "b", "label": "Sibling field: keep AgentDecision as-is, add `delegate?: DelegateRequest` alongside on the turn payload", "description": "Zero changes to AgentDecision shape; delegate becomes orthogonal data on TurnEvent / coordinator decision result. Simpler diff but lets agents emit both at once (semantic ambiguity)."},
+            {"id": "c", "label": "Replace AgentDecision with a true discriminated union (`type: 'participate' | 'delegate'`, required)", "description": "Cleanest typing, but breaks every consumer reading `decision.selectedRole` directly. Public-API breaking change for v0.4.0."},
+            {"id": "d", "label": "Custom — describe in chat-more", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-02",
+          "title": "How does a coordinator agent emit a delegate decision in its model output?",
+          "context": "src/runtime/decisions.ts:3 `parseAgentDecision(output)` parses the existing shape from raw model text. Coordinator currently calls it at coordinator.ts:433 and 556. Need a parsing convention that's stable, validable, and unambiguous.",
+          "options": [
+            {"id": "a", "label": "Single fenced JSON block — agent emits ```json\\n{ \\\"type\\\": \\\"delegate\\\", ... }\\n``` and parser dispatches by `type`", "description": "Symmetric with current parser approach; one path; easy to validate. Agents must learn one schema."},
+            {"id": "b", "label": "Two distinct sentinels — separate fenced block kind (e.g. ```delegate) for sub-run requests", "description": "Visually distinct; parser can early-exit. More to teach the model; risks divergence between protocols."},
+            {"id": "c", "label": "Tool-call style — a built-in `delegate` runtime tool the coordinator invokes via the existing tools.ts surface", "description": "Reuses tool dispatch, structured args, validation. But conceptually it's NOT a tool (no caller policy, returns a Result). Could mislead users about scope."},
+            {"id": "d", "label": "Custom — describe in chat-more", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-03",
+          "title": "Can a single coordinator turn emit BOTH a participate-contribution AND a delegate request?",
+          "context": "Phase 3 introduces concurrent sibling delegates (`maxConcurrentChildren`, default 4) — that's N delegates in one turn. Phase 1 just needs to nail single-decision-per-turn semantics for now, but the answer locks the parsing contract.",
+          "options": [
+            {"id": "a", "label": "One decision per turn — turn is EITHER participate OR delegate, never both. Multiple delegates allowed as an array of delegates only.", "description": "Cleanest mental model. Phase 3's 'N delegates per turn' becomes `[delegate, delegate, ...]` not `[contribution, delegate, delegate]`. Forces coordinator to think in distinct turns."},
+            {"id": "b", "label": "Mixed — agent can contribute text AND fan out delegates in the same turn", "description": "More expressive; coordinator can 'announce then dispatch'. But complicates trace ordering: does subRun start before/after the contribution event?"},
+            {"id": "c", "label": "Defer to Phase 3 — Phase 1 locks single-delegate-per-turn; Phase 3 decides multi", "description": "Keeps Phase 1 small. Risk: Phase 3 finds the parser shape forces a breaking change."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    },
+    {
+      "id": "sub-run-events",
+      "title": "Sub-Run Event Shape",
+      "questions": [
+        {
+          "id": "Q-04",
+          "title": "Where do subRun.* events sit in the RunEvent union?",
+          "context": "src/types/events.ts:458 defines RunEvent as a discriminated union. Adding `subRun.started | subRun.completed | subRun.failed` is locked by src/tests/event-schema.test.ts (TRACE-04) so the shape is a public-surface decision.",
+          "options": [
+            {"id": "a", "label": "Three separate event types: `sub-run-started`, `sub-run-completed`, `sub-run-failed` (kebab-case to match `model-request`, `agent-turn`)", "description": "Matches the existing naming convention exactly. Three discriminants in the union. Easy to filter."},
+            {"id": "b", "label": "One event `sub-run` with a `phase: 'started' | 'completed' | 'failed'` field", "description": "Fewer top-level union members; consumers branch on a sub-field. Mismatches the current 'one type per event' convention."},
+            {"id": "c", "label": "Match roadmap text literally: `subRun.started` / `subRun.completed` / `subRun.failed` (dotted, camel)", "description": "Reads naturally but breaks the existing kebab convention. Worse for consistency than (a)."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-05",
+          "title": "What goes in the sub-run-started payload?",
+          "context": "Roadmap success criteria #3 names: child runId, parent decision id, protocol, intent. Question is what else — depth? parent runId? requested model? requested budget? — versus keeping the started event minimal and putting full inputs in the embedded trace at completion.",
+          "options": [
+            {"id": "a", "label": "Minimal: `{ childRunId, parentRunId, parentDecisionId, protocol, intent, depth }`", "description": "Just enough to demux a live stream and reconstruct the parent→child link. Inputs (model, budget) are visible in the embedded child trace at completion."},
+            {"id": "b", "label": "Full inputs: minimal + `{ requestedModel, effectiveModel, requestedBudget, effectiveBudget }`", "description": "Live consumers see the resolved model/budget without waiting for completion. More fields locked in the public schema; more migration cost."},
+            {"id": "c", "label": "Minimal + `requestPayload` (the validated DelegateRequest object)", "description": "Single field carries everything the agent asked for; effective values still inferable from child trace. Most compact growth path."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-06",
+          "title": "What does sub-run-completed embed — full child trace, or trace + a summary projection?",
+          "context": "TRACE-02 says 'child's full JSON-serializable trace inline'. Embedding the whole trace is necessary for replay. Question is whether to also surface a top-level summary so consumers don't have to walk the embedded trace for common fields.",
+          "options": [
+            {"id": "a", "label": "Trace only: `{ childRunId, parentRunId, parentDecisionId, trace: Trace }`", "description": "Minimal; consumers project what they need. Output, accounting, transcript all live inside `trace`. Smallest schema commitment."},
+            {"id": "b", "label": "Trace + projection: above + `{ output, accounting, transcriptCount, durationMs }` duplicated at the event top level", "description": "Ergonomic for live observers; redundant in the trace artifact. Two sources of truth must be kept consistent."},
+            {"id": "c", "label": "Trace + caller-facing 'subResult': `{ childRunId, ..., subResult: RunResult }` where RunResult already bundles output/accounting/transcript/trace", "description": "Reuses the existing public RunResult shape — what `Dogpile.run()` returns. Coordinators already know this shape. One canonical projection, no duplication."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-07",
+          "title": "What goes in sub-run-failed when the child throws?",
+          "context": "Phase 4 owns full error escalation (ERROR-01..03), but Phase 1 must lock the failed-event shape. The child error is a DogpileError with `code`, `providerId?`, `detail?`. The roadmap says 'with the child error'.",
+          "options": [
+            {"id": "a", "label": "Serialized DogpileError fields: `{ childRunId, parentRunId, error: { code, message, providerId?, detail? } }`", "description": "JSON-serializable (traces must round-trip). Lossless for replay. No partial trace embedded."},
+            {"id": "b", "label": "Above + `partialTrace`: any events the child emitted before failing, embedded for forensics", "description": "Best for debugging; bigger payload; partial-trace shape becomes a locked schema concern."},
+            {"id": "c", "label": "Above + `escalationContext` field reserved-but-empty for Phase 4 to populate", "description": "Pre-allocates the slot Phase 4 needs (ERROR-02 'surface to coordinator's next decision'). Avoids a Phase 4 schema bump."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    },
+    {
+      "id": "replay",
+      "title": "Replay Semantics",
+      "questions": [
+        {
+          "id": "Q-08",
+          "title": "How does replay() detect 'embedded child trace, do not re-execute'?",
+          "context": "TRACE-03 requires `Dogpile.replay(parentTrace)` to NOT invoke any provider, including for nested children. Today src/runtime/coordinator.ts:92 already uses `createReplayTraceProtocolDecision`. The new wrinkle: when the parent trace contains a `delegate` decision, replay must rehydrate from the embedded child trace instead of dispatching.",
+          "options": [
+            {"id": "a", "label": "Replay engine walks parent events; on `sub-run-completed`, calls `replay(embeddedTrace)` recursively and records the result; no protocol dispatch", "description": "Symmetric: replay handles delegates the same way it handles model calls — by reading the recorded event. Single recursion path."},
+            {"id": "b", "label": "Coordinator's replay decision provider intercepts `delegate` decisions and short-circuits to embedded trace lookup keyed by parent decision id", "description": "Keeps replay logic local to coordinator. More moving parts; needs an embedded-trace index built from the parent events."},
+            {"id": "c", "label": "Replay reconstructs the child RunResult from the trace embedded in `sub-run-completed` and feeds it back without invoking child engine at all", "description": "Most direct: child trace IS the replay output, no recursive replay() call. Skips child event re-emission unless we explicitly re-emit them on the parent stream."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-09",
+          "title": "On replay, are child events re-emitted on the parent stream, or just the sub-run-* wrapper events?",
+          "context": "Phase 4 (STREAM-01) introduces wrapping child events with `parentRunId` for live runs. Phase 1's replay must produce 'identical event sequence to the original run' (TRACE-03). If the original live run bubbled child events, replay must too.",
+          "options": [
+            {"id": "a", "label": "Replay emits exactly the parent's recorded event sequence — sub-run-started, sub-run-completed, that's it", "description": "Phase 1 leaves child-event bubbling for Phase 4. Replay parity holds because Phase 1 hasn't bubbled either. When Phase 4 ships bubbling, both live and replay paths emit child events."},
+            {"id": "b", "label": "Replay always replays the embedded child trace's events between sub-run-started and sub-run-completed", "description": "Replay is more verbose than the original Phase 1 live run (which doesn't bubble). Breaks 'identical event sequence' until Phase 4."},
+            {"id": "c", "label": "Defer — Phase 4 will define this when bubbling lands", "description": "Phase 1 trace ONLY contains sub-run-* on parent; replay matches. Phase 4 must update both live + replay together."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-10",
+          "title": "Cost and accounting on replay — recompute from embedded child trace, or trust the recorded numbers?",
+          "context": "Parent accounting must equal sum of self + children (Phase 2 BUDGET-03). Phase 1 just needs replay to reproduce the original numbers exactly. Replay() today already trusts recorded provider responses.",
+          "options": [
+            {"id": "a", "label": "Trust the embedded child trace's `accounting` block verbatim; sum into parent", "description": "Lossless and fast. If an embedded trace was tampered with, replay reflects that — same as today's replay trust model."},
+            {"id": "b", "label": "Recompute child accounting by re-walking embedded provider events; verify it matches recorded", "description": "Defense-in-depth. Slower. Useful for catching a corrupted trace. Might be overkill for an SDK that already trusts recorded model responses."},
+            {"id": "c", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    },
+    {
+      "id": "defaults",
+      "title": "Defaults & Inheritance",
+      "questions": [
+        {
+          "id": "Q-11",
+          "title": "When the agent omits `model` from the delegate, what does the child use?",
+          "context": "DELEGATE-02 says 'child model = parent model if omitted'. The parent coordinator was constructed with a specific provider+model. Question: does 'parent model' mean the coordinator's configured provider object verbatim, or just the model id (re-resolved against the engine-level provider registry)?",
+          "options": [
+            {"id": "a", "label": "Inherit the parent coordinator's `ConfiguredModelProvider` object verbatim — same instance, same baseURL, same auth", "description": "Zero ambiguity; same provider runs the child. Caller can't accidentally swap out auth/baseURL. Couples child run lifecycle to parent provider lifecycle."},
+            {"id": "b", "label": "Inherit by `provider.id` and look up against the engine's provider list, re-binding to the current registration", "description": "Allows engine-level provider swaps mid-run. More machinery; more failure modes (provider gone? error code?)."},
+            {"id": "c", "label": "Caller must declare allowed child providers at engine construction; child resolves by id from that allowlist", "description": "Explicit; safe. Adds a new top-level config field. More work for callers."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-12",
+          "title": "How is 'parent's remaining budget' computed for child default?",
+          "context": "DELEGATE-02 + Phase 2 say child budget defaults to parent's REMAINING. The parent budget has timeoutMs (wall clock) and possibly cost/token caps. 'Remaining' is well-defined for time but trickier for cost (ongoing parent calls compete with child).",
+          "options": [
+            {"id": "a", "label": "Time only: child inherits `timeoutMs = parent.deadline - now`; cost is unbounded unless explicitly set", "description": "Simple. Matches Phase 2 BUDGET-02 'remaining time'. Cost roll-up still happens, just no cost cap unless caller sets one. Avoids cost-budget contention math entirely."},
+            {"id": "b", "label": "Time + cost: child inherits remaining time AND remaining cost (parent budget minus already-spent)", "description": "Tighter safety; requires Phase 1 to coordinate with Phase 2's cost roll-up. Risk of children starving each other in a fan-out. Need to define if remaining is divided or just capped."},
+            {"id": "c", "label": "Time + cost + per-child cap: child gets remaining time, and `remaining_cost / maxConcurrentChildren` for cost", "description": "Best behavior under fan-out; most complex. Phase 3 owns concurrency so this couples Phase 1 to Phase 3."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-13",
+          "title": "Is the default `maxDepth = 4` configurable per-engine, per-run, or both?",
+          "context": "Roadmap locks default at 4. Question is the surface: does it live on `createEngine({ maxDepth })`, on `pile({ ..., maxDepth })`, or both? Today engine config is the durable knob; per-run options exist for things like `tier`.",
+          "options": [
+            {"id": "a", "label": "Engine-level only: `createEngine({ ..., maxDepth: 4 })`. Per-run inherits.", "description": "One canonical knob. Caller can't blow past it for one risky run. Matches how most safety limits feel right."},
+            {"id": "b", "label": "Both: engine sets ceiling, per-run can lower (never raise) it", "description": "Flexible without escape hatch. Enforcement adds a min() check at run start."},
+            {"id": "c", "label": "Per-run only: every `pile()` declares its own", "description": "Explicit per call; risky default story (callers forget). Doesn't match the 'safety limit' feel."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    },
+    {
+      "id": "validation",
+      "title": "Validation & Limits",
+      "questions": [
+        {
+          "id": "Q-14",
+          "title": "When is depth-overflow detected — at decision parse time, or at sub-run start?",
+          "context": "DELEGATE-04 says 'exceeding maxDepth throws DogpileError'. Roadmap success criteria #2 says 'BEFORE any child run starts'. There's still a sequencing choice: throw inside the coordinator's decision-handling loop (synchronous with parse), or throw inside the engine's sub-run dispatcher (right before child engine spins up).",
+          "options": [
+            {"id": "a", "label": "Validate at decision-handling time: parse → validate → if depth+1 > maxDepth, throw before any sub-run-started event is emitted", "description": "No partial trace; cleanest semantics. Parent error trace shows only the decision and the validation throw."},
+            {"id": "b", "label": "Validate at sub-run dispatcher: emit sub-run-started, then throw, then emit sub-run-failed with `code: invalid-configuration`", "description": "Symmetric event flow (every delegate gets started+completed/failed pair). Error appears as a child failure. More permissive event schema."},
+            {"id": "c", "label": "Validate at both points (defense in depth)", "description": "Parser catches obvious cases; dispatcher catches races (e.g., concurrent depth changes). More code, same outcome."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-15",
+          "title": "Where in DogpileError.detail does `path` point to for an invalid delegate payload?",
+          "context": "DELEGATE-03 says `DogpileError({ code: 'invalid-configuration', detail.path })`. The existing error convention (validation.ts) uses dot-paths like `'protocol.agents[2].systemPrompt'`. Question: what's the canonical path root for a delegate decision?",
+          "options": [
+            {"id": "a", "label": "Path rooted at the decision: `decision.protocol`, `decision.intent`, `decision.budget.timeoutMs`", "description": "Self-contained; consistent with how callers think about the AgentDecision they parsed."},
+            {"id": "b", "label": "Path rooted at the trace location: `events[42].decision.protocol` or `turn[3].decision.protocol`", "description": "Locates the bad decision in the run's history. More useful for debugging multi-turn runs; longer paths."},
+            {"id": "c", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-16",
+          "title": "What happens if a delegate names `protocol: 'coordinator'` and the child's coordinator emits its own delegate at depth N+1?",
+          "context": "Roadmap success criteria #1 lists `coordinator` as a valid delegate target. Recursive coordinator delegates are explicitly in scope. Question is whether any recursive nesting needs special handling beyond depth counting.",
+          "options": [
+            {"id": "a", "label": "No special handling — recursive coordinator delegate is just normal nesting; depth counter increments; everything else identical", "description": "Simplest. Implementation is symmetric across the four protocols."},
+            {"id": "b", "label": "Same handling, but emit a hint/warning event for diagnostic visibility (`sub-run-started.recursive: true`)", "description": "Helps users spot accidental recursion in traces. Adds a field to lock in the schema."},
+            {"id": "c", "label": "Block intra-coordinator recursive delegate without explicit `allowRecursiveCoordinator: true` opt-in flag", "description": "Safety rail against runaway recursion. Defeats some intended use cases (manager-of-managers). Not worth it given depth cap exists."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    },
+    {
+      "id": "feedback",
+      "title": "Decision Context Feedback",
+      "questions": [
+        {
+          "id": "Q-17",
+          "title": "How is the child's RunResult presented back to the coordinator's NEXT prompt?",
+          "context": "DELEGATE-02 says child result 'returns to the coordinator's next decision context'. The coordinator builds prompts from the running transcript (coordinator.ts). The result includes `output`, `accounting`, `transcript`, `trace`. Pumping the entire trace into the next prompt would explode tokens.",
+          "options": [
+            {"id": "a", "label": "Inject child `output` (final synthesized text) only, prefixed with a marker like `[sub-run <id> output]: ...`", "description": "Smallest token cost. Coordinator sees what the sub-run produced; loses internal reasoning. Mirrors how a manager reads a report, not a full transcript."},
+            {"id": "b", "label": "Inject `output` + brief stats line (turns, costUsd, durationMs)", "description": "Output plus operational visibility for cost-aware coordinators. Still small. Stats line shape becomes a soft contract."},
+            {"id": "c", "label": "Inject `output` + a one-line digest per child transcript entry (`<agent>: <first 120 chars>`)", "description": "Coordinator sees who said what at a glance. Token cost scales with child transcript length. Useful for synthesizing across siblings; risk of bleed."},
+            {"id": "d", "label": "Caller-supplied projector: `delegate: { resultProjector?: (result: RunResult) => string }` engine option, default = output-only", "description": "Most flexible; lets product teams tune. Adds a config knob. Default still simple."},
+            {"id": "e", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-18",
+          "title": "Does the coordinator receive each delegate result as a synthetic transcript entry, or as a system-style preamble on the next user turn?",
+          "context": "Coordinator turns alternate between agent contributions and synthesis. The child result needs to land somewhere visible to the next decision parse. Two clean placements; the choice affects how the agent perceives provenance.",
+          "options": [
+            {"id": "a", "label": "Synthetic transcript entry: append a `TranscriptEntry { agentId: 'sub-run:<childId>', role: 'delegate-result', input: '<delegate request>', output: '<projected result>' }`", "description": "Replay-stable; visible in transcript artifact; coordinator sees it via normal prompt construction. Adds a new role string to the transcript vocabulary."},
+            {"id": "b", "label": "System preamble: prepend a system-message-like block to the coordinator's next prompt, NOT recorded in transcript (only in trace events)", "description": "Keeps transcript pure agent-produced. Coordinator still sees it. Replay must reconstruct the preamble from sub-run-completed events."},
+            {"id": "c", "label": "Both: transcript entry for replay/inspection AND a structured tag in the next prompt", "description": "Belt and suspenders. Some redundancy; clearest provenance."},
+            {"id": "d", "label": "Custom", "description": ""}
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    }
+  ]
+}
+</script>
+<script>
+const EMBEDDED_JSON = document.getElementById("embedded-data").textContent;
+
+const STATE = (() => {
+  const raw = localStorage.getItem("dogpile-phase1-questions");
+  if (raw) { try { return JSON.parse(raw); } catch (e) {} }
+  return JSON.parse(EMBEDDED_JSON);
+})();
+
+function recomputeStats() {
+  let answered = 0, chatMore = 0, total = 0;
+  for (const sec of STATE.sections) for (const q of sec.questions) {
+    total++;
+    const hasAnswer = q.answer !== null && q.answer !== undefined && q.answer !== "";
+    const hasNote = q.chat_more && q.chat_more.trim().length > 0;
+    if (hasAnswer) answered++;
+    if (hasNote) chatMore++;
+    q.status = hasAnswer ? "answered" : (hasNote ? "chat-more" : "unanswered");
+  }
+  STATE.stats = { total, answered, chat_more: chatMore, remaining: total - answered };
+}
+
+function renderStats() {
+  document.getElementById("stat-total").textContent = STATE.stats.total;
+  document.getElementById("stat-answered").textContent = STATE.stats.answered;
+  document.getElementById("stat-remaining").textContent = STATE.stats.remaining;
+  document.getElementById("stat-chatmore").textContent = STATE.stats.chat_more;
+  const pct = STATE.stats.total ? (STATE.stats.answered / STATE.stats.total * 100) : 0;
+  document.getElementById("progress-fill").style.width = pct + "%";
+}
+
+function persist() {
+  localStorage.setItem("dogpile-phase1-questions", JSON.stringify(STATE));
+}
+
+function render() {
+  recomputeStats();
+  renderStats();
+  const root = document.getElementById("content");
+  root.innerHTML = "";
+  for (const sec of STATE.sections) {
+    const secEl = document.createElement("section");
+    const ans = sec.questions.filter(q => q.status === "answered").length;
+    secEl.innerHTML = `
+      <div class="section-header" data-sec="${sec.id}">
+        <span class="caret">▼</span>
+        <span>${sec.title}</span>
+        <span class="count">${ans}/${sec.questions.length} answered</span>
+      </div>
+      <div class="grid" id="grid-${sec.id}"></div>`;
+    const grid = secEl.querySelector(".grid");
+    for (const q of sec.questions) grid.appendChild(renderCard(q));
+    root.appendChild(secEl);
+    secEl.querySelector(".section-header").addEventListener("click", e => {
+      e.currentTarget.classList.toggle("collapsed");
+      grid.classList.toggle("collapsed");
+    });
+  }
+}
+
+function renderCard(q) {
+  const card = document.createElement("div");
+  card.className = "card" + (q.status === "answered" ? " answered" : "");
+  let optsHtml = "";
+  for (const opt of q.options) {
+    const checked = q.answer === opt.id ? "checked" : "";
+    optsHtml += `
+      <label class="opt">
+        <input type="radio" name="${q.id}" value="${opt.id}" ${checked} />
+        <span class="opt-text">
+          <div class="opt-label">${opt.label}</div>
+          ${opt.description ? `<div class="opt-desc">${opt.description}</div>` : ""}
+        </span>
+      </label>`;
+  }
+  const noteClass = (q.chat_more && q.chat_more.trim()) ? "has-content" : "";
+  card.innerHTML = `
+    <div class="card-head"><span class="qid">${q.id}</span><span class="qtitle">${q.title}</span></div>
+    ${q.context ? `<div class="context">${q.context}</div>` : ""}
+    <div class="options">${optsHtml}</div>
+    <textarea class="${noteClass}" data-q="${q.id}" placeholder="Add context, nuance, or clarification...">${q.chat_more || ""}</textarea>`;
+  card.querySelectorAll('input[type="radio"]').forEach(r => {
+    r.addEventListener("change", e => {
+      q.answer = e.target.value;
+      persist();
+      render();
+    });
+  });
+  card.querySelector("textarea").addEventListener("input", e => {
+    q.chat_more = e.target.value;
+    e.target.classList.toggle("has-content", e.target.value.trim().length > 0);
+    persist();
+    document.getElementById("stat-chatmore").textContent =
+      STATE.sections.reduce((n, s) => n + s.questions.filter(qq => qq.chat_more && qq.chat_more.trim()).length, 0);
+  });
+  return card;
+}
+
+async function saveToFile() {
+  recomputeStats();
+  const json = JSON.stringify(STATE, null, 2);
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = window.__savedHandle || await window.showSaveFilePicker({
+        suggestedName: "01-QUESTIONS.json",
+        types: [{ description: "JSON", accept: { "application/json": [".json"] } }]
+      });
+      window.__savedHandle = handle;
+      const w = await handle.createWritable();
+      await w.write(json);
+      await w.close();
+      alert("Saved. Tell Claude: refresh");
+      return;
+    } catch (err) { console.warn(err); }
+  }
+  downloadJson();
+}
+
+function downloadJson() {
+  recomputeStats();
+  const json = JSON.stringify(STATE, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "01-QUESTIONS.json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  alert("Downloaded. Replace .planning/phases/01-delegate-decision-sub-run-traces/01-QUESTIONS.json with this file, then tell Claude: refresh");
+}
+
+document.getElementById("btn-save").addEventListener("click", saveToFile);
+document.getElementById("btn-save-bottom").addEventListener("click", saveToFile);
+document.getElementById("btn-download").addEventListener("click", downloadJson);
+
+render();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,583 @@
+{
+  "phase": "01-delegate-decision-sub-run-traces",
+  "generated_at": "2026-04-30T20:03:07Z",
+  "stats": {
+    "total": 18,
+    "answered": 18,
+    "chat_more": 0,
+    "remaining": 0
+  },
+  "sections": [
+    {
+      "id": "decision-shape",
+      "title": "Decision Shape & Parsing",
+      "questions": [
+        {
+          "id": "Q-01",
+          "title": "How does delegate coexist with the existing AgentDecision shape?",
+          "context": "Today src/types/events.ts:214 defines AgentDecision as `{ selectedRole, participation, rationale, contribution }` — flat, no `type` discriminator. The roadmap calls for `{ type: 'delegate', protocol, intent, model?, budget? }`. These are structurally incompatible.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Discriminated union: add `type?: 'participate' | 'delegate'` (default 'participate')",
+              "description": "Existing shape becomes the 'participate' variant; old parsed decisions stay valid because `type` is optional and defaults. Clean forward; minor existing-test churn."
+            },
+            {
+              "id": "b",
+              "label": "Sibling field: keep AgentDecision as-is, add `delegate?: DelegateRequest` alongside on the turn payload",
+              "description": "Zero changes to AgentDecision shape; delegate becomes orthogonal data on TurnEvent / coordinator decision result. Simpler diff but lets agents emit both at once (semantic ambiguity)."
+            },
+            {
+              "id": "c",
+              "label": "Replace AgentDecision with a true discriminated union (`type: 'participate' | 'delegate'`, required)",
+              "description": "Cleanest typing, but breaks every consumer reading `decision.selectedRole` directly. Public-API breaking change for v0.4.0."
+            },
+            {
+              "id": "d",
+              "label": "Custom — describe in chat-more",
+              "description": ""
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-02",
+          "title": "How does a coordinator agent emit a delegate decision in its model output?",
+          "context": "src/runtime/decisions.ts:3 `parseAgentDecision(output)` parses the existing shape from raw model text. Coordinator currently calls it at coordinator.ts:433 and 556. Need a parsing convention that's stable, validable, and unambiguous.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Single fenced JSON block — agent emits ```json\\n{ \\\"type\\\": \\\"delegate\\\", ... }\\n``` and parser dispatches by `type`",
+              "description": "Symmetric with current parser approach; one path; easy to validate. Agents must learn one schema."
+            },
+            {
+              "id": "b",
+              "label": "Two distinct sentinels — separate fenced block kind (e.g. ```delegate) for sub-run requests",
+              "description": "Visually distinct; parser can early-exit. More to teach the model; risks divergence between protocols."
+            },
+            {
+              "id": "c",
+              "label": "Tool-call style — a built-in `delegate` runtime tool the coordinator invokes via the existing tools.ts surface",
+              "description": "Reuses tool dispatch, structured args, validation. But conceptually it's NOT a tool (no caller policy, returns a Result). Could mislead users about scope."
+            },
+            {
+              "id": "d",
+              "label": "Custom — describe in chat-more",
+              "description": ""
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-03",
+          "title": "Can a single coordinator turn emit BOTH a participate-contribution AND a delegate request?",
+          "context": "Phase 3 introduces concurrent sibling delegates (`maxConcurrentChildren`, default 4) — that's N delegates in one turn. Phase 1 just needs to nail single-decision-per-turn semantics for now, but the answer locks the parsing contract.",
+          "options": [
+            {
+              "id": "a",
+              "label": "One decision per turn — turn is EITHER participate OR delegate, never both. Multiple delegates allowed as an array of delegates only.",
+              "description": "Cleanest mental model. Phase 3's 'N delegates per turn' becomes `[delegate, delegate, ...]` not `[contribution, delegate, delegate]`. Forces coordinator to think in distinct turns."
+            },
+            {
+              "id": "b",
+              "label": "Mixed — agent can contribute text AND fan out delegates in the same turn",
+              "description": "More expressive; coordinator can 'announce then dispatch'. But complicates trace ordering: does subRun start before/after the contribution event?"
+            },
+            {
+              "id": "c",
+              "label": "Defer to Phase 3 — Phase 1 locks single-delegate-per-turn; Phase 3 decides multi",
+              "description": "Keeps Phase 1 small. Risk: Phase 3 finds the parser shape forces a breaking change."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "sub-run-events",
+      "title": "Sub-Run Event Shape",
+      "questions": [
+        {
+          "id": "Q-04",
+          "title": "Where do subRun.* events sit in the RunEvent union?",
+          "context": "src/types/events.ts:458 defines RunEvent as a discriminated union. Adding `subRun.started | subRun.completed | subRun.failed` is locked by src/tests/event-schema.test.ts (TRACE-04) so the shape is a public-surface decision.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Three separate event types: `sub-run-started`, `sub-run-completed`, `sub-run-failed` (kebab-case to match `model-request`, `agent-turn`)",
+              "description": "Matches the existing naming convention exactly. Three discriminants in the union. Easy to filter."
+            },
+            {
+              "id": "b",
+              "label": "One event `sub-run` with a `phase: 'started' | 'completed' | 'failed'` field",
+              "description": "Fewer top-level union members; consumers branch on a sub-field. Mismatches the current 'one type per event' convention."
+            },
+            {
+              "id": "c",
+              "label": "Match roadmap text literally: `subRun.started` / `subRun.completed` / `subRun.failed` (dotted, camel)",
+              "description": "Reads naturally but breaks the existing kebab convention. Worse for consistency than (a)."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-05",
+          "title": "What goes in the sub-run-started payload?",
+          "context": "Roadmap success criteria #3 names: child runId, parent decision id, protocol, intent. Question is what else — depth? parent runId? requested model? requested budget? — versus keeping the started event minimal and putting full inputs in the embedded trace at completion.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Minimal: `{ childRunId, parentRunId, parentDecisionId, protocol, intent, depth }`",
+              "description": "Just enough to demux a live stream and reconstruct the parent→child link. Inputs (model, budget) are visible in the embedded child trace at completion."
+            },
+            {
+              "id": "b",
+              "label": "Full inputs: minimal + `{ requestedModel, effectiveModel, requestedBudget, effectiveBudget }`",
+              "description": "Live consumers see the resolved model/budget without waiting for completion. More fields locked in the public schema; more migration cost."
+            },
+            {
+              "id": "c",
+              "label": "Minimal + `requestPayload` (the validated DelegateRequest object)",
+              "description": "Single field carries everything the agent asked for; effective values still inferable from child trace. Most compact growth path."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-06",
+          "title": "What does sub-run-completed embed — full child trace, or trace + a summary projection?",
+          "context": "TRACE-02 says 'child's full JSON-serializable trace inline'. Embedding the whole trace is necessary for replay. Question is whether to also surface a top-level summary so consumers don't have to walk the embedded trace for common fields.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Trace only: `{ childRunId, parentRunId, parentDecisionId, trace: Trace }`",
+              "description": "Minimal; consumers project what they need. Output, accounting, transcript all live inside `trace`. Smallest schema commitment."
+            },
+            {
+              "id": "b",
+              "label": "Trace + projection: above + `{ output, accounting, transcriptCount, durationMs }` duplicated at the event top level",
+              "description": "Ergonomic for live observers; redundant in the trace artifact. Two sources of truth must be kept consistent."
+            },
+            {
+              "id": "c",
+              "label": "Trace + caller-facing 'subResult': `{ childRunId, ..., subResult: RunResult }` where RunResult already bundles output/accounting/transcript/trace",
+              "description": "Reuses the existing public RunResult shape — what `Dogpile.run()` returns. Coordinators already know this shape. One canonical projection, no duplication."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-07",
+          "title": "What goes in sub-run-failed when the child throws?",
+          "context": "Phase 4 owns full error escalation (ERROR-01..03), but Phase 1 must lock the failed-event shape. The child error is a DogpileError with `code`, `providerId?`, `detail?`. The roadmap says 'with the child error'.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Serialized DogpileError fields: `{ childRunId, parentRunId, error: { code, message, providerId?, detail? } }`",
+              "description": "JSON-serializable (traces must round-trip). Lossless for replay. No partial trace embedded."
+            },
+            {
+              "id": "b",
+              "label": "Above + `partialTrace`: any events the child emitted before failing, embedded for forensics",
+              "description": "Best for debugging; bigger payload; partial-trace shape becomes a locked schema concern."
+            },
+            {
+              "id": "c",
+              "label": "Above + `escalationContext` field reserved-but-empty for Phase 4 to populate",
+              "description": "Pre-allocates the slot Phase 4 needs (ERROR-02 'surface to coordinator's next decision'). Avoids a Phase 4 schema bump."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "b",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "replay",
+      "title": "Replay Semantics",
+      "questions": [
+        {
+          "id": "Q-08",
+          "title": "How does replay() detect 'embedded child trace, do not re-execute'?",
+          "context": "TRACE-03 requires `Dogpile.replay(parentTrace)` to NOT invoke any provider, including for nested children. Today src/runtime/coordinator.ts:92 already uses `createReplayTraceProtocolDecision`. The new wrinkle: when the parent trace contains a `delegate` decision, replay must rehydrate from the embedded child trace instead of dispatching.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Replay engine walks parent events; on `sub-run-completed`, calls `replay(embeddedTrace)` recursively and records the result; no protocol dispatch",
+              "description": "Symmetric: replay handles delegates the same way it handles model calls — by reading the recorded event. Single recursion path."
+            },
+            {
+              "id": "b",
+              "label": "Coordinator's replay decision provider intercepts `delegate` decisions and short-circuits to embedded trace lookup keyed by parent decision id",
+              "description": "Keeps replay logic local to coordinator. More moving parts; needs an embedded-trace index built from the parent events."
+            },
+            {
+              "id": "c",
+              "label": "Replay reconstructs the child RunResult from the trace embedded in `sub-run-completed` and feeds it back without invoking child engine at all",
+              "description": "Most direct: child trace IS the replay output, no recursive replay() call. Skips child event re-emission unless we explicitly re-emit them on the parent stream."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-09",
+          "title": "On replay, are child events re-emitted on the parent stream, or just the sub-run-* wrapper events?",
+          "context": "Phase 4 (STREAM-01) introduces wrapping child events with `parentRunId` for live runs. Phase 1's replay must produce 'identical event sequence to the original run' (TRACE-03). If the original live run bubbled child events, replay must too.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Replay emits exactly the parent's recorded event sequence — sub-run-started, sub-run-completed, that's it",
+              "description": "Phase 1 leaves child-event bubbling for Phase 4. Replay parity holds because Phase 1 hasn't bubbled either. When Phase 4 ships bubbling, both live and replay paths emit child events."
+            },
+            {
+              "id": "b",
+              "label": "Replay always replays the embedded child trace's events between sub-run-started and sub-run-completed",
+              "description": "Replay is more verbose than the original Phase 1 live run (which doesn't bubble). Breaks 'identical event sequence' until Phase 4."
+            },
+            {
+              "id": "c",
+              "label": "Defer — Phase 4 will define this when bubbling lands",
+              "description": "Phase 1 trace ONLY contains sub-run-* on parent; replay matches. Phase 4 must update both live + replay together."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-10",
+          "title": "Cost and accounting on replay — recompute from embedded child trace, or trust the recorded numbers?",
+          "context": "Parent accounting must equal sum of self + children (Phase 2 BUDGET-03). Phase 1 just needs replay to reproduce the original numbers exactly. Replay() today already trusts recorded provider responses.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Trust the embedded child trace's `accounting` block verbatim; sum into parent",
+              "description": "Lossless and fast. If an embedded trace was tampered with, replay reflects that — same as today's replay trust model."
+            },
+            {
+              "id": "b",
+              "label": "Recompute child accounting by re-walking embedded provider events; verify it matches recorded",
+              "description": "Defense-in-depth. Slower. Useful for catching a corrupted trace. Might be overkill for an SDK that already trusts recorded model responses."
+            },
+            {
+              "id": "c",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "b",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "defaults",
+      "title": "Defaults & Inheritance",
+      "questions": [
+        {
+          "id": "Q-11",
+          "title": "When the agent omits `model` from the delegate, what does the child use?",
+          "context": "DELEGATE-02 says 'child model = parent model if omitted'. The parent coordinator was constructed with a specific provider+model. Question: does 'parent model' mean the coordinator's configured provider object verbatim, or just the model id (re-resolved against the engine-level provider registry)?",
+          "options": [
+            {
+              "id": "a",
+              "label": "Inherit the parent coordinator's `ConfiguredModelProvider` object verbatim — same instance, same baseURL, same auth",
+              "description": "Zero ambiguity; same provider runs the child. Caller can't accidentally swap out auth/baseURL. Couples child run lifecycle to parent provider lifecycle."
+            },
+            {
+              "id": "b",
+              "label": "Inherit by `provider.id` and look up against the engine's provider list, re-binding to the current registration",
+              "description": "Allows engine-level provider swaps mid-run. More machinery; more failure modes (provider gone? error code?)."
+            },
+            {
+              "id": "c",
+              "label": "Caller must declare allowed child providers at engine construction; child resolves by id from that allowlist",
+              "description": "Explicit; safe. Adds a new top-level config field. More work for callers."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-12",
+          "title": "How is 'parent's remaining budget' computed for child default?",
+          "context": "DELEGATE-02 + Phase 2 say child budget defaults to parent's REMAINING. The parent budget has timeoutMs (wall clock) and possibly cost/token caps. 'Remaining' is well-defined for time but trickier for cost (ongoing parent calls compete with child).",
+          "options": [
+            {
+              "id": "a",
+              "label": "Time only: child inherits `timeoutMs = parent.deadline - now`; cost is unbounded unless explicitly set",
+              "description": "Simple. Matches Phase 2 BUDGET-02 'remaining time'. Cost roll-up still happens, just no cost cap unless caller sets one. Avoids cost-budget contention math entirely."
+            },
+            {
+              "id": "b",
+              "label": "Time + cost: child inherits remaining time AND remaining cost (parent budget minus already-spent)",
+              "description": "Tighter safety; requires Phase 1 to coordinate with Phase 2's cost roll-up. Risk of children starving each other in a fan-out. Need to define if remaining is divided or just capped."
+            },
+            {
+              "id": "c",
+              "label": "Time + cost + per-child cap: child gets remaining time, and `remaining_cost / maxConcurrentChildren` for cost",
+              "description": "Best behavior under fan-out; most complex. Phase 3 owns concurrency so this couples Phase 1 to Phase 3."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-13",
+          "title": "Is the default `maxDepth = 4` configurable per-engine, per-run, or both?",
+          "context": "Roadmap locks default at 4. Question is the surface: does it live on `createEngine({ maxDepth })`, on `pile({ ..., maxDepth })`, or both? Today engine config is the durable knob; per-run options exist for things like `tier`.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Engine-level only: `createEngine({ ..., maxDepth: 4 })`. Per-run inherits.",
+              "description": "One canonical knob. Caller can't blow past it for one risky run. Matches how most safety limits feel right."
+            },
+            {
+              "id": "b",
+              "label": "Both: engine sets ceiling, per-run can lower (never raise) it",
+              "description": "Flexible without escape hatch. Enforcement adds a min() check at run start."
+            },
+            {
+              "id": "c",
+              "label": "Per-run only: every `pile()` declares its own",
+              "description": "Explicit per call; risky default story (callers forget). Doesn't match the 'safety limit' feel."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "b",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "validation",
+      "title": "Validation & Limits",
+      "questions": [
+        {
+          "id": "Q-14",
+          "title": "When is depth-overflow detected — at decision parse time, or at sub-run start?",
+          "context": "DELEGATE-04 says 'exceeding maxDepth throws DogpileError'. Roadmap success criteria #2 says 'BEFORE any child run starts'. There's still a sequencing choice: throw inside the coordinator's decision-handling loop (synchronous with parse), or throw inside the engine's sub-run dispatcher (right before child engine spins up).",
+          "options": [
+            {
+              "id": "a",
+              "label": "Validate at decision-handling time: parse → validate → if depth+1 > maxDepth, throw before any sub-run-started event is emitted",
+              "description": "No partial trace; cleanest semantics. Parent error trace shows only the decision and the validation throw."
+            },
+            {
+              "id": "b",
+              "label": "Validate at sub-run dispatcher: emit sub-run-started, then throw, then emit sub-run-failed with `code: invalid-configuration`",
+              "description": "Symmetric event flow (every delegate gets started+completed/failed pair). Error appears as a child failure. More permissive event schema."
+            },
+            {
+              "id": "c",
+              "label": "Validate at both points (defense in depth)",
+              "description": "Parser catches obvious cases; dispatcher catches races (e.g., concurrent depth changes). More code, same outcome."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-15",
+          "title": "Where in DogpileError.detail does `path` point to for an invalid delegate payload?",
+          "context": "DELEGATE-03 says `DogpileError({ code: 'invalid-configuration', detail.path })`. The existing error convention (validation.ts) uses dot-paths like `'protocol.agents[2].systemPrompt'`. Question: what's the canonical path root for a delegate decision?",
+          "options": [
+            {
+              "id": "a",
+              "label": "Path rooted at the decision: `decision.protocol`, `decision.intent`, `decision.budget.timeoutMs`",
+              "description": "Self-contained; consistent with how callers think about the AgentDecision they parsed."
+            },
+            {
+              "id": "b",
+              "label": "Path rooted at the trace location: `events[42].decision.protocol` or `turn[3].decision.protocol`",
+              "description": "Locates the bad decision in the run's history. More useful for debugging multi-turn runs; longer paths."
+            },
+            {
+              "id": "c",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-16",
+          "title": "What happens if a delegate names `protocol: 'coordinator'` and the child's coordinator emits its own delegate at depth N+1?",
+          "context": "Roadmap success criteria #1 lists `coordinator` as a valid delegate target. Recursive coordinator delegates are explicitly in scope. Question is whether any recursive nesting needs special handling beyond depth counting.",
+          "options": [
+            {
+              "id": "a",
+              "label": "No special handling — recursive coordinator delegate is just normal nesting; depth counter increments; everything else identical",
+              "description": "Simplest. Implementation is symmetric across the four protocols."
+            },
+            {
+              "id": "b",
+              "label": "Same handling, but emit a hint/warning event for diagnostic visibility (`sub-run-started.recursive: true`)",
+              "description": "Helps users spot accidental recursion in traces. Adds a field to lock in the schema."
+            },
+            {
+              "id": "c",
+              "label": "Block intra-coordinator recursive delegate without explicit `allowRecursiveCoordinator: true` opt-in flag",
+              "description": "Safety rail against runaway recursion. Defeats some intended use cases (manager-of-managers). Not worth it given depth cap exists."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "b",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "feedback",
+      "title": "Decision Context Feedback",
+      "questions": [
+        {
+          "id": "Q-17",
+          "title": "How is the child's RunResult presented back to the coordinator's NEXT prompt?",
+          "context": "DELEGATE-02 says child result 'returns to the coordinator's next decision context'. The coordinator builds prompts from the running transcript (coordinator.ts). The result includes `output`, `accounting`, `transcript`, `trace`. Pumping the entire trace into the next prompt would explode tokens.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Inject child `output` (final synthesized text) only, prefixed with a marker like `[sub-run <id> output]: ...`",
+              "description": "Smallest token cost. Coordinator sees what the sub-run produced; loses internal reasoning. Mirrors how a manager reads a report, not a full transcript."
+            },
+            {
+              "id": "b",
+              "label": "Inject `output` + brief stats line (turns, costUsd, durationMs)",
+              "description": "Output plus operational visibility for cost-aware coordinators. Still small. Stats line shape becomes a soft contract."
+            },
+            {
+              "id": "c",
+              "label": "Inject `output` + a one-line digest per child transcript entry (`<agent>: <first 120 chars>`)",
+              "description": "Coordinator sees who said what at a glance. Token cost scales with child transcript length. Useful for synthesizing across siblings; risk of bleed."
+            },
+            {
+              "id": "d",
+              "label": "Caller-supplied projector: `delegate: { resultProjector?: (result: RunResult) => string }` engine option, default = output-only",
+              "description": "Most flexible; lets product teams tune. Adds a config knob. Default still simple."
+            },
+            {
+              "id": "e",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "b",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-18",
+          "title": "Does the coordinator receive each delegate result as a synthetic transcript entry, or as a system-style preamble on the next user turn?",
+          "context": "Coordinator turns alternate between agent contributions and synthesis. The child result needs to land somewhere visible to the next decision parse. Two clean placements; the choice affects how the agent perceives provenance.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Synthetic transcript entry: append a `TranscriptEntry { agentId: 'sub-run:<childId>', role: 'delegate-result', input: '<delegate request>', output: '<projected result>' }`",
+              "description": "Replay-stable; visible in transcript artifact; coordinator sees it via normal prompt construction. Adds a new role string to the transcript vocabulary."
+            },
+            {
+              "id": "b",
+              "label": "System preamble: prepend a system-message-like block to the coordinator's next prompt, NOT recorded in transcript (only in trace events)",
+              "description": "Keeps transcript pure agent-produced. Coordinator still sees it. Replay must reconstruct the preamble from sub-run-completed events."
+            },
+            {
+              "id": "c",
+              "label": "Both: transcript entry for replay/inspection AND a structured tag in the next prompt",
+              "description": "Belt and suspenders. Some redundancy; clearest provenance."
+            },
+            {
+              "id": "d",
+              "label": "Custom",
+              "description": ""
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    }
+  ]
+}

@@ -161,6 +161,76 @@ Use `sequential` for ordinary product flows, `broadcast` when independent
 opinions matter, `shared` when a common state snapshot matters, and
 `coordinator` when you want explicit manager-worker structure.
 
+## Recursive Coordination
+
+<!-- When the delegate surface changes, update both this section and docs/recursive-coordination.md. Reference material lives in docs/recursive-coordination-reference.md to avoid drift. -->
+
+Coordinator agents can dispatch a whole sub-mission as part of a plan turn by
+emitting a `delegate` decision. The runtime executes the sub-run as a real
+Dogpile run; its trace embeds in the parent's trace, and budgets, aborts, cost
+roll-up, and child-failure context propagate across the run tree.
+
+```ts
+if (decision.type === "delegate") {
+  // protocol: "sequential" | "broadcast" | "shared" | "coordinator"
+  // intent:   the sub-mission's mission text
+  // model?:   optional provider id assertion; child inherits parent provider
+  // budget?:  optional timeout clamp; cannot exceed parent's remaining time
+}
+```
+
+The four-protocol list is unchanged. `delegate` is a parser-level concern on
+the `coordinator` protocol's plan turn, so ordinary callers still choose from
+`sequential`, `broadcast`, `shared`, and `coordinator`.
+
+### Defaults
+
+- `maxDepth` defaults to `4`. A per-run option can only lower the engine
+  ceiling; depth overflow fails before the child starts.
+- `maxConcurrentChildren` defaults to `4`. A per-run or per-decision value can
+  only lower the engine ceiling.
+- Local-provider tree members force effective child concurrency to `1`. The
+  run records a `sub-run-concurrency-clamped` event instead of writing to the
+  console.
+- `defaultSubRunTimeoutMs` is used only when neither the parent deadline nor
+  the per-decision budget pins a child timeout.
+- `onChildFailure` defaults to `"continue"`, which gives the coordinator a
+  follow-up plan turn. Use `"abort"` when a real child failure should stop the
+  parent immediately.
+
+```ts
+const result = await Dogpile.pile({
+  intent: "Coordinate a release review with delegated research.",
+  protocol: "coordinator",
+  model,
+  maxDepth: 3,
+  maxConcurrentChildren: 2,
+  defaultSubRunTimeoutMs: 20_000,
+  onChildFailure: "continue"
+});
+```
+
+### When to use delegate
+
+Reach for `delegate` when a coordinator plan turn naturally decomposes into a
+self-contained sub-mission whose result feeds the next plan turn. Common cases
+are coordinator-of-coordinators flows, a `broadcast` evidence-gathering pass
+before synthesis, or a focused sequential audit after a larger plan is drafted.
+
+Avoid delegate for one-shot worker tasks. If a worker can answer in the current
+coordinator turn, emit `participate` or end the run instead. Children are
+internal in v0.4.0; callers observe them through `sub-run-*` events, embedded
+traces, and live `parentRunIds` ancestry on bubbled stream events.
+
+### See also
+
+- [`recursive-coordination.md`](./recursive-coordination.md) — concept page,
+  propagation rules, `parentRunIds` chain, structured failures, replay parity,
+  and a worked example.
+- [`recursive-coordination-reference.md`](./recursive-coordination-reference.md)
+  — event payloads, error vocabulary, option precedence, replay literals, and
+  provider locality classification.
+
 ## Streaming
 
 `Dogpile.stream()` starts immediately and returns an async iterable handle. The

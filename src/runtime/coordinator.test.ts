@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { createDeterministicCoordinatorTestMission } from "../internal.js";
-import { Dogpile, run, runtimeToolManifest, stream } from "../index.js";
+import {
+  Dogpile,
+  DogpileError,
+  createEngine,
+  convergence,
+  evaluateTermination,
+  run,
+  runtimeToolManifest,
+  stream
+} from "../index.js";
 import type {
   AgentSpec,
   ConfiguredModelProvider,
@@ -9,7 +18,9 @@ import type {
   ModelRequest,
   ModelResponse,
   RunEvent,
-  RuntimeTool
+  RunResult,
+  RuntimeTool,
+  TerminationEvaluationContext
 } from "../index.js";
 
 describe("coordinator protocol", () => {
@@ -466,3 +477,1679 @@ function rejectAfter(ms: number, message: string): Promise<never> {
     setTimeout(() => reject(new Error(message)), ms);
   });
 }
+
+const PARTICIPATE_OUTPUT = [
+  "role_selected: coordinator",
+  "participation: contribute",
+  "rationale: synthesize after sub-run",
+  "contribution:",
+  "synthesized after sub-run"
+].join("\n");
+
+function delegateBlock(payload: unknown): string {
+  return [
+    "delegate:",
+    "```json",
+    JSON.stringify(payload),
+    "```",
+    ""
+  ].join("\n");
+}
+
+interface ScriptedProviderOptions {
+  readonly id?: string;
+  readonly planResponses: readonly string[];
+  readonly workerResponse?: string;
+  readonly finalResponse?: string;
+  readonly recordedRequests?: ModelRequest[];
+  readonly providerSpy?: { received?: ConfiguredModelProvider };
+}
+
+/**
+ * Provider whose plan-phase responses are scripted in order. Worker and
+ * final-synthesis phases return a fixed safe text. Used by the delegate
+ * scenario tests.
+ */
+function createScriptedCoordinatorProvider(opts: ScriptedProviderOptions): ConfiguredModelProvider {
+  let planIndex = 0;
+  const provider: ConfiguredModelProvider = {
+    id: opts.id ?? "scripted-coordinator-model",
+    async generate(request: ModelRequest): Promise<ModelResponse> {
+      opts.recordedRequests?.push(request);
+      const phase = String(request.metadata.phase);
+      let text: string;
+      if (phase === "plan") {
+        text = opts.planResponses[planIndex] ?? PARTICIPATE_OUTPUT;
+        planIndex += 1;
+      } else if (phase === "worker") {
+        text = opts.workerResponse ?? "worker output";
+      } else {
+        text = opts.finalResponse ?? "final output";
+      }
+      return {
+        text,
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        costUsd: 0
+      };
+    }
+  };
+  return provider;
+}
+
+interface ConcurrencyProbe {
+  inFlight: number;
+  maxInFlight: number;
+}
+
+interface LocalityScriptedProviderOptions extends ScriptedProviderOptions {
+  readonly locality: "local" | "remote";
+  readonly concurrency?: ConcurrencyProbe;
+}
+
+function createConcurrencyProbe(): ConcurrencyProbe {
+  return {
+    inFlight: 0,
+    maxInFlight: 0
+  };
+}
+
+function createLocalityScriptedProvider(opts: LocalityScriptedProviderOptions): ConfiguredModelProvider {
+  let planIndex = 0;
+  return {
+    id: opts.id ?? `${opts.locality}-scripted-coordinator-model`,
+    metadata: { locality: opts.locality },
+    async generate(request: ModelRequest): Promise<ModelResponse> {
+      opts.recordedRequests?.push(request);
+      const phase = String(request.metadata.phase);
+      const protocol = String(request.metadata.protocol);
+      if (protocol === "sequential") {
+        if (opts.concurrency !== undefined) {
+          opts.concurrency.inFlight += 1;
+          opts.concurrency.maxInFlight = Math.max(opts.concurrency.maxInFlight, opts.concurrency.inFlight);
+          await delay(5);
+          opts.concurrency.inFlight -= 1;
+        }
+        return { text: "child output", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+
+      let text: string;
+      if (phase === "plan") {
+        text = opts.planResponses[planIndex] ?? PARTICIPATE_OUTPUT;
+        planIndex += 1;
+      } else if (phase === "worker") {
+        text = opts.workerResponse ?? "worker output";
+      } else {
+        text = opts.finalResponse ?? "final output";
+      }
+      return {
+        text,
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        costUsd: 0
+      };
+    }
+  };
+}
+
+interface FailureContextProviderOptions {
+  readonly id: string;
+  readonly failureIntents: ReadonlySet<string>;
+  readonly planResponses: readonly string[];
+  readonly recordedRequests?: ModelRequest[];
+  readonly detailReasons?: ReadonlyMap<string, string>;
+}
+
+function createFailureContextProvider(opts: FailureContextProviderOptions): ConfiguredModelProvider {
+  let planIndex = 0;
+  return {
+    id: opts.id,
+    async generate(request: ModelRequest): Promise<ModelResponse> {
+      opts.recordedRequests?.push(request);
+      const phase = String(request.metadata.phase);
+      const protocol = String(request.metadata.protocol);
+      if (protocol === "sequential") {
+        const intent = String(request.messages.find((message) => message.role === "user")?.content ?? "");
+        const failingIntent = [...opts.failureIntents].find((candidate) => intent.includes(candidate));
+        if (failingIntent !== undefined) {
+          throw new DogpileError({
+            code: "provider-timeout",
+            message: `${failingIntent} exploded`,
+            providerId: opts.id,
+            retryable: false,
+            ...(opts.detailReasons?.has(failingIntent)
+              ? { detail: { reason: opts.detailReasons.get(failingIntent)! } }
+              : {})
+          });
+        }
+        return {
+          text: `child output for ${intent}`,
+          usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },
+          costUsd: 0.003
+        };
+      }
+      if (phase === "plan") {
+        return {
+          text: opts.planResponses[planIndex++] ?? PARTICIPATE_OUTPUT,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          costUsd: 0
+        };
+      }
+      return { text: "final output", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+    }
+  };
+}
+
+function extractFailuresSection(prompt: string): JsonObject[] {
+  const match = /## Sub-run failures since last decision\n\n```json\n(?<json>[\s\S]*?)\n```/u.exec(prompt);
+  if (!match?.groups?.["json"]) {
+    return [];
+  }
+  return JSON.parse(match.groups["json"]) as JsonObject[];
+}
+
+function createMinimalChildResult(output: string, modelProviderId: string): RunResult {
+  const cost = { usd: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  return {
+    output,
+    eventLog: {
+      kind: "run-event-log",
+      runId: `child-${output}`,
+      protocol: "sequential",
+      eventTypes: [],
+      eventCount: 0,
+      events: []
+    },
+    trace: {
+      schemaVersion: "1.0",
+      runId: `child-${output}`,
+      protocol: "sequential",
+      tier: "fast",
+      modelProviderId,
+      agentsUsed: [],
+      inputs: {
+        intent: output,
+        protocol: "sequential",
+        tier: "fast",
+        modelProviderId,
+        agents: [],
+        tools: [],
+        temperature: 0.5
+      },
+      budget: {},
+      budgetStateChanges: [],
+      seed: {},
+      protocolDecisions: [],
+      providerCalls: [],
+      finalOutput: { output },
+      events: [],
+      transcript: []
+    },
+    transcript: [],
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    metadata: {
+      runId: `child-${output}`,
+      protocol: "sequential",
+      tier: "fast",
+      modelProviderId,
+      agentsUsed: [],
+      startedAt: new Date(0).toISOString(),
+      completedAt: new Date(0).toISOString(),
+      durationMs: 0
+    },
+    accounting: {
+      budget: {},
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      cost
+    },
+    cost
+  } as unknown as RunResult;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+describe("coordinator delegate dispatch", () => {
+  it("adds transcript enrichment for real child failures", async () => {
+    const planRequests: ModelRequest[] = [];
+    const provider = createFailureContextProvider({
+      id: "failure-transcript-enrichment-model",
+      failureIntents: new Set(["fail first child"]),
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "fail first child" },
+          { protocol: "sequential", intent: "succeed second child" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ],
+      recordedRequests: planRequests
+    });
+
+    await run({
+      intent: "Surface child failure context.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 2
+    });
+
+    const followUpPrompt = planRequests
+      .filter((request) => request.metadata.phase === "plan")[1]
+      ?.messages.find((message) => message.role === "user")?.content ?? "";
+
+    expect(followUpPrompt).toMatch(
+      /\[sub-run [^\]]+ failed \| code=provider-timeout \| spent=\$0\.000\]: fail first child exploded/u
+    );
+  });
+
+  it("renders structured failures section with only prompt-safe fields", async () => {
+    const planRequests: ModelRequest[] = [];
+    const provider = createFailureContextProvider({
+      id: "structured-failures-section-model",
+      failureIntents: new Set(["fail with reason", "fail without reason"]),
+      detailReasons: new Map([["fail with reason", "fixture-reason"]]),
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "fail with reason" },
+          { protocol: "sequential", intent: "fail without reason" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ],
+      recordedRequests: planRequests
+    });
+
+    await run({
+      intent: "Render structured failure context.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 2
+    });
+
+    const followUpPrompt = planRequests
+      .filter((request) => request.metadata.phase === "plan")[1]
+      ?.messages.find((message) => message.role === "user")?.content ?? "";
+    const failures = extractFailuresSection(followUpPrompt);
+
+    expect(followUpPrompt).toContain("## Sub-run failures since last decision");
+    expect(failures).toHaveLength(2);
+    expect(failures[0]).toEqual({
+      childRunId: expect.any(String),
+      intent: "fail with reason",
+      error: {
+        code: "provider-timeout",
+        message: "fail with reason exploded",
+        detail: { reason: "fixture-reason" }
+      },
+      partialCost: { usd: 0 }
+    });
+    expect(failures[1]).toEqual({
+      childRunId: expect.any(String),
+      intent: "fail without reason",
+      error: {
+        code: "provider-timeout",
+        message: "fail without reason exploded"
+      },
+      partialCost: { usd: 0 }
+    });
+    for (const failure of failures) {
+      expect(Object.keys(failure).sort()).toEqual(["childRunId", "error", "intent", "partialCost"]);
+      expect(failure).not.toHaveProperty("partialTrace");
+    }
+  });
+
+  it("omits empty failures section when the most recent dispatch wave succeeds", async () => {
+    const planRequests: ModelRequest[] = [];
+    const provider = createFailureContextProvider({
+      id: "empty-failures-section-model",
+      failureIntents: new Set(),
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "succeed first child" },
+          { protocol: "sequential", intent: "succeed second child" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ],
+      recordedRequests: planRequests
+    });
+
+    await run({
+      intent: "Avoid happy-path prompt noise.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 2
+    });
+
+    const followUpPrompt = planRequests
+      .filter((request) => request.metadata.phase === "plan")[1]
+      ?.messages.find((message) => message.role === "user")?.content ?? "";
+
+    expect(followUpPrompt).not.toContain("## Sub-run failures since last decision");
+  });
+
+  it("synthetic exclusion keeps sibling-failed failures out of the structured failures section", async () => {
+    const planRequests: ModelRequest[] = [];
+    const provider = createFailureContextProvider({
+      id: "synthetic-exclusion-model",
+      failureIntents: new Set(["fail first child"]),
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "fail first child" },
+          { protocol: "sequential", intent: "queued synthetic sibling" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ],
+      recordedRequests: planRequests
+    });
+
+    await run({
+      intent: "Exclude synthetic failure bookkeeping.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 1
+    });
+
+    const followUpPrompt = planRequests
+      .filter((request) => request.metadata.phase === "plan")[1]
+      ?.messages.find((message) => message.role === "user")?.content ?? "";
+    const failures = extractFailuresSection(followUpPrompt);
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      intent: "fail first child",
+      error: {
+        code: "provider-timeout",
+        message: "fail first child exploded"
+      },
+      partialCost: { usd: 0 }
+    });
+  });
+
+  it("abort short-circuit skips the next plan turn after a real child failure", async () => {
+    const planRequests: ModelRequest[] = [];
+    const provider = createFailureContextProvider({
+      id: "abort-short-circuit-model",
+      failureIntents: new Set(["fail first child"]),
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "fail first child" },
+          { protocol: "sequential", intent: "succeed second child" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ],
+      recordedRequests: planRequests
+    });
+
+    await expect(run({
+      intent: "Abort after child failure.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 2,
+      onChildFailure: "abort"
+    })).rejects.toMatchObject({
+      code: "provider-timeout",
+      message: "fail first child exploded"
+    });
+
+    expect(planRequests.filter((request) => request.metadata.phase === "plan")).toHaveLength(1);
+  });
+
+  it("continue mode is unaffected and carries child failures into the next prompt", async () => {
+    const planRequests: ModelRequest[] = [];
+    const provider = createFailureContextProvider({
+      id: "continue-unaffected-model",
+      failureIntents: new Set(["fail first child"]),
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "fail first child" },
+          { protocol: "sequential", intent: "succeed second child" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ],
+      recordedRequests: planRequests
+    });
+
+    await run({
+      intent: "Continue after child failure.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 2
+    });
+
+    const planPrompts = planRequests.filter((request) => request.metadata.phase === "plan");
+    expect(planPrompts).toHaveLength(2);
+    expect(planPrompts[1]?.messages.find((message) => message.role === "user")?.content).toContain(
+      "## Sub-run failures since last decision"
+    );
+  });
+
+  it("default continue mode carries a single child failure into the next prompt", async () => {
+    const planRequests: ModelRequest[] = [];
+    const provider = createFailureContextProvider({
+      id: "single-child-continue-model",
+      failureIntents: new Set(["fail only child"]),
+      planResponses: [
+        delegateBlock({ protocol: "sequential", intent: "fail only child" }),
+        PARTICIPATE_OUTPUT
+      ],
+      recordedRequests: planRequests
+    });
+
+    await run({
+      intent: "Continue after one child failure by default.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+
+    const planPrompts = planRequests.filter((request) => request.metadata.phase === "plan");
+    const followUpPrompt = planPrompts[1]?.messages.find((message) => message.role === "user")?.content ?? "";
+
+    expect(planPrompts).toHaveLength(2);
+    expect(followUpPrompt).toContain("## Sub-run failures since last decision");
+    expect(followUpPrompt).toContain("fail only child exploded");
+  });
+
+  it("abort short-circuit snapshots the first observed triggering failure", async () => {
+    const planRequests: ModelRequest[] = [];
+    const provider = createFailureContextProvider({
+      id: "abort-first-triggering-failure-model",
+      failureIntents: new Set(["fail first child", "fail second child"]),
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "fail first child" },
+          { protocol: "sequential", intent: "fail second child" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ],
+      recordedRequests: planRequests
+    });
+
+    await expect(run({
+      intent: "Snapshot first child failure.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 2,
+      onChildFailure: "abort"
+    })).rejects.toMatchObject({
+      code: "provider-timeout",
+      message: "fail first child exploded"
+    });
+    expect(planRequests.filter((request) => request.metadata.phase === "plan")).toHaveLength(1);
+  });
+
+  it("fans out delegate arrays and queues delegates beyond maxConcurrentChildren", async () => {
+    const provider = createScriptedCoordinatorProvider({
+      id: "delegate-fanout-queue-model",
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "child 0" },
+          { protocol: "sequential", intent: "child 1" },
+          { protocol: "sequential", intent: "child 2" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "Fan out bounded delegates.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 1
+    });
+
+    const queued = result.trace.events.filter((event) => event.type === "sub-run-queued");
+    const started = result.trace.events.filter((event) => event.type === "sub-run-started");
+    const completed = result.trace.events.filter((event) => event.type === "sub-run-completed");
+
+    expect(queued).toHaveLength(2);
+    expect(started).toHaveLength(3);
+    expect(completed).toHaveLength(3);
+    expect(queued.map((event) => event.type === "sub-run-queued" ? event.queuePosition : -1)).toEqual([0, 1]);
+    expect(started.map((event) => event.type === "sub-run-started" ? event.parentDecisionArrayIndex : -1)).toEqual([0, 1, 2]);
+    expect(completed.map((event) => event.type === "sub-run-completed" ? event.parentDecisionArrayIndex : -1)).toEqual([0, 1, 2]);
+  });
+
+  it("dispatches a delegate to sequential and threads result back into the next coordinator prompt", async () => {
+    const planRequests: ModelRequest[] = [];
+    const childProtocolSeen: string[] = [];
+    const provider = createScriptedCoordinatorProvider({
+      id: "delegate-happy-path-model",
+      planResponses: [
+        delegateBlock({ protocol: "sequential", intent: "investigate the slow path" }),
+        PARTICIPATE_OUTPUT
+      ],
+      recordedRequests: planRequests
+    });
+
+    // Wrap so we can observe child requests too.
+    const originalGenerate = provider.generate.bind(provider);
+    const trackedProvider: ConfiguredModelProvider = {
+      id: provider.id,
+      async generate(request) {
+        const protocol = String(request.metadata.protocol);
+        childProtocolSeen.push(protocol);
+        return originalGenerate(request);
+      }
+    };
+
+    const result = await run({
+      intent: "Run a coordinator that delegates once.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: trackedProvider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+
+    const subRunStarted = result.trace.events.filter((event) => event.type === "sub-run-started");
+    const subRunCompleted = result.trace.events.filter((event) => event.type === "sub-run-completed");
+    expect(subRunStarted).toHaveLength(1);
+    expect(subRunCompleted).toHaveLength(1);
+
+    const startEvent = subRunStarted[0];
+    if (startEvent?.type !== "sub-run-started") throw new Error("expected sub-run-started");
+    expect(startEvent.protocol).toBe("sequential");
+    expect(startEvent.intent).toBe("investigate the slow path");
+    expect(startEvent.depth).toBe(1);
+    // D-16: NOT recursive when child protocol is sequential.
+    expect("recursive" in startEvent).toBe(false);
+
+    // Sub-run-started precedes sub-run-completed in event order.
+    const startIndex = result.trace.events.indexOf(startEvent);
+    const completedIndex = result.trace.events.findIndex((event) => event.type === "sub-run-completed");
+    expect(startIndex).toBeLessThan(completedIndex);
+
+    // Synthetic D-18 transcript entry exists.
+    const subRunEntry = result.transcript.find((entry) => entry.role === "delegate-result");
+    expect(subRunEntry).toBeDefined();
+    expect(subRunEntry?.agentId).toMatch(/^sub-run:/u);
+
+    // D-17 tagged text appeared in a follow-up plan request.
+    const followUpPlanRequest = planRequests.filter((request) => String(request.metadata.phase) === "plan")[1];
+    const userMessage = followUpPlanRequest?.messages.find((message) => message.role === "user")?.content ?? "";
+    expect(userMessage).toContain(`[sub-run ${startEvent.childRunId}]`);
+    expect(userMessage).toContain(`[sub-run ${startEvent.childRunId} stats]`);
+
+    // Child invoked through the same provider id (D-11).
+    expect(childProtocolSeen).toContain("sequential");
+
+    // Trace round-trips through JSON.
+    expect(JSON.parse(JSON.stringify(result.trace))).toEqual(result.trace);
+  });
+
+  it("emits sub-run-failed with a partialTrace built from the child emit buffer", async () => {
+    const provider: ConfiguredModelProvider = {
+      id: "delegate-failure-model",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+        if (protocol === "sequential") {
+          // Child run path. After role-assignment events fire, throw.
+          throw new DogpileError({
+            code: "provider-timeout",
+            message: "Child sequential run timed out for the test.",
+            providerId: "delegate-failure-model",
+            retryable: false
+          });
+        }
+        if (phase === "plan") {
+          return {
+            text: delegateBlock({ protocol: "sequential", intent: "force a child failure" }),
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            costUsd: 0
+          };
+        }
+        return {
+          text: "should not reach",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          costUsd: 0
+        };
+      }
+    };
+
+    const failure = await run({
+      intent: "Run a coordinator whose delegate child fails.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      onChildFailure: "abort"
+    }).then(
+      (result) => ({ ok: true as const, result }),
+      (error: unknown) => ({ ok: false as const, error })
+    );
+
+    expect(failure.ok).toBe(false);
+    if (failure.ok) throw new Error("expected failure");
+    expect(DogpileError.isInstance(failure.error)).toBe(true);
+    if (!DogpileError.isInstance(failure.error)) throw new Error("not a DogpileError");
+    expect(failure.error.code).toBe("provider-timeout");
+  });
+
+  it("captures partialTrace from buffered tee for sub-run-failed events", async () => {
+    const subRunFailedEvents: RunEvent[] = [];
+    const provider: ConfiguredModelProvider = {
+      id: "delegate-failure-tee-model",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+        if (protocol === "sequential") {
+          throw new DogpileError({
+            code: "provider-timeout",
+            message: "Child sequential run timed out for the test.",
+            providerId: "delegate-failure-tee-model",
+            retryable: false
+          });
+        }
+        if (phase === "plan") {
+          return {
+            text: delegateBlock({ protocol: "sequential", intent: "force a child failure" }),
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            costUsd: 0
+          };
+        }
+        return { text: "should not reach", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const handle = stream({
+      intent: "Stream a coordinator whose delegate child fails so we can inspect the failure event.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      onChildFailure: "abort"
+    });
+    handle.subscribe((event) => {
+      if ((event as RunEvent).type === "sub-run-failed") {
+        subRunFailedEvents.push(event as RunEvent);
+      }
+    });
+
+    await handle.result.catch(() => {});
+
+    expect(subRunFailedEvents).toHaveLength(1);
+    const failEvent = subRunFailedEvents[0];
+    if (failEvent?.type !== "sub-run-failed") throw new Error("expected sub-run-failed");
+    expect(failEvent.error.code).toBe("provider-timeout");
+    const failedDecision = failEvent.error.detail?.["failedDecision"] as JsonObject | undefined;
+    expect(failedDecision).toBeDefined();
+    expect(failedDecision?.["protocol"]).toBe("sequential");
+    expect(failedDecision?.["intent"]).toBe("force a child failure");
+    // partialTrace contains the child events emitted before the throw (the
+    // child emits role-assignment events before invoking the model).
+    expect(failEvent.partialTrace.events.length).toBeGreaterThan(0);
+    expect(failEvent.partialTrace.runId).toBe(failEvent.childRunId);
+    // Every buffered child event shares the same internal runId (one child run).
+    const childInternalRunIds = new Set(failEvent.partialTrace.events.map((event) => event.runId));
+    expect(childInternalRunIds.size).toBe(1);
+  });
+
+  it("sets recursive: true when the child protocol is also coordinator", async () => {
+    const provider = createScriptedCoordinatorProvider({
+      id: "delegate-recursive-model",
+      planResponses: [
+        delegateBlock({ protocol: "coordinator", intent: "delegate to a child coordinator" }),
+        PARTICIPATE_OUTPUT,
+        // The recursive child coordinator's plan turn — also needs a response.
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "Recursive coordinator delegate.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+
+    const subRunStarted = result.trace.events.find((event) => event.type === "sub-run-started");
+    if (subRunStarted?.type !== "sub-run-started") throw new Error("expected sub-run-started");
+    expect(subRunStarted.protocol).toBe("coordinator");
+    expect(subRunStarted.recursive).toBe(true);
+  });
+
+  it("inherits parent provider object reference verbatim into the child run", async () => {
+    const seenProviders: ConfiguredModelProvider[] = [];
+    let planIndex = 0;
+    const planResponses = [
+      delegateBlock({ protocol: "sequential", intent: "child reuses parent provider" }),
+      PARTICIPATE_OUTPUT
+    ];
+    const provider: ConfiguredModelProvider = {
+      id: "delegate-provider-inheritance-model",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        seenProviders.push(provider);
+        const phase = String(request.metadata.phase);
+        const text =
+          phase === "plan" ? (planResponses[planIndex++] ?? PARTICIPATE_OUTPUT)
+          : phase === "worker" ? "worker output"
+          : "final output";
+        return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const result = await run({
+      intent: "Provider inheritance.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+
+    expect(seenProviders.length).toBeGreaterThan(0);
+    expect(seenProviders.every((seen) => Object.is(seen, provider))).toBe(true);
+    // Child runs were observed (sub-run-completed exists).
+    expect(result.trace.events.some((event) => event.type === "sub-run-completed")).toBe(true);
+  });
+
+  it("rejects delegate decisions with a model id that does not match the parent provider before any sub-run-started event is emitted", async () => {
+    const provider = createScriptedCoordinatorProvider({
+      id: "delegate-model-mismatch-model",
+      planResponses: [
+        delegateBlock({
+          protocol: "sequential",
+          intent: "wrong model id",
+          model: "different-id"
+        })
+      ]
+    });
+
+    const observedEvents: string[] = [];
+    const handle = stream({
+      intent: "Model-id mismatch should throw before sub-run-started.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+    handle.subscribe((event) => observedEvents.push(event.type));
+
+    const outcome = await handle.result.then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error })
+    );
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("expected throw");
+    expect(DogpileError.isInstance(outcome.error)).toBe(true);
+    if (!DogpileError.isInstance(outcome.error)) throw new Error("not DogpileError");
+    expect(outcome.error.code).toBe("invalid-configuration");
+    expect(outcome.error.detail?.["path"]).toBe("decision.model");
+    // Crucially: sub-run-started never fired.
+    expect(observedEvents).not.toContain("sub-run-started");
+  });
+
+  it("rejects delegate decisions emitted by workers", async () => {
+    let planIndex = 0;
+    const provider: ConfiguredModelProvider = {
+      id: "worker-delegate-rejection-model",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        if (phase === "plan") {
+          const text =
+            planIndex === 0
+              ? PARTICIPATE_OUTPUT
+              : PARTICIPATE_OUTPUT;
+          planIndex += 1;
+          return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        if (phase === "worker") {
+          return {
+            text: delegateBlock({ protocol: "sequential", intent: "worker tries to delegate" }),
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            costUsd: 0
+          };
+        }
+        return { text: "final", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const outcome = await run({
+      intent: "Worker delegate rejection.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    }).then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error })
+    );
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("expected throw");
+    expect(DogpileError.isInstance(outcome.error)).toBe(true);
+    if (!DogpileError.isInstance(outcome.error)) throw new Error("not DogpileError");
+    expect(outcome.error.code).toBe("invalid-configuration");
+    expect(outcome.error.message).toContain("Phase 1");
+  });
+
+  it("trips the loop guard after MAX_DISPATCH_PER_TURN consecutive delegate decisions", async () => {
+    const provider: ConfiguredModelProvider = {
+      id: "delegate-loop-guard-model",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+        if (protocol === "sequential") {
+          // Child sequential run — return a plain participate response.
+          return {
+            text: PARTICIPATE_OUTPUT,
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            costUsd: 0
+          };
+        }
+        if (phase === "plan") {
+          return {
+            text: delegateBlock({ protocol: "sequential", intent: "loop forever" }),
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            costUsd: 0
+          };
+        }
+        return { text: "noop", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const observedEvents: RunEvent[] = [];
+    const handle = stream({
+      intent: "Loop-guard exceeded.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+    handle.subscribe((event) => observedEvents.push(event as RunEvent));
+
+    const outcome = await handle.result.then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error })
+    );
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("expected loop-guard throw");
+    expect(DogpileError.isInstance(outcome.error)).toBe(true);
+    if (!DogpileError.isInstance(outcome.error)) throw new Error("not DogpileError");
+    expect(outcome.error.code).toBe("invalid-configuration");
+    expect(outcome.error.detail?.["reason"]).toBe("loop-guard-exceeded");
+
+    // Event log shows 8 successful sub-run-started/completed pairs before the
+    // guard fired (the 9th attempt throws before sub-run-started is emitted).
+    const startedCount = observedEvents.filter((event) => event.type === "sub-run-started").length;
+    const completedCount = observedEvents.filter((event) => event.type === "sub-run-completed").length;
+    expect(startedCount).toBe(8);
+    expect(completedCount).toBe(8);
+  });
+});
+
+describe("local-provider concurrency clamp (Phase 3 CONCURRENCY-02)", () => {
+  it("clamps to 1 and emits subRun.concurrencyClamped when a local provider is in the active tree", async () => {
+    const concurrency = createConcurrencyProbe();
+    const provider = createLocalityScriptedProvider({
+      id: "local-clamp-fanout-model",
+      locality: "local",
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "child 0" },
+          { protocol: "sequential", intent: "child 1" },
+          { protocol: "sequential", intent: "child 2" },
+          { protocol: "sequential", intent: "child 3" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ],
+      concurrency
+    });
+
+    const result = await run({
+      intent: "Clamp local provider fan-out.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 4
+    });
+
+    const clampEvents = result.trace.events.filter((event) => event.type === "sub-run-concurrency-clamped");
+    const queuedEvents = result.trace.events.filter((event) => event.type === "sub-run-queued");
+
+    expect(clampEvents).toHaveLength(1);
+    expect(clampEvents[0]).toMatchObject({
+      requestedMax: 4,
+      effectiveMax: 1,
+      reason: "local-provider-detected",
+      providerId: "local-clamp-fanout-model"
+    });
+    expect(queuedEvents.length).toBeGreaterThanOrEqual(3);
+    expect(concurrency.maxInFlight).toBe(1);
+  });
+
+  it("does NOT re-emit clamp event on a second plan-turn fan-out within the same run", async () => {
+    const provider = createLocalityScriptedProvider({
+      id: "local-clamp-once-model",
+      locality: "local",
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "turn 1 child 0" },
+          { protocol: "sequential", intent: "turn 1 child 1" }
+        ]),
+        delegateBlock([
+          { protocol: "sequential", intent: "turn 2 child 0" },
+          { protocol: "sequential", intent: "turn 2 child 1" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "Clamp once across multiple fan-out turns.",
+      protocol: { kind: "coordinator", maxTurns: 3 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 4
+    });
+
+    expect(result.trace.events.filter((event) => event.type === "sub-run-concurrency-clamped")).toHaveLength(1);
+    expect(result.trace.events.filter((event) => event.type === "sub-run-started")).toHaveLength(4);
+  });
+
+  it("does NOT emit clamp event when active provider is remote", async () => {
+    const provider = createLocalityScriptedProvider({
+      id: "remote-no-clamp-model",
+      locality: "remote",
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "remote child 0" },
+          { protocol: "sequential", intent: "remote child 1" },
+          { protocol: "sequential", intent: "remote child 2" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "Do not clamp remote provider.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 3
+    });
+
+    expect(result.trace.events.filter((event) => event.type === "sub-run-concurrency-clamped")).toHaveLength(0);
+  });
+
+  it("isolates clamp flag per run on a shared engine", async () => {
+    const localProvider = createLocalityScriptedProvider({
+      id: "shared-engine-local-model",
+      locality: "local",
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "local child 0" },
+          { protocol: "sequential", intent: "local child 1" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+    const remoteProvider = createLocalityScriptedProvider({
+      id: "shared-engine-remote-model",
+      locality: "remote",
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "remote child 0" },
+          { protocol: "sequential", intent: "remote child 1" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+    const agents = [
+      { id: "lead", role: "coordinator" },
+      { id: "worker-a", role: "worker" }
+    ] as const;
+    const localEngine = createEngine({
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: localProvider,
+      agents,
+      maxConcurrentChildren: 4
+    });
+    const remoteEngine = createEngine({
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: remoteProvider,
+      agents,
+      maxConcurrentChildren: 4
+    });
+
+    const [localResult, remoteResult] = await Promise.all([
+      localEngine.run("Local shared-engine run."),
+      remoteEngine.run("Remote shared-engine run.")
+    ]);
+
+    const totalClampEvents = [
+      ...localResult.trace.events,
+      ...remoteResult.trace.events
+    ].filter((event) => event.type === "sub-run-concurrency-clamped");
+    expect(localResult.trace.events.filter((event) => event.type === "sub-run-concurrency-clamped")).toHaveLength(1);
+    expect(remoteResult.trace.events.filter((event) => event.type === "sub-run-concurrency-clamped")).toHaveLength(0);
+    expect(totalClampEvents).toHaveLength(1);
+  });
+
+  it("explicit maxConcurrentChildren override is silently clamped", async () => {
+    const provider = createLocalityScriptedProvider({
+      id: "local-silent-override-clamp-model",
+      locality: "local",
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "override child 0" },
+          { protocol: "sequential", intent: "override child 1" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "Silently clamp explicit local-provider maxConcurrentChildren override.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxConcurrentChildren: 8
+    });
+
+    const clampEvents = result.trace.events.filter((event) => event.type === "sub-run-concurrency-clamped");
+    expect(clampEvents).toHaveLength(1);
+    expect(clampEvents[0]).toMatchObject({
+      requestedMax: 8,
+      effectiveMax: 1,
+      reason: "local-provider-detected",
+      providerId: "local-silent-override-clamp-model"
+    });
+  });
+
+  it("applies default maxConcurrentChildren=4 for direct runCoordinator delegate fan-out", async () => {
+    const { runCoordinator } = await import("../runtime/coordinator.js");
+    const concurrency = createConcurrencyProbe();
+    const observedEvents: RunEvent[] = [];
+    const provider = createScriptedCoordinatorProvider({
+      id: "direct-default-concurrency-model",
+      planResponses: [
+        delegateBlock([
+          { protocol: "sequential", intent: "child 0" },
+          { protocol: "sequential", intent: "child 1" },
+          { protocol: "sequential", intent: "child 2" },
+          { protocol: "sequential", intent: "child 3" },
+          { protocol: "sequential", intent: "child 4" },
+          { protocol: "sequential", intent: "child 5" }
+        ]),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await runCoordinator({
+      intent: "Direct runCoordinator default concurrency.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      tools: [],
+      temperature: 0.5,
+      emit(event: RunEvent): void {
+        observedEvents.push(event);
+      },
+      runProtocol: async (input): Promise<RunResult> => {
+        concurrency.inFlight += 1;
+        concurrency.maxInFlight = Math.max(concurrency.maxInFlight, concurrency.inFlight);
+        await delay(5);
+        concurrency.inFlight -= 1;
+        return createMinimalChildResult(input.intent, input.model.id);
+      }
+    });
+
+    expect(concurrency.maxInFlight).toBe(4);
+    expect(observedEvents.filter((event) => event.type === "sub-run-queued")).toHaveLength(2);
+    expect(result.trace.events.filter((event) => event.type === "sub-run-concurrency-clamped")).toHaveLength(0);
+    expect(JSON.parse(JSON.stringify(result.trace))).toEqual(result.trace);
+  });
+});
+
+describe("BUDGET-02 sub-run timeout / deadline propagation", () => {
+  it("clamps decision.budget.timeoutMs that exceeds parent's remaining and emits sub-run-budget-clamped before sub-run-started", async () => {
+    // Parent has a 1000ms tree-wide deadline. Child decision asks for 5000ms.
+    // Even when dispatch happens immediately (remainingMs ≈ 1000), the
+    // decision exceeds the parent's remaining and must be clamped to ≤ 1000ms,
+    // with `sub-run-budget-clamped` emitted on the parent trace BEFORE
+    // `sub-run-started`. The clamp event captures requestedTimeoutMs=5000 and
+    // clampedTimeoutMs <= 1000.
+    const provider = createScriptedCoordinatorProvider({
+      id: "budget-02-clamp-event-model",
+      planResponses: [
+        delegateBlock({
+          protocol: "sequential",
+          intent: "child whose decision-level timeout exceeds parent remaining",
+          budget: { timeoutMs: 5000 }
+        }),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "Verify clamp emits sub-run-budget-clamped before sub-run-started.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      budget: { timeoutMs: 1000 }
+    });
+
+    const clampEvents = result.trace.events.filter((event) => event.type === "sub-run-budget-clamped");
+    const startedEvents = result.trace.events.filter((event) => event.type === "sub-run-started");
+    expect(clampEvents).toHaveLength(1);
+    expect(startedEvents).toHaveLength(1);
+
+    const clampEvent = clampEvents[0];
+    if (clampEvent?.type !== "sub-run-budget-clamped") throw new Error("expected sub-run-budget-clamped");
+    expect(clampEvent.requestedTimeoutMs).toBe(5000);
+    expect(clampEvent.clampedTimeoutMs).toBeLessThanOrEqual(1000);
+    expect(clampEvent.clampedTimeoutMs).toBeGreaterThan(0);
+    expect(clampEvent.reason).toBe("exceeded-parent-remaining");
+
+    // Ordering: the clamp event must appear BEFORE sub-run-started in the trace.
+    const clampIndex = result.trace.events.indexOf(clampEvent);
+    const startedIndex = result.trace.events.findIndex((event) => event.type === "sub-run-started");
+    expect(clampIndex).toBeGreaterThanOrEqual(0);
+    expect(startedIndex).toBeGreaterThan(clampIndex);
+
+    // Sub-run-started must reference the same childRunId as the clamp event.
+    const startedEvent = startedEvents[0];
+    if (startedEvent?.type !== "sub-run-started") throw new Error("expected sub-run-started");
+    expect(clampEvent.childRunId).toBe(startedEvent.childRunId);
+
+    // Trace round-trips through JSON (locks the variant on a real run shape).
+    expect(JSON.parse(JSON.stringify(result.trace))).toEqual(result.trace);
+  });
+
+  it("does NOT emit sub-run-budget-clamped on the happy path (decision within parent remaining)", async () => {
+    const provider = createScriptedCoordinatorProvider({
+      id: "budget-02-no-clamp-model",
+      planResponses: [
+        delegateBlock({
+          protocol: "sequential",
+          intent: "child whose decision-level timeout fits parent remaining",
+          budget: { timeoutMs: 100 }
+        }),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "Verify happy path skips sub-run-budget-clamped.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      budget: { timeoutMs: 5000 }
+    });
+
+    expect(result.trace.events.some((event) => event.type === "sub-run-budget-clamped")).toBe(false);
+    expect(result.trace.events.some((event) => event.type === "sub-run-started")).toBe(true);
+  });
+
+  it("zero-remaining gate throws code: aborted with detail.reason 'timeout' BEFORE sub-run-started", async () => {
+    // Drive `runCoordinator` directly with `parentDeadlineMs` set in the past
+    // so the zero-remaining gate fires deterministically. This exercises the
+    // gate without entanglement with the engine-level setTimeout(timeoutMs)
+    // path that would otherwise abort the whole tree first.
+    const { runCoordinator } = await import("../runtime/coordinator.js");
+    const observedEvents: RunEvent[] = [];
+    const provider: ConfiguredModelProvider = {
+      id: "budget-02-zero-remaining-direct",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        if (phase === "plan") {
+          return {
+            text: delegateBlock({ protocol: "sequential", intent: "should not start" }),
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            costUsd: 0
+          };
+        }
+        return {
+          text: phase === "worker" ? "worker output" : "final output",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          costUsd: 0
+        };
+      }
+    };
+
+    const outcome = await runCoordinator({
+      intent: "Direct coordinator run with already-elapsed parentDeadlineMs.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      tools: [],
+      temperature: 0.5,
+      parentDeadlineMs: Date.now() - 10_000,
+      onChildFailure: "abort",
+      runProtocol: async () => {
+        throw new Error("runProtocol must NOT be called when zero-remaining gate fires");
+      },
+      emit(event: RunEvent): void {
+        observedEvents.push(event);
+      }
+    }).then(
+      (result) => ({ ok: true as const, result }),
+      (error: unknown) => ({ ok: false as const, error })
+    );
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("expected zero-remaining gate to throw");
+    expect(DogpileError.isInstance(outcome.error)).toBe(true);
+    if (!DogpileError.isInstance(outcome.error)) throw new Error("not DogpileError");
+    expect(outcome.error.code).toBe("aborted");
+    expect(outcome.error.detail?.["reason"]).toBe("timeout");
+    expect(outcome.error.message).toContain("Parent deadline elapsed");
+    // Crucially: sub-run-started never fired.
+    expect(observedEvents.some((event) => event.type === "sub-run-started")).toBe(false);
+    expect(observedEvents.some((event) => event.type === "sub-run-budget-clamped")).toBe(false);
+  });
+
+  it("defaultSubRunTimeoutMs precedence: applies when neither parent nor decision specifies a timeout", async () => {
+    const childBudgetsSeen: Array<number | undefined> = [];
+    const provider = createScriptedCoordinatorProvider({
+      id: "budget-02-default-precedence-model",
+      planResponses: [
+        delegateBlock({ protocol: "sequential", intent: "no decision-level budget" }),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+    // Spy on child sub-run-completed events to inspect the actual budget the
+    // child run executed under (via the embedded child trace).
+    const result = await run({
+      intent: "Verify defaultSubRunTimeoutMs is applied when neither parent nor decision specifies.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      defaultSubRunTimeoutMs: 7777
+    });
+
+    for (const event of result.trace.events) {
+      if (event.type === "sub-run-completed") {
+        childBudgetsSeen.push(event.subResult.trace.budget.caps?.timeoutMs);
+      }
+    }
+    expect(childBudgetsSeen).toHaveLength(1);
+    expect(childBudgetsSeen[0]).toBe(7777);
+  });
+
+  it("BUDGET-03 / D-01: rolls up sub-run cost into parent's totalCost BEFORE emitting sub-run-completed (Test G)", async () => {
+    // Lock the ordering invariant: the agent-turn emitted AFTER a successful
+    // sub-run-completed shows a cost that includes the child's subResult.cost.
+    // This proves recordSubRunCost was invoked BEFORE the next cost-bearing
+    // parent event, preserving the existing "last cost-bearing event ===
+    // final.cost" invariant.
+    const provider = createScriptedCoordinatorProvider({
+      id: "budget-03-rollup-ordering-model",
+      planResponses: [
+        delegateBlock({ protocol: "sequential", intent: "child via sequential for ordering test" }),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+    const result = await run({
+      intent: "BUDGET-03 ordering: parent dispatches once, then participates.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+
+    const events = result.trace.events;
+    const completedIndex = events.findIndex((event) => event.type === "sub-run-completed");
+    expect(completedIndex).toBeGreaterThanOrEqual(0);
+    const completedEvent = events[completedIndex];
+    if (completedEvent?.type !== "sub-run-completed") throw new Error("expected sub-run-completed");
+
+    // Find the next cost-bearing parent event after sub-run-completed.
+    let nextCostEvent: RunEvent | undefined;
+    for (let i = completedIndex + 1; i < events.length; i++) {
+      const event = events[i];
+      if (event === undefined) continue;
+      if (
+        event.type === "agent-turn" ||
+        event.type === "broadcast" ||
+        event.type === "final" ||
+        event.type === "budget-stop"
+      ) {
+        nextCostEvent = event;
+        break;
+      }
+    }
+    expect(nextCostEvent).toBeDefined();
+    if (
+      nextCostEvent === undefined ||
+      (nextCostEvent.type !== "agent-turn" &&
+        nextCostEvent.type !== "broadcast" &&
+        nextCostEvent.type !== "final" &&
+        nextCostEvent.type !== "budget-stop")
+    ) {
+      throw new Error("expected cost-bearing event after sub-run-completed");
+    }
+
+    // The cost on the NEXT cost-bearing parent event must be ≥ the child's
+    // subResult.cost. (Strictly greater because the parent also makes its own
+    // model call between sub-run-completed and the next agent-turn.)
+    const childUsd = completedEvent.subResult.cost.usd;
+    expect(nextCostEvent.cost.usd).toBeGreaterThanOrEqual(childUsd);
+
+    // And the final.cost === parent's recorded accounting.cost (existing
+    // invariant from D-01).
+    const finalEvent = events.at(-1);
+    if (finalEvent?.type !== "final") throw new Error("expected final");
+    expect(finalEvent.cost).toEqual(result.accounting.cost);
+  });
+
+  it("defaultSubRunTimeoutMs is IGNORED when the parent has a budget.timeoutMs (parent's remaining wins)", async () => {
+    const provider = createScriptedCoordinatorProvider({
+      id: "budget-02-default-ignored-model",
+      planResponses: [
+        delegateBlock({ protocol: "sequential", intent: "parent budget wins" }),
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "Verify defaultSubRunTimeoutMs is ignored when parent has a budget.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      budget: { timeoutMs: 2000 },
+      defaultSubRunTimeoutMs: 99_999
+    });
+
+    const completed = result.trace.events.find((event) => event.type === "sub-run-completed");
+    if (completed?.type !== "sub-run-completed") throw new Error("expected sub-run-completed");
+    const childTimeoutMs = completed.subResult.trace.budget.caps?.timeoutMs;
+    // Parent's remaining (≤ 2000ms) wins; engine default of 99_999 must not leak through.
+    expect(childTimeoutMs).toBeDefined();
+    expect(childTimeoutMs).toBeLessThanOrEqual(2000);
+    expect(childTimeoutMs).not.toBe(99_999);
+  });
+
+  // BUDGET-04 / D-16: minTurns / minRounds floors apply per-protocol-instance.
+  // The evaluator (termination.ts protocolTerminationFloor / protocolMinTurns)
+  // reads protocol.minTurns from the protocol config object passed in
+  // `TerminationEvaluationContext.protocolConfig`. Per-instance config
+  // naturally means per-instance floors — same protocol kind in parent vs
+  // child carries different floors because they are different config objects.
+  //
+  // Plan-pseudocode reframed (inline correction): the plan's "child sequential
+  // minTurns: 5" is unreachable via delegate decision JSON (only `budget` is
+  // forwardable; `minTurns` lives on ProtocolConfig). We split D-16 into two
+  // layers: (a) a unit-level test on `evaluateTermination` proving each
+  // protocolConfig instance produces its own floor decision; and (b) an
+  // integration test proving the parent's floor is honored despite a
+  // delegate intervention.
+  it("minTurns floors apply per-protocol-instance — parent and child are independent (unit-level evaluator lock)", () => {
+    // Two protocolConfig instances with different minTurns. Same protocol
+    // KIND ("sequential" + convergence condition) — only the per-instance
+    // floor differs. The evaluator must produce independent decisions.
+    const condition = convergence({ stableTurns: 2, minSimilarity: 1 });
+    const stableTranscript = [
+      {
+        agentId: "agent-1",
+        role: "planner",
+        input: "first",
+        output: "stable answer"
+      },
+      {
+        agentId: "agent-2",
+        role: "critic",
+        input: "second",
+        output: "stable answer"
+      },
+      {
+        agentId: "agent-3",
+        role: "synthesizer",
+        input: "third",
+        output: "stable answer"
+      }
+    ] as const;
+
+    function ctx(
+      protocolConfig: { kind: "sequential"; minTurns?: number; maxTurns?: number },
+      iteration: number
+    ): TerminationEvaluationContext {
+      return {
+        runId: `run-${protocolConfig.minTurns ?? "none"}`,
+        protocol: "sequential",
+        protocolConfig,
+        tier: "fast",
+        cost: { usd: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        events: [],
+        transcript: stableTranscript.slice(0, iteration),
+        iteration,
+        protocolIteration: iteration
+      };
+    }
+
+    // Parent instance: minTurns=3. At iteration=2 the floor blocks even
+    // though convergence would otherwise fire (stable transcript).
+    const parentCfg = { kind: "sequential" as const, minTurns: 3, maxTurns: 5 };
+    expect(evaluateTermination(condition, ctx(parentCfg, 2))).toEqual({ type: "continue", condition });
+
+    // Child instance: minTurns=5. At iteration=3 the parent's floor would
+    // be SATISFIED, but the child's higher floor still blocks. Same kind,
+    // different config object = different floor decision = per-instance
+    // semantics confirmed.
+    const childCfg = { kind: "sequential" as const, minTurns: 5, maxTurns: 10 };
+    expect(evaluateTermination(condition, ctx(childCfg, 3))).toEqual({ type: "continue", condition });
+
+    // And: child's higher floor does NOT raise the parent's effective floor.
+    // At iteration=3 with parentCfg, convergence fires (floor satisfied).
+    const parentDecisionAt3 = evaluateTermination(condition, ctx(parentCfg, 3));
+    expect(parentDecisionAt3.type).toBe("stop");
+  });
+
+  it("BUDGET-04 / D-16: parent's minTurns floor is honored despite a delegate intervention (integration)", async () => {
+    // Parent coordinator: minTurns=3 + convergence(stableTurns:2). Without
+    // the floor, convergence would fire at iteration=2 (two stable plan
+    // turns). With the floor, the parent must reach 3 transcript entries.
+    // The delegate dispatch contributes 1 transcript entry (the synthetic
+    // delegate-result per Phase 1 D-18); the parent's own iterations must
+    // continue until the floor is satisfied.
+    const provider = createScriptedCoordinatorProvider({
+      id: "budget-04-d16-integration-model",
+      planResponses: [
+        delegateBlock({ protocol: "sequential", intent: "child runs independently" }),
+        PARTICIPATE_OUTPUT,
+        PARTICIPATE_OUTPUT,
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "BUDGET-04 D-16: parent's floor is honored despite delegate.",
+      protocol: { kind: "coordinator", minTurns: 3, maxTurns: 5 },
+      tier: "fast",
+      terminate: convergence({ stableTurns: 2, minSimilarity: 1 }),
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+
+    // Parent's transcript must satisfy parent's floor (>= 3 entries).
+    expect(result.transcript.length).toBeGreaterThanOrEqual(3);
+
+    // Exactly one delegate-result entry was contributed by the sub-run.
+    const delegateResults = result.transcript.filter(
+      (entry) => entry.role === "delegate-result"
+    );
+    expect(delegateResults).toHaveLength(1);
+  });
+
+  // BUDGET-04 / D-17 (explicit must_have lock): a successful sub-run produces
+  // exactly one synthetic transcript entry with `role: "delegate-result"` and
+  // `agentId: "sub-run:<childRunId>"` matching the sub-run-completed event.
+  // That entry counts as exactly one parent iteration in transcript-length-
+  // based termination math (per termination.ts:449-451 protocolProgress).
+  it("sub-run-completed counts as exactly one parent iteration via synthetic transcript entry (D-17 explicit lock)", async () => {
+    // Parent minTurns=2: after the delegate (1 transcript entry from the
+    // synthetic delegate-result), the parent needs at least 1 more own
+    // iteration to satisfy the floor. The scripted plan supplies a
+    // PARTICIPATE_OUTPUT for that follow-up turn.
+    const provider = createScriptedCoordinatorProvider({
+      id: "budget-04-d17-model",
+      planResponses: [
+        delegateBlock({ protocol: "sequential", intent: "single delegate" }),
+        PARTICIPATE_OUTPUT,
+        PARTICIPATE_OUTPUT
+      ]
+    });
+
+    const result = await run({
+      intent: "BUDGET-04 D-17: synthetic delegate-result counts as one iteration.",
+      protocol: { kind: "coordinator", minTurns: 2, maxTurns: 4 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ]
+    });
+
+    // Exactly one delegate-result entry exists (per Phase 1 D-18).
+    const delegateResults = result.transcript.filter(
+      (entry) => entry.role === "delegate-result"
+    );
+    expect(delegateResults).toHaveLength(1);
+
+    // Exactly one transcript entry has agentId starting with "sub-run:"
+    // (the synthetic entry).
+    const subRunEntries = result.transcript.filter((entry) =>
+      entry.agentId.startsWith("sub-run:")
+    );
+    expect(subRunEntries).toHaveLength(1);
+
+    // The single delegate-result entry's agentId matches the actual
+    // childRunId from the sub-run-completed event.
+    const subRunCompletedEvent = result.trace.events.find(
+      (event) => event.type === "sub-run-completed"
+    );
+    if (subRunCompletedEvent?.type !== "sub-run-completed") {
+      throw new Error("expected sub-run-completed event");
+    }
+    expect(delegateResults[0]?.agentId).toBe(`sub-run:${subRunCompletedEvent.childRunId}`);
+
+    // Parent transcript counts: 1 delegate-result + at least 1 own
+    // participate turn (to satisfy minTurns=2). Confirms the synthetic
+    // entry was counted as exactly one iteration toward the floor.
+    expect(result.transcript.length).toBeGreaterThanOrEqual(2);
+
+    // The non-delegate-result entries are the parent's own own contributions.
+    const ownEntries = result.transcript.filter(
+      (entry) => entry.role !== "delegate-result"
+    );
+    expect(ownEntries.length).toBeGreaterThanOrEqual(1);
+  });
+});

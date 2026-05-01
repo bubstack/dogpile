@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Phase 3: Provider Locality & Bounded Concurrency — Questions</title>
+<style>
+  :root { --bg:#fafafa; --card:#fff; --muted:#64748b; --line:#e2e8f0; --green:#22c55e; --green-bg:#f0fdf4; --orange:#f97316; --text:#0f172a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: var(--text); background: var(--bg); }
+  header { position: sticky; top: 0; z-index: 10; background: #fff; border-bottom: 1px solid var(--line); padding: 16px 24px; }
+  h1 { margin: 0 0 8px; font-size: 18px; }
+  .stats { display: flex; gap: 16px; align-items: center; font-size: 13px; color: var(--muted); }
+  .progress { flex: 1; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; max-width: 360px; }
+  .progress > div { height: 100%; background: var(--green); width: 0%; transition: width .2s; }
+  .actions { display: flex; gap: 8px; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); background: #fff; border-radius: 6px; cursor: pointer; }
+  button.primary { background: var(--text); color: #fff; border-color: var(--text); }
+  main { padding: 16px 24px 64px; max-width: 1400px; margin: 0 auto; }
+  section { margin-top: 24px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; cursor: pointer; padding: 8px 0; border-bottom: 1px solid var(--line); user-select: none; }
+  .section-head h2 { margin: 0; font-size: 15px; }
+  .section-head .count { font-size: 12px; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; padding-top: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; background: var(--card); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .card.answered { border: 2px solid var(--green); background: var(--green-bg); }
+  .card .id { font: 11px/1 ui-monospace, monospace; color: var(--muted); letter-spacing: .5px; }
+  .card h3 { margin: 0; font-size: 14px; }
+  .card .ctx { font-size: 12px; color: var(--muted); font-style: italic; }
+  .opt { display: flex; gap: 8px; padding: 6px; border-radius: 4px; cursor: pointer; }
+  .opt:hover { background: rgba(0,0,0,.03); }
+  .opt input { margin-top: 3px; }
+  .opt .lbl { font-weight: 600; }
+  .opt .desc { font-size: 12px; color: var(--muted); }
+  textarea { width: 100%; min-height: 48px; font: inherit; padding: 6px; border: 1px solid var(--line); border-radius: 4px; resize: vertical; }
+  textarea.has-content { border: 2px solid var(--orange); }
+  .save-banner { padding: 8px 12px; background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; margin-top: 12px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Phase 3: Provider Locality &amp; Bounded Concurrency — Discussion Questions</h1>
+  <div class="stats">
+    <span><strong id="stat-answered">0</strong> / <span id="stat-total">18</span> answered</span>
+    <div class="progress"><div id="progress-fill"></div></div>
+    <span><span id="stat-remaining">18</span> remaining · <span id="stat-chatmore">0</span> notes</span>
+    <div class="actions" style="margin-left:auto">
+      <button id="copy-json">Copy JSON</button>
+      <button id="download-json" class="primary">Download JSON</button>
+    </div>
+  </div>
+</header>
+<main id="root"></main>
+
+<script>
+const STATE_PATH = ".planning/phases/03-provider-locality-bounded-concurrency/03-QUESTIONS.json";
+const initialState = 
+{
+  "phase": "03-provider-locality-bounded-concurrency",
+  "generated_at": "2026-04-30T00:00:00Z",
+  "stats": {
+    "total": 18,
+    "answered": 0,
+    "chat_more": 0,
+    "remaining": 18
+  },
+  "sections": [
+    {
+      "id": "provider-locality-shape",
+      "title": "Provider Locality — Type Shape & Validation",
+      "questions": [
+        {
+          "id": "Q-01",
+          "title": "Where does `locality` live on `ConfiguredModelProvider`?",
+          "context": "PROVIDER-01 says `optional locality?: \"local\" | \"remote\"`. ConfiguredModelProvider today is a tiny interface (`{ id, generate(), stream? }`) at src/types.ts:876. We need to extend it without breaking existing consumers.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Top-level optional field on ConfiguredModelProvider",
+              "description": "`readonly locality?: \"local\" | \"remote\"`. Simple, matches PROVIDER-01 verbatim. Absent value treated as `remote` for clamping (per spec). Existing custom providers don't need to change."
+            },
+            {
+              "id": "b",
+              "label": "Nested in a new `metadata?` object",
+              "description": "`readonly metadata?: { locality?: \"local\" | \"remote\" }`. Future-proofs for more provider hints (e.g., region, sandboxed) without flattening more keys onto the interface. Adds one level of indirection."
+            },
+            {
+              "id": "c",
+              "label": "Separate optional method `getLocality?(): \"local\" | \"remote\"`",
+              "description": "Lazy / dynamic — provider can return based on runtime conditions. Overkill for a static config field; rejected unless dynamic locality is a real use case."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-02",
+          "title": "Auto-detect host classification — what counts as `local`?",
+          "context": "PROVIDER-02 names loopback (`localhost`, `127/8`, `::1`) and RFC1918 (10/8, 172.16-31, 192.168/16). `createOpenAICompatibleProvider` resolves `baseURL` to a URL at openai-compatible.ts:173 — host extraction is straightforward. Open question: which additional ranges count?",
+          "options": [
+            {
+              "id": "a",
+              "label": "Spec-minimum: loopback + RFC1918 only",
+              "description": "Hosts: `localhost`, anything in `127.0.0.0/8`, `::1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`. Strictly per PROVIDER-02 wording. Predictable and easy to test."
+            },
+            {
+              "id": "b",
+              "label": "Spec-minimum + IPv6 ULA + link-local",
+              "description": "Adds `fc00::/7` (IPv6 unique-local) and `169.254.0.0/16` / `fe80::/10` (link-local). Catches more realistic LAN setups. Slightly larger surface to test."
+            },
+            {
+              "id": "c",
+              "label": "Broad heuristic: a + b + `*.local` mDNS hostnames",
+              "description": "Bonjour-style `myhost.local` resolves on LAN; treating it as local matches user intent for self-hosted/Ollama. Adds string-match heuristic to host parsing."
+            },
+            {
+              "id": "d",
+              "label": "Custom — tell me what additional cases matter",
+              "description": ""
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-03",
+          "title": "Where does PROVIDER-03 throw fire?",
+          "context": "PROVIDER-03: invalid `locality` value throws `DogpileError({ code: \"invalid-configuration\" })`. Two natural validation points: (1) when caller constructs the provider via `createOpenAICompatibleProvider`, (2) when the engine first uses the provider at run start.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Validate in `createOpenAICompatibleProvider` only",
+              "description": "Throw at construction for the bundled adapter. Custom user providers carry the contract responsibility themselves (typed via TS interface). Engine doesn't re-validate."
+            },
+            {
+              "id": "b",
+              "label": "Validate in the engine at run start (covers all providers)",
+              "description": "`createEngine` / `Dogpile.pile` inspects `model.locality` and throws if invalid. Catches user-implemented providers that bypass TS. Adds one more validation hook in `validation.ts`."
+            },
+            {
+              "id": "c",
+              "label": "Both — defense-in-depth",
+              "description": "Construct-time for the bundled adapter (early failure for the common path) AND engine-time for runtime safety. Mirrors Phase 1 D-14 (depth-overflow checked at parse + dispatch)."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-04",
+          "title": "Caller-supplied locality vs auto-detect precedence",
+          "context": "PROVIDER-02 says \"caller-supplied `locality` overrides auto-detection.\" Need to nail the exact semantics for `createOpenAICompatibleProvider({ baseURL: \"http://localhost:11434\", locality: \"remote\" })` etc.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Explicit always wins (including `\"remote\"` against a loopback baseURL)",
+              "description": "`locality: \"remote\"` on a localhost URL → `remote` is used. User knows best (e.g., port-forwarded remote service). No warnings. Simplest contract."
+            },
+            {
+              "id": "b",
+              "label": "Explicit wins, but emit a warning for paradoxical pairings",
+              "description": "Same as (a), but log/event when explicit `\"remote\"` contradicts auto-detected `\"local\"`. Slightly more noisy; requires a logging hook the SDK doesn't have today."
+            },
+            {
+              "id": "c",
+              "label": "Explicit `\"local\"` wins; explicit `\"remote\"` is rejected on loopback baseURL",
+              "description": "Asymmetric. Prevents accidentally treating localhost as remote (could DoS the local box)."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    },
+    {
+      "id": "concurrency-config",
+      "title": "Concurrency Configuration & Dispatch Loop",
+      "questions": [
+        {
+          "id": "Q-05",
+          "title": "Where does `maxConcurrentChildren` configure?",
+          "context": "CONCURRENCY-01: default 4. Phase 1 D-13 set the precedent for `maxDepth`: configurable at engine + per-run, per-run can only lower. Need parallel decision for concurrency.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Engine + per-run, per-run can only lower (mirror D-13)",
+              "description": "`createEngine({ maxConcurrentChildren: 8 })` sets ceiling; `Dogpile.pile({ maxConcurrentChildren: 2 })` lowers it. `effective = min(engine, run ?? Infinity)`. Consistent with maxDepth."
+            },
+            {
+              "id": "b",
+              "label": "Engine only",
+              "description": "One config knob at engine construction. Simpler. Loses per-run override."
+            },
+            {
+              "id": "c",
+              "label": "Engine + per-run + per-coordinator-decision",
+              "description": "Allow agent to declare `maxConcurrentChildren` on a single coordinator turn (e.g., the model decides 'fan out 8 of these'). Adds a third level — likely overkill for v0.4.0."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-06",
+          "title": "Does a coordinator turn produce a single delegate or an array?",
+          "context": "Phase 1 D-03 reserves the array shape: `the parser will accept an array [delegate, delegate, ...] from a single turn — never mixed with a participate contribution. Phase 1 implementation: single delegate per turn; the array shape is reserved for Phase 3.` Today coordinator.ts:190 has a sequential `while (true)` loop that re-issues the plan turn after each delegate. Phase 3 needs to enable fan-out.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Parser returns `delegate | delegate[]`; one turn can yield N delegates",
+              "description": "Update `parseAgentDecision` to accept either a single delegate object OR a fenced array of delegates. The coordinator collects them, dispatches up to `maxConcurrentChildren` in parallel, queues the rest, and feeds ALL their results into the next plan turn together."
+            },
+            {
+              "id": "b",
+              "label": "Keep one-decision-per-turn; concurrency only across consecutive turns",
+              "description": "Phase 3 lands `maxConcurrentChildren` plumbing but the coordinator still emits one delegate per plan turn (the existing sequential loop). Concurrency is reserved for callers using `Dogpile.nest` (deferred). De-scopes the parallel-fan-out value of the phase."
+            },
+            {
+              "id": "c",
+              "label": "Hybrid — parser supports array, coordinator MAY choose to emit array",
+              "description": "Same shape as (a), but also supports the existing single-delegate path. Backwards-compat with Phase 1 traces. The coordinator's prompt mentions both forms."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-07",
+          "title": "When is `sub-run-started` emitted for a queued child?",
+          "context": "If a turn yields N=8 delegates and `maxConcurrentChildren=4`, four start immediately — what about the queued four? Two natural choices: emit `sub-run-started` at queue-time (consumers see all eight at once), or at slot-acquisition time (start events interleave with completed events).",
+          "options": [
+            {
+              "id": "a",
+              "label": "Emit at slot-acquisition time (when child engine actually starts)",
+              "description": "Start event timestamp matches when the child run truly began. Replay sees a realistic interleaving. Consumers wanting a 'queued' signal can watch the parent decision event count vs sub-run-started count."
+            },
+            {
+              "id": "b",
+              "label": "Emit at queue-time + add a separate `sub-run-queued` event",
+              "description": "Three events per child in concurrency-pressured cases: `sub-run-queued` → `sub-run-started` → `sub-run-completed`. More observability but adds a new event type to lock down."
+            },
+            {
+              "id": "c",
+              "label": "Emit at queue-time only (no separate event); document that 'started' means dispatched, not running",
+              "description": "Keep the event surface flat. `sub-run-started` semantics shift slightly. Simpler but a soft contract change for Phase 1 consumers."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-08",
+          "title": "Concurrency primitive — semaphore vs Promise.all batches",
+          "context": "Implementation choice for the dispatcher: a worker-pool / semaphore that streams in completions and starts queued items as soon as a slot frees, vs naive batching (start 4, await all, start next 4).",
+          "options": [
+            {
+              "id": "a",
+              "label": "Semaphore-style streaming concurrency",
+              "description": "Maintains exactly N in-flight at all times. Better wall-clock throughput when child latencies vary. Standard pattern: `p-limit`-style or hand-rolled with a queue + counter. Dogpile is dependency-free, so hand-rolled."
+            },
+            {
+              "id": "b",
+              "label": "Naive batching (`Promise.all` over chunks of N)",
+              "description": "Simpler. Worst-case wall-clock = sum of slowest-in-each-batch. Acceptable if latencies are uniform; suboptimal if not."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-09",
+          "title": "What happens to in-flight + queued children when one fails?",
+          "context": "Coordinator-decides-on-failure is Phase 4 territory (ERROR-02), but Phase 3 still needs to choose a Phase-3 default for what happens to siblings when one child throws. Phase 2 D-09 says `sub-run-failed` always emits and partial cost rolls up.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Let in-flight finish, never start the queued ones, return ALL outcomes to coordinator",
+              "description": "Cooperative: don't abort already-running siblings (their work is paid for). Cancel the queue immediately. Coordinator's next turn sees a mix of `sub-run-completed` and `sub-run-failed` events plus a sentinel for queued-but-cancelled."
+            },
+            {
+              "id": "b",
+              "label": "Abort all siblings (in-flight + queued) on first failure",
+              "description": "Fail-fast. Saves wall time but discards in-flight work. Per-child AbortControllers from Phase 2 D-07 are already there. Loses partial progress."
+            },
+            {
+              "id": "c",
+              "label": "Let everything finish naturally (no aborting on sibling failure)",
+              "description": "All N children run to completion regardless of sibling failures. Coordinator sees full outcome set. Most permissive; defers escalation entirely to Phase 4."
+            },
+            {
+              "id": "d",
+              "label": "Defer entirely to Phase 4; pick whichever simplest behavior unblocks Phase 3 tests",
+              "description": "Document current default explicitly, leave room for Phase 4 to refine. Likely lands on (c) by accident; this option just admits it."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-10",
+          "title": "Cost roll-up and the synthetic transcript entry under concurrency",
+          "context": "Phase 1 D-18 / Phase 2 D-17 lock that `sub-run-completed` adds one synthetic transcript entry. With N concurrent completions, the order in which they land in `transcript` matters for downstream coordinator prompts.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Append in completion order (whichever child finishes first goes first in transcript)",
+              "description": "Wall-clock fidelity. Coordinator's next prompt sees the natural ordering. Replay records this order in the trace and reproduces it."
+            },
+            {
+              "id": "b",
+              "label": "Append in dispatch (decision) order, regardless of completion timing",
+              "description": "Stable / deterministic for callers. Might force the dispatcher to buffer completed children until earlier-dispatched ones finish, which masks parallelism for the prompt."
+            },
+            {
+              "id": "c",
+              "label": "Append in completion order but expose `parentDecisionId` ordering on the events for replay determinism",
+              "description": "Wall-clock for the transcript, but the trace events carry stable IDs so replay-from-trace stays deterministic without re-running. Best of both."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    },
+    {
+      "id": "local-clamping",
+      "title": "Local-Provider Clamping (CONCURRENCY-02)",
+      "questions": [
+        {
+          "id": "Q-11",
+          "title": "How is \"any provider in the active tree is local\" detected?",
+          "context": "Phase 1 D-11 says child inherits parent's provider verbatim — same instance reference. So in v0.4.0, every node in a tree has the SAME provider, and checking the parent's `model.locality === \"local\"` is sufficient. But coordinator.workers may have different agent-specific models (current types.ts:1830 has `Agent.model: ConfiguredModelProvider`).",
+          "options": [
+            {
+              "id": "a",
+              "label": "Check parent run's `options.model.locality` only",
+              "description": "Fast, no walking. Matches Phase 1's 'one provider per tree' invariant. Loses correctness if any agent in `options.agents` has a different `model` with different locality."
+            },
+            {
+              "id": "b",
+              "label": "Check parent's `options.model` + every `agent.model` in `options.agents`",
+              "description": "Walk all explicitly declared providers at run start. If ANY are local, clamp. Handles the multi-model coordinator case correctly. One-shot at run start."
+            },
+            {
+              "id": "c",
+              "label": "Re-evaluate per dispatch (covers nested coordinator with different model overrides)",
+              "description": "Most defensive but most code. Re-walks providers each delegate dispatch. Supports future caller-defined-trees (`Dogpile.nest`, deferred) where children might bring their own providers."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-12",
+          "title": "When is `subRun.concurrencyClamped` event emitted?",
+          "context": "Phase 2 D-12 sets the precedent for `subRun.budgetClamped`: emitted at the moment of clamping per-decision. Concurrency clamping is run-wide (it's a property of the active tree), not per-decision.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Emit once at run start when local-provider detection clamps the effective concurrency",
+              "description": "Single event per run, near the beginning. Payload: `{ requestedMax, effectiveMax: 1, reason: \"local-provider-detected\", providerId }`. Cheap; observable; replayable."
+            },
+            {
+              "id": "b",
+              "label": "Emit on every delegate dispatch where the clamp would have allowed more parallelism",
+              "description": "If parent emits an array of 8 delegates and concurrency is clamped to 1, emit 7 clamped events (one per queued child). Noisy. Useful only if consumers want per-decision audit."
+            },
+            {
+              "id": "c",
+              "label": "Emit once at the FIRST delegate dispatch (lazy)",
+              "description": "Defer emission until the clamp actually has an effect. If a run never delegates, no event. Slightly more code in the dispatcher, but no spurious events."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-13",
+          "title": "Caller explicitly sets `maxConcurrentChildren: 8` AND has a local provider — what happens?",
+          "context": "CONCURRENCY-02: \"clamps to 1 regardless of caller config and emits a `subRun.concurrencyClamped` warning event.\" The spec is unambiguous on the clamp; need to confirm UX details.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Silent clamp with the event (spec-literal)",
+              "description": "No throw, no log. The event IS the warning surface. Matches CONCURRENCY-02 verbatim. Caller can subscribe via `emit` to react."
+            },
+            {
+              "id": "b",
+              "label": "Clamp + event + console.warn (or equivalent runtime log)",
+              "description": "Loud warning at runtime so devs notice. Dogpile is logger-free today; this would introduce a logger or use console directly. Probably out-of-character for the SDK."
+            },
+            {
+              "id": "c",
+              "label": "Throw `invalid-configuration` if explicit value > 1 with a local provider",
+              "description": "Force callers to declare `maxConcurrentChildren: 1` explicitly. Strictest; contradicts spec wording 'regardless of caller config'."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    },
+    {
+      "id": "tests-public-surface",
+      "title": "Tests, Public Surface, Plan Breakdown",
+      "questions": [
+        {
+          "id": "Q-14",
+          "title": "Public-surface change inventory for Phase 3",
+          "context": "Per CLAUDE.md, public-surface changes lock together: event-shape changes touch event-schema.test.ts, result-contract.test.ts, package-exports.test.ts, package.json, CHANGELOG.md.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Three additions: locality field, maxConcurrentChildren option, subRun.concurrencyClamped event",
+              "description": "(1) `ConfiguredModelProvider.locality?: \"local\" | \"remote\"`. (2) `maxConcurrentChildren?: number` on `createEngine` + `Dogpile.pile`/`run`/`stream`. (3) `subRun.concurrencyClamped` event variant `{ requestedMax, effectiveMax, reason: \"local-provider-detected\", providerId? }`. Locked in event-schema, result-contract, package-exports, config-validation tests + CHANGELOG."
+            },
+            {
+              "id": "b",
+              "label": "Same as a, plus a `sub-run-queued` event variant (only if Q-07 = b)",
+              "description": "Additional public event surface. Adopt only if Q-07 lands on the explicit queued-event option."
+            },
+            {
+              "id": "c",
+              "label": "Same as a, plus AgentDecision parser supports array of delegates (Q-06 = a or c)",
+              "description": "Decision-shape change (parser accepts array). Touches `decisions.ts` + `events.ts` types + `result-contract.test.ts` if the result fingerprint surfaces it. Phase 1 D-03 already reserved this shape — Phase 3 just turns it on."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-15",
+          "title": "Test organization for Phase 3",
+          "context": "Phase 2 D-18 settled: contract guarantees → existing `src/tests/` files; deep scenarios → `coordinator.test.ts`; new file only if a single concern grows beyond ~150 lines.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Mirror Phase 2 — contract in src/tests/, scenarios in coordinator.test.ts + openai-compatible.test.ts",
+              "description": "Locality auto-detection scenarios → `openai-compatible.test.ts`. Concurrency scenarios → `coordinator.test.ts`. Public-surface locks → existing `event-schema.test.ts`, `result-contract.test.ts`, `config-validation.test.ts`. Clamp event lock → `event-schema.test.ts`."
+            },
+            {
+              "id": "b",
+              "label": "Add a new `src/tests/concurrency-contract.test.ts` for clamping + bounded-concurrency invariants",
+              "description": "Dedicated home for the new behavior. Easier to navigate but introduces a new test file. Use only if scenarios get unwieldy."
+            },
+            {
+              "id": "c",
+              "label": "Hybrid: a, plus `concurrency-contract.test.ts` if it grows past ~150 lines (planner judgment)",
+              "description": "Default to a; let planner promote to b at write-time."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-16",
+          "title": "Plan breakdown — how many plans?",
+          "context": "Phase 2 chose four plans (one per BUDGET requirement). Phase 3 has 5 requirements but they cluster naturally: PROVIDER-01..03 = locality, CONCURRENCY-01 = bounded dispatch, CONCURRENCY-02 = local clamping. There's also the Phase-1-D-03 array-parser unlock if Q-06 = a/c.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Three plans grouped by concern",
+              "description": "(1) Locality field + auto-detect + validation (PROVIDER-01..03). (2) Bounded dispatch + array-parser (CONCURRENCY-01 + Phase 1 D-03 unlock). (3) Local clamping + event (CONCURRENCY-02). Clean dependency order."
+            },
+            {
+              "id": "b",
+              "label": "Five plans, one per requirement (mirror Phase 2's discipline)",
+              "description": "Smaller diffs per plan. Some plans are tiny (PROVIDER-03 alone is one validation throw). Higher overhead for trivial requirements."
+            },
+            {
+              "id": "c",
+              "label": "Two plans — locality vs concurrency",
+              "description": "(1) All provider-side work (PROVIDER-01..03). (2) All coordinator-side work (CONCURRENCY-01..02 + array-parser). Coarser but reflects how the code actually splits between `providers/` and `runtime/`."
+            },
+            {
+              "id": "d",
+              "label": "Four plans — split the array-parser unlock into its own plan",
+              "description": "(1) Locality. (2) Array-parser unlock. (3) Bounded dispatch. (4) Local clamping. Highest granularity; most files touched per merge but each plan stays surgical."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    },
+    {
+      "id": "forward-compat",
+      "title": "Forward-Compat & Cross-Cutting",
+      "questions": [
+        {
+          "id": "Q-17",
+          "title": "Phase 4 streaming forward-compat — anything to plumb in Phase 3?",
+          "context": "Phase 4 (STREAM-01..03) wraps child events with `parentRunId` and per-child `runId` and demuxes interleaved streams. With N concurrent children in Phase 3, interleaving is real. Per-child AbortController already exists from Phase 2 D-07.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Nothing — the per-child runId on every event already enables Phase 4 demux",
+              "description": "Don't pre-build streaming machinery. Phase 4 reads `runId` from events and that's enough. Lowest scope."
+            },
+            {
+              "id": "b",
+              "label": "Pre-allocate per-child stream-handle slot in dispatch result (commented hook)",
+              "description": "Leave a structural placeholder so Phase 4's STREAM-03 lands without re-wiring the dispatcher. No runtime code, just a hook + comment."
+            },
+            {
+              "id": "c",
+              "label": "Build the per-child stream tap fully in Phase 3",
+              "description": "Out of scope for Phase 3 success criteria. Skip unless we're worried Phase 4 will rewrite Phase 3's dispatcher."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        },
+        {
+          "id": "Q-18",
+          "title": "Plan ordering and merge-churn risk",
+          "context": "Whichever plan layout we pick (Q-16), some files are touched by every plan: `coordinator.ts`, `types.ts`, `event-schema.test.ts`. Phase 2's experience: dispatchDelegate touched in 02-01/02/03 with surgical diffs and 01→02→03→04 merge order.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Locality first, then concurrency, then clamping (a-priori dependency order)",
+              "description": "Locality is a pure type/validation addition. Concurrency builds on existing dispatch loop. Clamping consumes both. Most natural; smallest merge surface per plan."
+            },
+            {
+              "id": "b",
+              "label": "Concurrency first (unlock array-parser + dispatcher), then locality, then clamping",
+              "description": "Front-loads the bigger refactor; locality + clamping land cleanly on top. Larger first plan, smaller follow-ups. Higher early-merge-conflict risk."
+            },
+            {
+              "id": "c",
+              "label": "Parallel: locality and concurrency can land in either order; clamping must be last",
+              "description": "Acknowledges PROVIDER and CONCURRENCY-01 are independent. Whichever is reviewed first lands first. Lower coordination cost; planner picks at execute time."
+            }
+          ],
+          "answer": null,
+          "chat_more": "",
+          "status": "unanswered"
+        }
+      ]
+    }
+  ]
+};
+
+let state;
+async function loadState() {
+  if (initialState && initialState.sections) { state = initialState; return; }
+  try {
+    const r = await fetch(STATE_PATH);
+    state = await r.json();
+  } catch (e) {
+    state = { phase: "03", sections: [], stats: { total: 0, answered: 0, chat_more: 0, remaining: 0 } };
+  }
+}
+
+function recomputeStats() {
+  let total = 0, answered = 0, chat_more = 0;
+  for (const s of state.sections) for (const q of s.questions) {
+    total += 1;
+    if (q.answer) answered += 1;
+    if (q.chat_more && q.chat_more.trim()) chat_more += 1;
+  }
+  state.stats = { total, answered, chat_more, remaining: total - answered };
+  document.getElementById("stat-answered").textContent = answered;
+  document.getElementById("stat-total").textContent = total;
+  document.getElementById("stat-remaining").textContent = total - answered;
+  document.getElementById("stat-chatmore").textContent = chat_more;
+  document.getElementById("progress-fill").style.width = total ? (answered / total * 100) + "%" : "0%";
+}
+
+function renderQuestion(q) {
+  const wrap = document.createElement("div");
+  wrap.className = "card" + (q.answer ? " answered" : "");
+  wrap.dataset.id = q.id;
+
+  const id = document.createElement("div");
+  id.className = "id";
+  id.textContent = q.id;
+  wrap.appendChild(id);
+
+  const h = document.createElement("h3");
+  h.textContent = q.title;
+  wrap.appendChild(h);
+
+  if (q.context) {
+    const c = document.createElement("div");
+    c.className = "ctx";
+    c.textContent = q.context;
+    wrap.appendChild(c);
+  }
+
+  for (const opt of q.options) {
+    const lab = document.createElement("label");
+    lab.className = "opt";
+    const r = document.createElement("input");
+    r.type = "radio";
+    r.name = q.id;
+    r.value = opt.id;
+    if (q.answer === opt.id) r.checked = true;
+    r.addEventListener("change", () => {
+      q.answer = opt.id;
+      q.status = "answered";
+      wrap.classList.add("answered");
+      recomputeStats();
+    });
+    const body = document.createElement("div");
+    const l = document.createElement("div"); l.className = "lbl"; l.textContent = opt.label;
+    const d = document.createElement("div"); d.className = "desc"; d.textContent = opt.description;
+    body.appendChild(l); body.appendChild(d);
+    lab.appendChild(r);
+    lab.appendChild(body);
+    wrap.appendChild(lab);
+  }
+
+  const ta = document.createElement("textarea");
+  ta.placeholder = "Add context, nuance, or clarification…";
+  ta.value = q.chat_more || "";
+  if (ta.value.trim()) ta.classList.add("has-content");
+  ta.addEventListener("input", () => {
+    q.chat_more = ta.value;
+    ta.classList.toggle("has-content", !!ta.value.trim());
+    recomputeStats();
+  });
+  wrap.appendChild(ta);
+
+  return wrap;
+}
+
+function renderSection(s) {
+  const sec = document.createElement("section");
+  const head = document.createElement("div");
+  head.className = "section-head";
+  const h = document.createElement("h2");
+  h.textContent = s.title;
+  const cnt = document.createElement("span");
+  cnt.className = "count";
+  const ansHere = s.questions.filter(q => q.answer).length;
+  cnt.textContent = `${ansHere}/${s.questions.length} answered`;
+  head.appendChild(h);
+  head.appendChild(cnt);
+  sec.appendChild(head);
+
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  for (const q of s.questions) grid.appendChild(renderQuestion(q));
+  sec.appendChild(grid);
+
+  head.addEventListener("click", () => grid.style.display = grid.style.display === "none" ? "" : "none");
+  return sec;
+}
+
+function render() {
+  const root = document.getElementById("root");
+  root.innerHTML = "";
+  for (const s of state.sections) root.appendChild(renderSection(s));
+
+  const banner = document.createElement("div");
+  banner.className = "save-banner";
+  banner.innerHTML = `When done: click <strong>Download JSON</strong>, replace <code>${STATE_PATH}</code> with the file, then tell Claude <strong>"refresh"</strong> or <strong>"finalize"</strong>.`;
+  root.appendChild(banner);
+
+  recomputeStats();
+}
+
+function serialize() {
+  recomputeStats();
+  return JSON.stringify(state, null, 2);
+}
+
+document.getElementById("download-json").addEventListener("click", () => {
+  const blob = new Blob([serialize()], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "03-QUESTIONS.json";
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById("copy-json").addEventListener("click", async () => {
+  await navigator.clipboard.writeText(serialize());
+  const b = document.getElementById("copy-json");
+  const t = b.textContent;
+  b.textContent = "Copied!";
+  setTimeout(() => b.textContent = t, 1200);
+});
+
+(async () => { await loadState(); render(); })();
+</script>
+</body>
+</html>

@@ -56,12 +56,16 @@ const sharedProtocol: SharedProtocolConfig = {
   organizationalMemory: "prior organizational memory"
 };
 const agentDecision: AgentDecision = {
+  type: "participate" as const,
   selectedRole: "consumer smoke reviewer",
   participation: "contribute",
   rationale: "The public package should expose structured agent decisions.",
   contribution: "Verify AgentDecision resolves from the package root."
 };
-const participation: AgentParticipation = agentDecision.participation;
+const participation: AgentParticipation =
+  !Array.isArray(agentDecision) && agentDecision.type === "participate"
+    ? agentDecision.participation
+    : "contribute";
 const agentDecisionFromTypesSubpath: AgentDecisionFromTypesSubpath = agentDecision;
 
 const options: DogpileOptions = {
@@ -103,6 +107,13 @@ function recordEvent(event: RunEvent): string {
     case "model-output-chunk":
     case "budget-stop":
     case "final":
+    case "sub-run-started":
+    case "sub-run-completed":
+    case "sub-run-failed":
+    case "sub-run-parent-aborted":
+    case "sub-run-budget-clamped":
+    case "sub-run-queued":
+    case "sub-run-concurrency-clamped":
       return event.type;
   }
 }
@@ -124,7 +135,9 @@ export async function consumerTypeResolutionSmoke(): Promise<Trace> {
   if (
     sharedProtocol.organizationalMemory !== "prior organizational memory" ||
     participation !== "contribute" ||
-    agentDecisionFromTypesSubpath.selectedRole !== agentDecision.selectedRole
+    (agentDecisionFromTypesSubpath.type === "participate" &&
+      agentDecision.type === "participate" &&
+      agentDecisionFromTypesSubpath.selectedRole !== agentDecision.selectedRole)
   ) {
     throw new Error("Consumer type smoke should expose public structured decision types.");
   }

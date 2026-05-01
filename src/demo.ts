@@ -88,7 +88,14 @@ export type DemoTraceEventMetadata =
   | DemoAgentTurnEventMetadata
   | DemoBroadcastEventMetadata
   | DemoBudgetStopEventMetadata
-  | DemoFinalEventMetadata;
+  | DemoFinalEventMetadata
+  | DemoSubRunStartedEventMetadata
+  | DemoSubRunCompletedEventMetadata
+  | DemoSubRunFailedEventMetadata
+  | DemoSubRunParentAbortedEventMetadata
+  | DemoSubRunBudgetClampedEventMetadata
+  | DemoSubRunQueuedEventMetadata
+  | DemoSubRunConcurrencyClampedEventMetadata;
 
 export interface DemoRoleAssignmentEventMetadata {
   readonly type: "role-assignment";
@@ -179,6 +186,70 @@ export interface DemoFinalEventMetadata {
   readonly totalTokens: number;
   readonly costUsd: number;
   readonly transcriptEntryCount: number;
+}
+
+export interface DemoSubRunStartedEventMetadata {
+  readonly type: "sub-run-started";
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
+  readonly protocol: string;
+  readonly intent: string;
+  readonly depth: number;
+  readonly recursive?: boolean;
+}
+
+export interface DemoSubRunCompletedEventMetadata {
+  readonly type: "sub-run-completed";
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
+}
+
+export interface DemoSubRunFailedEventMetadata {
+  readonly type: "sub-run-failed";
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
+  readonly errorCode: string;
+  readonly errorMessage: string;
+}
+
+export interface DemoSubRunParentAbortedEventMetadata {
+  readonly type: "sub-run-parent-aborted";
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly reason: "parent-aborted";
+}
+
+export interface DemoSubRunBudgetClampedEventMetadata {
+  readonly type: "sub-run-budget-clamped";
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly parentDecisionId: string;
+  readonly requestedTimeoutMs: number;
+  readonly clampedTimeoutMs: number;
+  readonly reason: "exceeded-parent-remaining";
+}
+
+export interface DemoSubRunQueuedEventMetadata {
+  readonly type: "sub-run-queued";
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
+  readonly queuePosition: number;
+}
+
+export interface DemoSubRunConcurrencyClampedEventMetadata {
+  readonly type: "sub-run-concurrency-clamped";
+  readonly requestedMax: number;
+  readonly effectiveMax: 1;
+  readonly reason: "local-provider-detected";
+  readonly providerId: string;
 }
 
 export interface DemoTraceEventListItem {
@@ -421,6 +492,20 @@ function traceEventTitle(event: RunEvent): string {
       return `Budget stopped: ${event.reason}`;
     case "final":
       return "Final output";
+    case "sub-run-started":
+      return `Sub-run dispatched: ${event.protocol}`;
+    case "sub-run-completed":
+      return `Sub-run ${event.childRunId} completed`;
+    case "sub-run-failed":
+      return `Sub-run ${event.childRunId} failed: ${event.error.message}`;
+    case "sub-run-parent-aborted":
+      return `Parent aborted after sub-run ${event.childRunId}`;
+    case "sub-run-budget-clamped":
+      return `Sub-run ${event.childRunId} budget clamped to ${event.clampedTimeoutMs}ms`;
+    case "sub-run-queued":
+      return `Sub-run ${event.childRunId} queued`;
+    case "sub-run-concurrency-clamped":
+      return `Sub-run concurrency clamped for provider ${event.providerId}`;
   }
 
   return assertNever(event);
@@ -445,6 +530,14 @@ function traceEventVisualSection(event: RunEvent): DemoTraceEventVisualSection {
       return "activity-log";
     case "final":
       return "final-output";
+    case "sub-run-started":
+    case "sub-run-completed":
+    case "sub-run-failed":
+    case "sub-run-parent-aborted":
+    case "sub-run-budget-clamped":
+    case "sub-run-queued":
+    case "sub-run-concurrency-clamped":
+      return "activity-log";
   }
 
   return assertNever(event);
@@ -469,6 +562,14 @@ function traceEventVisualState(event: RunEvent): DemoTraceEventVisualState {
       return "budget-stopped";
     case "final":
       return "run-completed";
+    case "sub-run-started":
+    case "sub-run-completed":
+    case "sub-run-failed":
+    case "sub-run-parent-aborted":
+    case "sub-run-budget-clamped":
+    case "sub-run-queued":
+    case "sub-run-concurrency-clamped":
+      return "turn-completed";
   }
 
   return assertNever(event);
@@ -566,6 +667,70 @@ function traceEventMetadata(event: RunEvent): DemoTraceEventMetadata {
         totalTokens: event.cost.totalTokens,
         costUsd: event.cost.usd,
         transcriptEntryCount: event.transcript.entryCount
+      };
+    case "sub-run-started":
+      return {
+        type: event.type,
+        childRunId: event.childRunId,
+        parentRunId: event.parentRunId,
+        parentDecisionId: event.parentDecisionId,
+        parentDecisionArrayIndex: event.parentDecisionArrayIndex,
+        protocol: event.protocol,
+        intent: event.intent,
+        depth: event.depth,
+        ...(event.recursive !== undefined ? { recursive: event.recursive } : {})
+      };
+    case "sub-run-completed":
+      return {
+        type: event.type,
+        childRunId: event.childRunId,
+        parentRunId: event.parentRunId,
+        parentDecisionId: event.parentDecisionId,
+        parentDecisionArrayIndex: event.parentDecisionArrayIndex
+      };
+    case "sub-run-failed":
+      return {
+        type: event.type,
+        childRunId: event.childRunId,
+        parentRunId: event.parentRunId,
+        parentDecisionId: event.parentDecisionId,
+        parentDecisionArrayIndex: event.parentDecisionArrayIndex,
+        errorCode: event.error.code,
+        errorMessage: event.error.message
+      };
+    case "sub-run-parent-aborted":
+      return {
+        type: event.type,
+        childRunId: event.childRunId,
+        parentRunId: event.parentRunId,
+        reason: event.reason
+      };
+    case "sub-run-budget-clamped":
+      return {
+        type: event.type,
+        childRunId: event.childRunId,
+        parentRunId: event.parentRunId,
+        parentDecisionId: event.parentDecisionId,
+        requestedTimeoutMs: event.requestedTimeoutMs,
+        clampedTimeoutMs: event.clampedTimeoutMs,
+        reason: event.reason
+      };
+    case "sub-run-queued":
+      return {
+        type: event.type,
+        childRunId: event.childRunId,
+        parentRunId: event.parentRunId,
+        parentDecisionId: event.parentDecisionId,
+        parentDecisionArrayIndex: event.parentDecisionArrayIndex,
+        queuePosition: event.queuePosition
+      };
+    case "sub-run-concurrency-clamped":
+      return {
+        type: event.type,
+        requestedMax: event.requestedMax,
+        effectiveMax: event.effectiveMax,
+        reason: event.reason,
+        providerId: event.providerId
       };
   }
 

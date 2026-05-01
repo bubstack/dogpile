@@ -110,7 +110,14 @@ export type ReplayTraceProtocolDecisionType =
   | "complete-tool-call"
   | "collect-broadcast-round"
   | "stop-for-budget"
-  | "finalize-output";
+  | "finalize-output"
+  | "start-sub-run"
+  | "complete-sub-run"
+  | "fail-sub-run"
+  | "mark-sub-run-parent-aborted"
+  | "mark-sub-run-budget-clamped"
+  | "queue-sub-run"
+  | "mark-sub-run-concurrency-clamped";
 
 /**
  * Protocol-level decision appended during execution.
@@ -136,6 +143,10 @@ export interface ReplayTraceProtocolDecision {
   readonly callId?: string;
   /** Provider involved in the decision, when model-scoped. */
   readonly providerId?: string;
+  /** Child run involved in a delegated sub-run decision. */
+  readonly childRunId?: string;
+  /** FIFO queue position for sub-run queue decisions. */
+  readonly queuePosition?: number;
   /** Tool call involved in the decision, when tool-scoped. */
   readonly toolCallId?: string;
   /** Tool identity involved in the decision, when tool-scoped. */

@@ -1,14 +1,17 @@
 import type { LanguageModel } from "ai";
 import { describe, expect, it } from "vitest";
-import { createEngine, createRuntimeToolExecutor, DogpileError, run, stream } from "../index.js";
+import { createEngine, createRuntimeToolExecutor, Dogpile, DogpileError, run, stream } from "../index.js";
 import { createVercelAIProvider } from "../internal/vercel-ai.js";
+import { assertDepthWithinLimit } from "../runtime/decisions.js";
 import type {
   ConfiguredModelProvider,
   DogpileOptions,
   EngineOptions,
   JsonObject,
   JsonValue,
+  ModelRequest,
   ModelResponse,
+  RunCallOptions,
   RuntimeTool,
   RuntimeToolExecutionContext
 } from "../index.js";
@@ -66,6 +69,19 @@ const invalidDogpileOptionCases = [
     path: "model.generate"
   },
   {
+    name: "invalid locality string on user-implemented model provider",
+    options: optionsWith({
+      model: {
+        id: "invalid-locality-model",
+        async generate(): Promise<ModelResponse> {
+          return { text: "ok" };
+        },
+        metadata: { locality: "BOGUS" as "local" }
+      }
+    }),
+    path: "model.metadata.locality"
+  },
+  {
     name: "empty explicit agent roster",
     options: optionsWith({ agents: [] }),
     path: "agents"
@@ -109,6 +125,21 @@ const invalidDogpileOptionCases = [
     name: "malformed abort signal",
     options: optionsWith({ signal: { aborted: false } }),
     path: "signal"
+  },
+  {
+    name: "maxConcurrentChildren zero",
+    options: optionsWith({ maxConcurrentChildren: 0 }),
+    path: "maxConcurrentChildren"
+  },
+  {
+    name: "maxConcurrentChildren negative",
+    options: optionsWith({ maxConcurrentChildren: -1 }),
+    path: "maxConcurrentChildren"
+  },
+  {
+    name: "maxConcurrentChildren non-integer",
+    options: optionsWith({ maxConcurrentChildren: 1.5 }),
+    path: "maxConcurrentChildren"
   },
   {
     name: "non-finite seed",
@@ -341,6 +372,40 @@ describe("caller configuration validation", () => {
     );
   });
 
+  it("validates provider metadata.locality when a reusable engine run starts", () => {
+    const engine = createEngine({
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: {
+        id: "engine-invalid-locality-model",
+        async generate(): Promise<ModelResponse> {
+          return { text: "ok" };
+        },
+        metadata: { locality: "BOGUS" as "local" }
+      },
+      agents: [{ id: "validator", role: "tester" }]
+    });
+
+    expectInvalidConfiguration(() => engine.run("validate locality"), "model.metadata.locality");
+  });
+
+  it("validates provider metadata.locality before Dogpile.pile starts protocol execution", () => {
+    expectInvalidConfiguration(
+      () =>
+        Dogpile.pile({
+          ...validDogpileOptions,
+          model: {
+            id: "pile-invalid-locality-model",
+            async generate(): Promise<ModelResponse> {
+              return { text: "ok" };
+            },
+            metadata: { locality: "BOGUS" as "local" }
+          }
+        }),
+      "model.metadata.locality"
+    );
+  });
+
   it.each(invalidModelProviderRegistrationCases)(
     "validates run() model provider registrations before protocol execution: $name",
     ({ model, path }) => {
@@ -560,11 +625,421 @@ describe("caller configuration validation", () => {
   });
 });
 
+describe("maxDepth option", () => {
+  it("rejects negative maxDepth on createEngine with invalid-configuration at path maxDepth", () => {
+    expectInvalidConfiguration(
+      () =>
+        createEngine({
+          ...validDogpileOptions,
+          maxDepth: -1
+        } as EngineOptions),
+      "maxDepth"
+    );
+  });
+
+  it("rejects non-integer maxDepth", () => {
+    expectInvalidConfiguration(
+      () =>
+        createEngine({
+          ...validDogpileOptions,
+          maxDepth: 1.5
+        } as EngineOptions),
+      "maxDepth"
+    );
+  });
+
+  it("rejects non-number maxDepth", () => {
+    expectInvalidConfiguration(
+      () =>
+        createEngine({
+          ...validDogpileOptions,
+          maxDepth: "4" as unknown as number
+        } as EngineOptions),
+      "maxDepth"
+    );
+  });
+
+  it("rejects negative maxDepth on Dogpile.run at the high-level surface", () => {
+    expectInvalidConfiguration(
+      () =>
+        run({
+          ...validDogpileOptions,
+          maxDepth: -1
+        }),
+      "maxDepth"
+    );
+  });
+
+  it("uses engine value when per-run maxDepth lowers the ceiling (engine 4, run 2 -> effective 2)", async () => {
+    const provider = createDelegateChainProvider("lower-ok-model");
+    const engine = createEngine({
+      ...validDogpileOptions,
+      tier: "fast",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxDepth: 4
+    });
+
+    // Per-run lowers to 2 — second-level dispatch must throw at depth 2 -> 3.
+    await expect(engine.run("Run a chain.", { maxDepth: 2 })).rejects.toMatchObject({
+      code: "invalid-configuration",
+      detail: { kind: "delegate-validation", reason: "depth-overflow", maxDepth: 2 }
+    });
+  });
+
+  it("clamps per-run maxDepth that tries to raise the engine ceiling (engine 2, run 5 -> effective 2)", async () => {
+    const provider = createDelegateChainProvider("raise-clamped-model");
+    const engine = createEngine({
+      ...validDogpileOptions,
+      tier: "fast",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      maxDepth: 2
+    });
+
+    // Per-run claims 5, but engine ceiling 2 wins — overflow at depth 2 -> 3.
+    await expect(engine.run("Run a chain.", { maxDepth: 5 })).rejects.toMatchObject({
+      code: "invalid-configuration",
+      detail: { kind: "delegate-validation", reason: "depth-overflow", maxDepth: 2 }
+    });
+  });
+
+  it("end-to-end depth 1 throws when coordinator at depth 1 tries to delegate again", async () => {
+    const provider = createDelegateChainProvider("end-to-end-depth-1-model");
+
+    await expect(
+      run({
+        ...validDogpileOptions,
+        intent: "Recurse once.",
+        protocol: { kind: "coordinator", maxTurns: 2 },
+        model: provider,
+        agents: [
+          { id: "lead", role: "coordinator" },
+          { id: "worker-a", role: "worker" }
+        ],
+        maxDepth: 1
+      })
+    ).rejects.toMatchObject({
+      code: "invalid-configuration",
+      detail: {
+        kind: "delegate-validation",
+        path: "decision.protocol",
+        reason: "depth-overflow",
+        currentDepth: 1,
+        maxDepth: 1
+      }
+    });
+  });
+
+  it("default maxDepth = 4: 4 nested coordinator delegates succeed; the 5th throws", async () => {
+    const provider = createDelegateChainProvider("default-depth-4-model");
+
+    await expect(
+      run({
+        ...validDogpileOptions,
+        intent: "Recurse to the default cap.",
+        protocol: { kind: "coordinator", maxTurns: 2 },
+        model: provider,
+        agents: [
+          { id: "lead", role: "coordinator" },
+          { id: "worker-a", role: "worker" }
+        ]
+        // no maxDepth — should default to 4
+      })
+    ).rejects.toMatchObject({
+      code: "invalid-configuration",
+      detail: {
+        kind: "delegate-validation",
+        reason: "depth-overflow",
+        currentDepth: 4,
+        maxDepth: 4
+      }
+    });
+  });
+
+  // Behavioral dual-gate test (D-14 TOCTOU defense). Drives the extracted
+  // assertDepthWithinLimit helper directly so a regression in the dispatcher
+  // call site (or the parser call site) is detected by this test rather than
+  // by `grep`.
+  it("assertDepthWithinLimit throws depth-overflow when currentDepth + 1 > maxDepth", () => {
+    let thrown: unknown;
+    try {
+      assertDepthWithinLimit(2, 2);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(DogpileError.isInstance(thrown)).toBe(true);
+    if (!DogpileError.isInstance(thrown)) throw new Error("expected DogpileError");
+    expect(thrown.code).toBe("invalid-configuration");
+    expect(thrown.detail).toMatchObject({
+      kind: "delegate-validation",
+      path: "decision.protocol",
+      reason: "depth-overflow",
+      currentDepth: 2,
+      maxDepth: 2
+    });
+  });
+
+  it("assertDepthWithinLimit accepts currentDepth + 1 <= maxDepth (boundary)", () => {
+    expect(() => assertDepthWithinLimit(0, 1)).not.toThrow();
+    expect(() => assertDepthWithinLimit(3, 4)).not.toThrow();
+  });
+});
+
+describe("maxConcurrentChildren option", () => {
+  it("rejects zero maxConcurrentChildren on createEngine with invalid-configuration at path maxConcurrentChildren", () => {
+    expectInvalidConfiguration(
+      () =>
+        createEngine({
+          ...validEngineOptions(),
+          maxConcurrentChildren: 0
+        }),
+      "maxConcurrentChildren"
+    );
+  });
+
+  it("rejects negative maxConcurrentChildren on createEngine", () => {
+    expectInvalidConfiguration(
+      () =>
+        createEngine({
+          ...validEngineOptions(),
+          maxConcurrentChildren: -1
+        }),
+      "maxConcurrentChildren"
+    );
+  });
+
+  it("rejects non-integer maxConcurrentChildren on createEngine", () => {
+    expectInvalidConfiguration(
+      () =>
+        createEngine({
+          ...validEngineOptions(),
+          maxConcurrentChildren: 1.5
+        }),
+      "maxConcurrentChildren"
+    );
+  });
+
+  it("rejects per-run maxConcurrentChildren that raises the engine ceiling", () => {
+    const engine = createEngine({
+      ...validEngineOptions(),
+      protocol: { kind: "sequential", maxTurns: 1 },
+      maxConcurrentChildren: 2
+    });
+
+    expectInvalidConfiguration(
+      () => engine.run("Validate bounded children.", { maxConcurrentChildren: 5 }),
+      "maxConcurrentChildren"
+    );
+  });
+
+  it("accepts per-run maxConcurrentChildren that lowers the engine ceiling", async () => {
+    const engine = createEngine({
+      ...validEngineOptions(),
+      protocol: { kind: "sequential", maxTurns: 1 },
+      maxConcurrentChildren: 4
+    });
+
+    await expect(engine.run("Validate bounded children.", { maxConcurrentChildren: 2 })).resolves.toMatchObject({
+      output: expect.any(String)
+    });
+  });
+});
+
+describe("onChildFailure option", () => {
+  it("accepts continue and abort on createEngine", () => {
+    expect(() =>
+      createEngine({
+        ...validEngineOptions(),
+        onChildFailure: "continue"
+      })
+    ).not.toThrow();
+    expect(() =>
+      createEngine({
+        ...validEngineOptions(),
+        onChildFailure: "abort"
+      })
+    ).not.toThrow();
+  });
+
+  it("rejects invalid onChildFailure on createEngine with invalid-configuration", () => {
+    expectInvalidConfiguration(
+      () =>
+        createEngine({
+          ...validEngineOptions(),
+          onChildFailure: "explode" as "continue"
+        }),
+      "onChildFailure"
+    );
+  });
+
+  it("rejects invalid per-run onChildFailure with invalid-configuration", () => {
+    const engine = createEngine(validEngineOptions());
+    expectInvalidConfiguration(
+      () => engine.run("Validate child failure mode.", { onChildFailure: "explode" as "continue" }),
+      "options.onChildFailure"
+    );
+  });
+
+  it("resolves onChildFailure with per-run overriding engine overriding default", async () => {
+    const engineAbort = createEngine({
+      ...validEngineOptions(),
+      protocol: { kind: "sequential", maxTurns: 1 },
+      onChildFailure: "abort"
+    });
+    const engineDefault = createEngine({
+      ...validEngineOptions(),
+      protocol: { kind: "sequential", maxTurns: 1 }
+    });
+
+    await expect(engineAbort.run("Run with per-run continue.", { onChildFailure: "continue" })).resolves.toMatchObject({
+      output: expect.any(String)
+    });
+    await expect(engineAbort.run("Run with engine abort.")).resolves.toMatchObject({
+      output: expect.any(String)
+    });
+    await expect(engineDefault.run("Run with default continue.")).resolves.toMatchObject({
+      output: expect.any(String)
+    });
+  });
+
+  it("locks onChildFailure as a public engine and per-run option", () => {
+    const _engineOptionsLock: EngineOptions = {
+      ...validEngineOptions(),
+      onChildFailure: "abort"
+    };
+    const _runOptionsLock: RunCallOptions = {
+      onChildFailure: "continue"
+    };
+    expect(_engineOptionsLock.onChildFailure).toBe("abort");
+    expect(_runOptionsLock.onChildFailure).toBe("continue");
+  });
+});
+
+describe("BUDGET-02 defaultSubRunTimeoutMs validation + public-surface lock", () => {
+  it.each([
+    { name: "negative", value: -1 },
+    { name: "zero", value: 0 },
+    { name: "NaN", value: Number.NaN },
+    { name: "Infinity", value: Number.POSITIVE_INFINITY },
+    { name: "non-number string", value: "1000" }
+  ] as const)(
+    "createEngine rejects defaultSubRunTimeoutMs=$name with invalid-configuration on path=defaultSubRunTimeoutMs",
+    ({ value }) => {
+      expectInvalidConfiguration(
+        () =>
+          createEngine({
+            protocol: { kind: "sequential", maxTurns: 1 },
+            tier: "fast",
+            model: validModelProvider,
+            defaultSubRunTimeoutMs: value as number
+          } as unknown as EngineOptions),
+        "defaultSubRunTimeoutMs"
+      );
+    }
+  );
+
+  it.each([
+    { name: "negative", value: -1 },
+    { name: "zero", value: 0 },
+    { name: "NaN", value: Number.NaN }
+  ] as const)(
+    "run() rejects defaultSubRunTimeoutMs=$name before any provider call: $name",
+    ({ value }) => {
+      expectInvalidConfiguration(
+        () =>
+          run({
+            ...validDogpileOptions,
+            defaultSubRunTimeoutMs: value as number
+          } as DogpileOptions),
+        "defaultSubRunTimeoutMs"
+      );
+    }
+  );
+
+  it("createEngine accepts a valid positive finite defaultSubRunTimeoutMs", () => {
+    expect(() =>
+      createEngine({
+        protocol: { kind: "sequential", maxTurns: 1 },
+        tier: "fast",
+        model: validModelProvider,
+        defaultSubRunTimeoutMs: 1000
+      })
+    ).not.toThrow();
+  });
+
+  // BLOCKER 2 unambiguous typed-field lock: if `defaultSubRunTimeoutMs` is
+  // removed from the public `EngineOptions` type re-exported through
+  // src/index.ts, this file fails compile (typecheck exits non-zero).
+  // Note (deviation from plan): the plan example included `intent` on the
+  // lock object, but `intent` lives on `DogpileOptions`, NOT `EngineOptions`.
+  // Dropped it here as an inline correction.
+  it("locks defaultSubRunTimeoutMs as a public field on the engine-options type union", () => {
+    const _engineOptionsLock: EngineOptions = {
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: { id: "lock", generate: async () => ({ text: "" }) },
+      defaultSubRunTimeoutMs: 1000
+    };
+    void _engineOptionsLock;
+    expect(_engineOptionsLock.defaultSubRunTimeoutMs).toBe(1000);
+  });
+});
+
+/**
+ * Coordinator provider that always returns a delegate-to-coordinator decision
+ * on the plan turn, producing a chain of nested sub-runs until the depth gate
+ * trips. Worker and final-synthesis turns return safe text.
+ */
+function createDelegateChainProvider(id: string): ConfiguredModelProvider {
+  return {
+    id,
+    async generate(request: ModelRequest): Promise<ModelResponse> {
+      const phase = String(request.metadata.phase);
+      if (phase === "plan") {
+        return {
+          text: [
+            "delegate:",
+            "```json",
+            JSON.stringify({ protocol: "coordinator", intent: "go deeper" }),
+            "```",
+            ""
+          ].join("\n"),
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          costUsd: 0
+        };
+      }
+      return {
+        text: phase === "worker" ? "worker output" : "final output",
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        costUsd: 0
+      };
+    }
+  };
+}
+
 function optionsWith(overrides: Record<string, unknown>): DogpileOptions {
   return {
     ...validDogpileOptions,
     ...overrides
   } as unknown as DogpileOptions;
+}
+
+function validEngineOptions(): EngineOptions {
+  return {
+    protocol: { kind: "sequential", maxTurns: 1 },
+    tier: "fast",
+    model: validModelProvider,
+    agents: [{ id: "validator", role: "tester" }]
+  };
 }
 
 function runtimeToolWith(overrides: Record<string, unknown>): RuntimeTool<JsonObject, JsonValue> {

@@ -1,5 +1,141 @@
 # Changelog
 
+## [0.4.0] — 2026-05-01
+
+Recursive coordination — coordinators can now dispatch whole sub-missions via a `delegate` decision, with embedded child traces, propagated budgets/aborts/costs, bounded concurrency with locality clamping, live child-event bubbling on streams, and structured child-failure escalation. See [`docs/recursive-coordination.md`](docs/recursive-coordination.md) for the full surface and a worked example.
+
+### Breaking
+
+- `AgentDecision` is now a discriminated union with required `type: "participate" | "delegate"`. Existing paper-style fields (`selectedRole`, `participation`, `rationale`, `contribution`) are preserved under the `participate` branch. Consumers must narrow on `decision.type === "participate"` before reading paper-style fields. (Phase 1)
+
+### Migration — AgentDecision narrowing (v0.3.x → v0.4.0)
+
+```ts
+// v0.3.x
+const decision: AgentDecision = await coordinator.run(...);
+console.log(decision.selectedRole, decision.contribution);
+
+// v0.4.0
+const decision = await coordinator.run(...);
+if (decision.type === "participate") {
+  console.log(decision.selectedRole, decision.contribution);
+} else if (decision.type === "delegate") {
+  // new: handle delegated sub-mission
+}
+```
+
+See [`docs/recursive-coordination.md#agentdecision-narrowing`](docs/recursive-coordination.md#agentdecision-narrowing) for the full discriminator and `delegate`-branch shape.
+
+### Added — `delegate` decision and sub-run traces (Phase 1)
+
+- Coordinator agents may emit `{ type: "delegate", protocol, intent, model?, budget? }` to dispatch a sub-mission as part of the plan turn. Phase 1 of v0.4.0 enables delegation from the coordinator's plan turn only; worker delegation and final-synthesis-turn delegation are rejected with `invalid-configuration`. (Phase 1)
+- New `RunEvent` variants: `sub-run-started`, `sub-run-completed`, `sub-run-failed`. `sub-run-completed` carries the full child `RunResult` (including embedded `Trace`); `sub-run-failed` carries `error` and `partialTrace`. `sub-run-started` carries `{ childRunId, parentRunId, parentDecisionId, protocol, intent, depth }` plus `recursive: true` when the dispatching protocol and the delegated protocol are both `coordinator`. (Phase 1)
+- Synthetic transcript entries record sub-run results with `agentId: "sub-run:<childRunId>"` and `role: "delegate-result"`. The next coordinator plan prompt receives a tagged `[sub-run <childRunId>]: <output>\n[sub-run <childRunId> stats]: turns=<N> costUsd=<X> durationMs=<Y>` block (D-17). (Phase 1)
+- `maxDepth` option on `DogpileOptions` and `EngineOptions` (default `4`); `Engine.run` and `Engine.stream` accept an optional second-argument `RunCallOptions` that can only LOWER the engine ceiling — `effectiveMaxDepth = Math.min(engineMaxDepth, runOptions.maxDepth ?? Infinity)`. Depth overflow is enforced at both the parser (`parseDelegateDecision`) and the dispatcher (`dispatchDelegate`); both throw `invalid-configuration` with `detail.reason: "depth-overflow"` and `detail.path: "decision.protocol"`. (Phase 1)
+- New public type `RunCallOptions` is re-exported through `@dogpile/sdk` and `@dogpile/sdk/types`. (Phase 1)
+- Fenced-JSON delegate parsing convention added to `parseAgentDecision` (no new tool surface — delegate is a parser-level concern). Coordinator runs accept a `delegate:` prefix followed by a fenced ```json block. (Phase 1)
+- `Dogpile.replay()` rehydrates embedded sub-run traces without provider invocation; the new `recomputeAccountingFromTrace` helper verifies recorded child `RunAccounting` against a per-child recompute and throws `invalid-configuration` with `detail.reason: "trace-accounting-mismatch"` and `detail.field` identifying the offending numeric field on tamper. The eight enumerated comparable numeric fields are `cost.usd`, `cost.inputTokens`, `cost.outputTokens`, `cost.totalTokens`, `usage.usd`, `usage.inputTokens`, `usage.outputTokens`, `usage.totalTokens`. Top-level parent drift is reported with `eventIndex: -1`; child drift is reported with the offending event's index plus `childRunId`. (Phase 1)
+- New `ReplayTraceProtocolDecisionType` literals: `start-sub-run`, `complete-sub-run`, `fail-sub-run`. (Phase 1)
+
+### Added — Budget, cancellation, cost roll-up (Phase 2)
+
+The four BUDGET-* requirements ship together as a single coherent surface for safely
+running recursive coordinator delegations under shared deadlines, abortable cancellation,
+and reconciled cost accounting.
+
+#### Cancellation propagation (BUDGET-01)
+
+- Parent abort propagates to all in-flight sub-runs via a per-child derived `AbortController`. Aborted children carry `detail.reason: "parent-aborted"` on `code: "aborted"` errors.
+- New trace event `sub-run-parent-aborted` (exported as TS type `SubRunParentAbortedEvent`) marks parent aborts that land after a sub-run completes; observable on `Dogpile.stream()` subscribers when stream teardown timing permits. New `ReplayTraceProtocolDecisionType` literal `mark-sub-run-parent-aborted`.
+
+#### Timeout / deadline propagation (BUDGET-02)
+
+- Parent `budget.timeoutMs` is now a true tree-wide deadline. Children inherit `parentDeadline − now` as their default timeout.
+- Per-decision `budget.timeoutMs` exceeding the parent's remaining is **clamped** (no longer throws), and the parent trace gains a `sub-run-budget-clamped` event (exported as TS type `SubRunBudgetClampedEvent`) recording the requested vs clamped values. Parent timeouts surface on the child as `code: "aborted"` with `detail.reason: "timeout"`. New `ReplayTraceProtocolDecisionType` literal `mark-sub-run-budget-clamped`.
+- New `defaultSubRunTimeoutMs` engine option on `createEngine`, `Dogpile.pile`, `run`, and `stream` — fallback ceiling applied only when neither parent nor decision specifies a timeout. Precedence: `decision.budget.timeoutMs` > parent's remaining deadline > `defaultSubRunTimeoutMs` > undefined.
+
+#### Cost & token roll-up + replay parity (BUDGET-03)
+
+- `sub-run-failed` events carry `partialCost: CostSummary` reflecting real provider spend before the failure. The parent's `accounting.cost` and token totals include failed-child partial costs recursively.
+- Parent rolls up child cost (`subResult.cost` for completed, `partialCost` for failed) into its own totals **before** the corresponding `sub-run-completed` / `sub-run-failed` event is emitted, preserving the existing "last cost-bearing event === final.cost" invariant.
+- `Dogpile.replay()` now detects parent-rollup drift — if a saved trace's child `subResult.cost` disagrees with `subResult.accounting.cost`, or a `sub-run-failed.partialCost` disagrees with the cost implied by its `partialTrace`, or Σ children exceeds the parent's recorded total, replay throws `DogpileError({ code: "invalid-configuration", detail: { reason: "trace-accounting-mismatch", subReason: "parent-rollup-drift" } })` with `detail.field` identifying the offending numeric field.
+
+#### Termination floors (BUDGET-04)
+
+- Internal contract guarantee (no public-surface delta): parent termination policies (`budget`, `convergence`, `judge`, `firstOf`) operate over parent-level events / iterations only — child agent-turn events bubbled into the parent stream do not count toward parent iteration limits, and `minTurns`/`minRounds` floors are per-protocol-instance (parent and child read their own protocol config independently). One `sub-run-completed` counts as exactly one parent iteration via the synthetic `delegate-result` transcript entry. Locked by contract tests in `src/tests/budget-first-stop.test.ts` and `src/runtime/coordinator.test.ts`.
+
+### Added — Provider locality and bounded concurrency (Phase 3)
+
+The PROVIDER-* and CONCURRENCY-* requirements ship together so recursive
+coordinator runs can safely fan out work while protecting local model providers
+from accidental self-inflicted overload.
+
+#### Provider locality (PROVIDER-01..03)
+
+- `ConfiguredModelProvider.metadata?.locality?: "local" | "remote"` is an optional readonly hint used by coordinator concurrency clamping. Omitted metadata is treated as remote for clamping.
+- `createOpenAICompatibleProvider` auto-detects `metadata.locality` from `baseURL`: loopback (`localhost`, `127/8`, `::1`), RFC1918 (`10/8`, `172.16/12`, `192.168/16`), IPv4 link-local (`169.254/16`), IPv6 ULA (`fc00::/7`), IPv6 link-local (`fe80::/10`), and `*.local` mDNS hostnames classify as `"local"`.
+- Caller `locality: "local"` always wins. Caller `locality: "remote"` on a detected-local OpenAI-compatible host now throws `DogpileError({ code: "invalid-configuration", detail: { reason: "remote-override-on-local-host" } })` so a localhost Ollama-style endpoint cannot silently bypass the local clamp.
+- `classifyHostLocality(host)` is exported from the OpenAI-compatible provider module for advanced callers and tests.
+- Provider locality is validated at adapter construction time and at engine run start, including custom provider objects that bypass TypeScript.
+
+#### Bounded child concurrency (CONCURRENCY-01)
+
+- `maxConcurrentChildren` config is available on `createEngine`, `Dogpile.pile` / `run` / `stream`, and per coordinator `delegate` decision. Default is `4`; effective concurrency is `min(engine, run ?? Infinity, decision ?? Infinity)`, so per-run and per-decision values can only lower the engine ceiling. Values must be positive integers.
+- Coordinator agents can fan out up to 8 delegates in one plan turn by returning a fenced JSON array of delegate decisions. Mixed `participate` plus `delegate` remains invalid.
+- New `RunEvent` variant `sub-run-queued` records delegates that waited for a concurrency slot. No-pressure runs do not emit queued events; pressure runs follow `sub-run-queued` → `sub-run-started` → `sub-run-completed` / `sub-run-failed`.
+- `parentDecisionArrayIndex: number` was added to `sub-run-queued`, `sub-run-started`, `sub-run-completed`, and `sub-run-failed` so a delegate is uniquely identified by `parentDecisionId` plus its array index without changing the existing `parentDecisionId` format.
+- When one fan-out delegate fails, in-flight siblings continue and queued siblings are drained with synthetic `sub-run-failed` events using `error.code: "aborted"`, `error.detail.reason: "sibling-failed"`, and zero `partialCost`.
+- Delegate result transcript entries are appended in completion order under fan-out; replay determinism is preserved by stable `parentDecisionId` plus `parentDecisionArrayIndex`.
+- New `ReplayTraceProtocolDecisionType` literal `queue-sub-run` pairs with `sub-run-queued` events.
+
+#### Local-provider clamp (CONCURRENCY-02)
+
+- New `RunEvent` variant `sub-run-concurrency-clamped` is emitted once per coordinator run when any active provider declares `metadata.locality === "local"`. Payload is `{ requestedMax, effectiveMax: 1, reason: "local-provider-detected", providerId }`.
+- Local-provider detection walks the active tree at each delegate fan-out: the parent `options.model` first, then future-compatible `agent.model` entries if present. The first local provider id is recorded on the clamp event.
+- Effective child concurrency is silently clamped to 1 for local providers regardless of caller config, including explicit `maxConcurrentChildren: 8`. The clamp does not throw and does not write to console; the event is the warning surface.
+- The clamp-emitted flag is scoped to the individual run, so concurrent runs do not suppress each other's `sub-run-concurrency-clamped` event.
+- New `ReplayTraceProtocolDecisionType` literal `mark-sub-run-concurrency-clamped` pairs with `sub-run-concurrency-clamped` events.
+
+#### Public-surface tests
+
+- `src/tests/event-schema.test.ts` now locks 17 run event variants, including `sub-run-queued` and `sub-run-concurrency-clamped`.
+- `src/tests/result-contract.test.ts` verifies the new public event types are reachable from the root `@dogpile/sdk` type re-exports.
+- `src/tests/config-validation.test.ts` locks invalid locality and `maxConcurrentChildren` validation.
+- `src/tests/cancellation-contract.test.ts` locks public detail/reason strings including `sibling-failed`, `local-provider-detected`, and `remote-override-on-local-host`.
+- `src/runtime/coordinator.test.ts` covers fan-out queuing, completion-order transcript behavior, sibling-failed queue drain, local-provider clamp-once behavior, remote-only no-op behavior, explicit override clamping, and per-run clamp isolation.
+
+### Added — Streaming and child error escalation (Phase 4)
+
+The STREAM-* and ERROR-* requirements ship together so live consumers can demux
+child activity, parent cancellation closes delegated work, and terminal child
+failures surface as stable public `DogpileError` instances.
+
+- **`parentRunIds: readonly string[]` on stream events.** Every `StreamLifecycleEvent` and `StreamOutputEvent` variant accepts an optional root-to-immediate-parent ancestry chain for live bubbled child events. The chain is not persisted into parent `RunResult.events`; `replayStream()` reconstructs it from embedded child traces.
+- **New aborted lifecycle event.** Parent streams emit `{ type: "aborted", runId, at, reason: "parent-aborted" | "timeout", detail? }` before terminal `error` events on abort paths, including parent-aborted-after-completion cases with no synthetic child failure to drain.
+- **`onChildFailure?: "continue" | "abort"` config option.** Engine-level and per-run surfaces accept the option; default `"continue"` preserves coordinator retry/redirect behavior. `"abort"` skips the follow-up plan turn after the first real child failure and re-throws the snapshotted triggering failure.
+- **Optional `detail.source?: "provider" | "engine"` on `provider-timeout` errors.** OpenAI-compatible HTTP timeout responses set `"provider"`; child engine deadlines set `"engine"`. Backwards-compat: absent `detail.source` means `"provider"`. Parent-budget propagation remains `code: "aborted"` with `detail.reason: "timeout"`.
+- **Coordinator prompt structured failure roster.** The next coordinator plan prompt includes `## Sub-run failures since last decision` with a JSON array of real child failures from the latest dispatch wave: `{ childRunId, intent, error: { code, message, detail.reason? }, partialCost: { usd } }`. Synthetic `sibling-failed` / `parent-aborted` bookkeeping failures and `partialTrace` are intentionally excluded.
+- **Cancel-during-fan-out drain.** `StreamHandle.cancel()` drains active children before terminal stream error: in-flight children emit synthetic `sub-run-failed` with `error.detail.reason: "parent-aborted"` and queued children retain `sibling-failed`; late events from drained children are suppressed at the parent stream boundary.
+- **Terminate-without-final throw rule clarified.** "Original DogpileError unwrapped" means the child's own thrown `DogpileError`, not a wrapper, and not the first failure chronologically. Budget and abort-mode terminal paths re-throw the last real child failure by event order, excluding synthetic sibling-failed and parent-aborted entries. Explicit cancel/abort wins and throws the cancel error verbatim.
+
+### Added — Documentation and runnable example (Phase 5)
+
+- **`docs/recursive-coordination.md`** — new dedicated docs page: concepts, propagation rules, `parentRunIds` chain, structured failures, replay parity, "Not in v0.4.0" deferrals, canonical worked example. (Phase 5)
+- **`docs/recursive-coordination-reference.md`** — new exhaustive reference page: every `sub-run-*` event payload, every `detail.reason` value, every `RunCallOptions` field, every `DogpileError` `code`/`detail.reason` combo from v0.4.0, replay-drift error matrix, provider locality classification table. (Phase 5)
+- **`docs/developer-usage.md`** — new "Recursive coordination" section with maintenance comment cross-linking the dedicated pages. (Phase 5)
+- **`docs/reference.md`** — augmented with v0.4.0 exports (`RunCallOptions`, the seven `SubRun*Event` types, `classifyHostLocality`, `recomputeAccountingFromTrace`, new `ReplayTraceProtocolDecisionType` literals) and cross-links to the dedicated reference page. (Phase 5)
+- **`README.md` "Choose Your Path"** — new row pointing at `delegate` and `docs/recursive-coordination.md`. (Phase 5)
+- **`examples/recursive-coordination/`** — new runnable example using the deterministic provider by default and `createOpenAICompatibleProvider` in live mode. Reuses the Hugging Face upload GUI mission verbatim and wraps it in a coordinator-with-delegate. Demonstrates all v0.4.0 surfaces: parentRunIds chain, intentionally-failing child with `partialCost`, structured failures in the next coordinator turn, locality-driven concurrency clamp. (Phase 5)
+- **`examples/README.md`** — index entry mirroring the huggingface-upload-gui section format. (Phase 5)
+- **`AGENTS.md` + `CLAUDE.md`** — cross-cutting-invariants list mirrors a recursive-coordination public-surface entry. (Phase 5)
+- Prepared the release identity for `@dogpile/sdk@0.4.0` and `dogpile-sdk-0.4.0.tgz`. (Phase 5)
+
+### Notes
+
+- No package `exports` / `files` change. All new public types ship through the existing `@dogpile/sdk` root entry. `recomputeAccountingFromTrace` and the depth-gate helpers (`assertDepthWithinLimit`, `depthOverflowError`) remain runtime-internal.
+- Phase 1 does not propagate cost caps, parent timeouts to children with no caller-set timeout, child-event bubbling into the parent stream, or worker-side delegation — those land in v0.4.0 Phases 2–4. Phase 1 leaves event ordering schema-stable for the future Phase 4 child-event-bubbling addition.
+- Documentation pages (`docs/recursive-coordination*.md`) and example artifacts (`examples/recursive-coordination/`) are repository-only — neither is added to `package.json` `files`. Released tarball payload is unchanged. (Phase 5)
+
 ## 0.3.1
 
 - Prepared the patch release identity for `@dogpile/sdk@0.3.1` and `dogpile-sdk-0.3.1.tgz`.

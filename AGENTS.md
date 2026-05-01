@@ -23,6 +23,10 @@ Write ESM TypeScript with explicit `.js` extensions in relative imports. Preserv
 
 Vitest is the test framework. Name tests `*.test.ts`, keep focused unit tests near their modules, and use `src/tests/` for cross-cutting API, packaging, browser, and smoke contracts. Add or update tests for behavior changes, public API changes, package export changes, and termination or trace semantics. Run `pnpm run test` for normal changes and `pnpm run verify` before release-facing work.
 
+## Cross-cutting Invariants
+
+- **Recursive coordination public-surface mirror.** The `delegate` decision variant, `sub-run-*` event family, `RunCallOptions`, `parentRunIds` stream chain, `locality`, `maxConcurrentChildren`, and `maxDepth` are public surface. Changes propagate to `src/tests/event-schema.test.ts`, `src/tests/result-contract.test.ts`, `src/tests/package-exports.test.ts`, `package.json` `exports`/`files`, `CHANGELOG.md`, AND the two recursive-coordination doc pages (`docs/recursive-coordination.md` + `docs/recursive-coordination-reference.md`).
+
 ## Commit & Pull Request Guidelines
 
 Recent history uses Conventional Commit-style subjects such as `fix: ...`, `feat: ...`, `chore: ...`, `docs: ...`, and `ci: ...`; follow that pattern and keep subjects imperative and concise. Pull requests should describe the change, list verification commands run, link related issues, and call out public API, packaging, or browser bundle impact. Include screenshots only for UI-facing example changes.

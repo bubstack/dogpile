@@ -60,6 +60,10 @@ type ReleaseIdentity = {
   readonly packFilename: string;
 };
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 const rootDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const execFileAsync = promisify(execFile);
 const privateHelperExportNames = [
@@ -1069,7 +1073,12 @@ describe("package exports", () => {
     expect(readme).toContain("yarn add @dogpile/sdk");
     expect(releaseDocs).toContain(`${releaseIdentity.packageName}@${releaseIdentity.version}`);
     expect(releaseDocs).toContain(releaseIdentity.packFilename);
-    expect(changelog).toContain(`## ${releaseIdentity.version}`);
+    expect(changelog).toMatch(
+      new RegExp(
+        `^## (?:\\[Unreleased\\] — v${escapeRegExp(releaseIdentity.version)}|\\[${escapeRegExp(releaseIdentity.version)}\\] — \\d{4}-\\d{2}-\\d{2})$`,
+        "m"
+      )
+    );
     expect(changelog).toContain(`${releaseIdentity.packageName}@${releaseIdentity.version}`);
     expect(changelog).toContain(releaseIdentity.packFilename);
     expect(changelog).toContain("@dogpile/sdk");

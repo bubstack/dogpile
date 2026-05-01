@@ -87,6 +87,14 @@ export type DogpileProviderInvalidRequestError = DogpileErrorBase<"provider-inva
 export type DogpileProviderInvalidResponseError = DogpileErrorBase<"provider-invalid-response">;
 export type DogpileProviderNotFoundError = DogpileErrorBase<"provider-not-found">;
 export type DogpileProviderRateLimitedError = DogpileErrorBase<"provider-rate-limited">;
+/**
+ * Provider timeout errors may include `detail.source?: "provider" | "engine"`.
+ *
+ * Absence is backwards-compatible and should be interpreted as `"provider"`.
+ * `"engine"` means a child engine's own deadline expired before the provider
+ * returned; parent budget propagation remains `code: "aborted"` with
+ * `detail.reason: "timeout"`.
+ */
 export type DogpileProviderTimeoutError = DogpileErrorBase<"provider-timeout">;
 export type DogpileProviderUnavailableError = DogpileErrorBase<"provider-unavailable">;
 export type DogpileProviderUnsupportedError = DogpileErrorBase<"provider-unsupported">;
@@ -887,6 +895,14 @@ export interface ConfiguredModelProvider {
    * support incremental output and for callers that prefer batch execution.
    */
   stream?(request: ModelRequest): AsyncIterable<ModelOutputChunk>;
+  /**
+   * Optional provider hints for the runtime. Absent or omitted is treated as
+   * `remote` for concurrency clamping (CONCURRENCY-02 / Phase 3 D-01).
+   */
+  readonly metadata?: {
+    /** Locality hint for dispatch clamping. Absent -> "remote" for clamping. */
+    readonly locality?: "local" | "remote";
+  };
 }
 
 /**
@@ -1284,16 +1300,19 @@ export type {
 
 // Events: see src/types/events.ts
 import type {
+  AbortedEvent,
   AgentDecision,
   AgentParticipation,
   BroadcastContribution,
   BroadcastEvent,
   BudgetStopEvent,
+  DelegateAgentDecision,
   FinalEvent,
   ModelActivityEvent,
   ModelOutputChunkEvent,
   ModelRequestEvent,
   ModelResponseEvent,
+  ParticipateAgentDecision,
   RoleAssignmentEvent,
   RunEvent,
   StreamCompletionEvent,
@@ -1301,6 +1320,13 @@ import type {
   StreamEvent,
   StreamLifecycleEvent,
   StreamOutputEvent,
+  SubRunBudgetClampedEvent,
+  SubRunCompletedEvent,
+  SubRunConcurrencyClampedEvent,
+  SubRunFailedEvent,
+  SubRunParentAbortedEvent,
+  SubRunQueuedEvent,
+  SubRunStartedEvent,
   ToolActivityEvent,
   ToolCallEvent,
   ToolResultEvent,
@@ -1308,8 +1334,11 @@ import type {
   TurnEvent
 } from "./types/events.js";
 export type {
+  AbortedEvent,
   AgentDecision,
   AgentParticipation,
+  DelegateAgentDecision,
+  ParticipateAgentDecision,
   BroadcastContribution,
   BroadcastEvent,
   BudgetStopEvent,
@@ -1325,6 +1354,13 @@ export type {
   StreamEvent,
   StreamLifecycleEvent,
   StreamOutputEvent,
+  SubRunBudgetClampedEvent,
+  SubRunCompletedEvent,
+  SubRunConcurrencyClampedEvent,
+  SubRunFailedEvent,
+  SubRunParentAbortedEvent,
+  SubRunQueuedEvent,
+  SubRunStartedEvent,
   ToolActivityEvent,
   ToolCallEvent,
   ToolResultEvent,
@@ -1372,7 +1408,7 @@ export interface TranscriptEntry {
   /** Text produced by the agent. */
   readonly output: string;
   /** Optional structured role/participation decision parsed from model output. */
-  readonly decision?: AgentDecision;
+  readonly decision?: AgentDecision | readonly DelegateAgentDecision[];
   /** Ordered runtime tool calls and results requested during this turn. */
   readonly toolCalls?: readonly TranscriptToolCall[];
 }
@@ -1535,6 +1571,17 @@ export interface Trace {
   readonly providerCalls: readonly ReplayTraceProviderCall[];
   /** Final output artifact for replay consumers. */
   readonly finalOutput: ReplayTraceFinalOutput;
+  /** Internal hand-off for fail-fast coordinator child failure handling. */
+  readonly triggeringFailureForAbortMode?: {
+    readonly childRunId: string;
+    readonly intent: string;
+    readonly error: {
+      readonly code: string;
+      readonly message: string;
+      readonly detail?: { readonly reason?: string };
+    };
+    readonly partialCost: { readonly usd: number };
+  };
   /**
    * Ordered coordination and lifecycle events.
    *
@@ -1760,7 +1807,47 @@ export interface DogpileOptions extends BudgetCostTierOptions {
   readonly seed?: string | number;
   /** Optional caller cancellation signal passed to provider-facing model requests. */
   readonly signal?: AbortSignal;
+  /**
+   * Maximum coordinator → sub-run recursion depth.
+   *
+   * Defaults to 4. Per-run values can only LOWER the engine ceiling; raising
+   * is silently capped via
+   * `effectiveMaxDepth = Math.min(engineMaxDepth, runMaxDepth ?? Infinity)`.
+   * Depth overflow throws `DogpileError({ code: "invalid-configuration",
+   * detail: { kind: "delegate-validation", reason: "depth-overflow" } })`.
+   */
+  readonly maxDepth?: number;
+  /**
+   * Maximum delegated child runs that may execute in parallel.
+   *
+   * Defaults to 4. Per-run and per-decision values can only lower the engine
+   * ceiling; the effective value is `min(engine, run ?? Infinity, decision ?? Infinity)`.
+   */
+  readonly maxConcurrentChildren?: number;
+  /**
+   * Fallback timeout (milliseconds) applied to delegated sub-runs when neither
+   * the parent's `budget.timeoutMs` nor the decision-level
+   * `decision.budget.timeoutMs` specifies one (BUDGET-02 / D-14).
+   *
+   * Precedence (most specific wins):
+   *   `decision.budget.timeoutMs` > parent's remaining deadline (when parent has
+   *   `budget.timeoutMs`) > `defaultSubRunTimeoutMs` > undefined.
+   *
+   * Default: `undefined` (preserves the "no sub-run timeout" posture).
+   */
+  readonly defaultSubRunTimeoutMs?: number;
+  /**
+   * Controls how coordinator runs react after a real delegated child failure.
+   *
+   * Defaults to `"continue"`, which re-issues the coordinator plan turn with
+   * structured failure context. `"abort"` skips that follow-up plan turn and
+   * records the triggering child failure for the unhandled-failure throw path.
+   */
+  readonly onChildFailure?: OnChildFailureMode;
 }
+
+/** Coordinator behavior after a real child failure in a delegated dispatch wave. */
+export type OnChildFailureMode = "continue" | "abort";
 
 /**
  * Low-level engine configuration for reusable protocol execution.
@@ -1824,6 +1911,63 @@ export interface EngineOptions {
   readonly seed?: string | number;
   /** Optional caller cancellation signal passed to provider-facing model requests. */
   readonly signal?: AbortSignal;
+  /**
+   * Maximum coordinator → sub-run recursion depth ceiling.
+   *
+   * Defaults to 4. Per-run lowering happens at `engine.run` / `engine.stream`
+   * call sites via {@link RunCallOptions.maxDepth}; per-run can only lower this
+   * ceiling. Depth overflow throws `DogpileError({ code: "invalid-configuration",
+   * detail: { kind: "delegate-validation", reason: "depth-overflow" } })`.
+   */
+  readonly maxDepth?: number;
+  /**
+   * Maximum delegated child runs that may execute in parallel.
+   *
+   * Defaults to 4. Per-run lowering happens at `engine.run` / `engine.stream`
+   * call sites via {@link RunCallOptions.maxConcurrentChildren}.
+   */
+  readonly maxConcurrentChildren?: number;
+  /**
+   * Fallback timeout (milliseconds) applied to delegated sub-runs when neither
+   * the parent's `budget.timeoutMs` nor the decision-level
+   * `decision.budget.timeoutMs` specifies one (BUDGET-02 / D-14).
+   *
+   * Precedence (most specific wins):
+   *   `decision.budget.timeoutMs` > parent's remaining deadline (when parent has
+   *   `budget.timeoutMs`) > `defaultSubRunTimeoutMs` > undefined.
+   *
+   * Default: `undefined` (preserves the "no sub-run timeout" posture).
+   */
+  readonly defaultSubRunTimeoutMs?: number;
+  /**
+   * Controls how coordinator runs react after a real delegated child failure.
+   *
+   * Defaults to `"continue"`. `"abort"` skips the follow-up coordinator plan
+   * turn and records the triggering child failure for fail-fast callers.
+   */
+  readonly onChildFailure?: OnChildFailureMode;
+}
+
+/**
+ * Per-call overrides accepted by {@link Engine.run} and {@link Engine.stream}.
+ *
+ * @remarks
+ * Only fields that should be controllable per-mission live here. Today the
+ * fields are controls that can only LOWER the engine's ceiling.
+ */
+export interface RunCallOptions {
+  /**
+   * Per-run maximum recursion depth. Cannot raise the engine's ceiling — the
+   * effective value is `Math.min(engine.maxDepth ?? 4, runOptions.maxDepth ?? Infinity)`.
+   */
+  readonly maxDepth?: number;
+  /**
+   * Per-run delegated child concurrency ceiling. Cannot raise the engine's
+   * ceiling.
+   */
+  readonly maxConcurrentChildren?: number;
+  /** Per-run child-failure behavior. Overrides the engine default. */
+  readonly onChildFailure?: OnChildFailureMode;
 }
 
 /**
@@ -1903,7 +2047,7 @@ export interface StreamSubscription {
  */
 export interface Engine {
   /** Execute a mission to completion and return the final result. */
-  run(intent: string): Promise<RunResult>;
+  run(intent: string, options?: RunCallOptions): Promise<RunResult>;
   /** Stream a mission's events while preserving access to the final result. */
-  stream(intent: string): StreamHandle;
+  stream(intent: string, options?: RunCallOptions): StreamHandle;
 }

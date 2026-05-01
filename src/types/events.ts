@@ -1,4 +1,5 @@
 import type {
+  BudgetCaps,
   BudgetStopReason,
   CostSummary,
   JsonObject,
@@ -9,11 +10,14 @@ import type {
   ModelResponse,
   NormalizedQualityScore,
   Protocol,
+  ProtocolName,
   RunEvaluation,
+  RunResult,
   RuntimeToolIdentity,
   RuntimeToolPermission,
   RuntimeToolResult,
-  TerminationStopRecord
+  TerminationStopRecord,
+  Trace
 } from "../types.js";
 
 
@@ -39,6 +43,8 @@ export interface RoleAssignmentEvent {
   readonly type: "role-assignment";
   /** Stable run id shared by all events in one workflow. */
   readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
   /** ISO-8601 event timestamp. */
   readonly at: string;
   /** Agent receiving the role assignment. */
@@ -63,6 +69,8 @@ export interface ModelRequestEvent {
   readonly type: "model-request";
   /** Stable run id shared by all events in one workflow. */
   readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
   /** ISO-8601 event timestamp. */
   readonly at: string;
   /** Stable provider call id within the run. */
@@ -91,6 +99,8 @@ export interface ModelResponseEvent {
   readonly type: "model-response";
   /** Stable run id shared by all events in one workflow. */
   readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
   /** ISO-8601 event timestamp. */
   readonly at: string;
   /** Stable provider call id within the run. */
@@ -131,6 +141,8 @@ export interface ModelOutputChunkEvent {
   readonly type: "model-output-chunk";
   /** Stable run id shared by all events in one workflow. */
   readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
   /** ISO-8601 event timestamp. */
   readonly at: string;
   /** Agent currently producing output. */
@@ -160,6 +172,8 @@ export interface ToolCallEvent {
   readonly type: "tool-call";
   /** Stable run id shared by all events in one workflow. */
   readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
   /** ISO-8601 event timestamp. */
   readonly at: string;
   /** Stable tool call id within the run. */
@@ -187,6 +201,8 @@ export interface ToolResultEvent {
   readonly type: "tool-result";
   /** Stable run id shared by all events in one workflow. */
   readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
   /** ISO-8601 event timestamp. */
   readonly at: string;
   /** Stable tool call id within the run. */
@@ -211,7 +227,9 @@ export interface ToolResultEvent {
  * metadata so reproduction harnesses can distinguish contribution from
  * voluntary abstention without reparsing raw text.
  */
-export interface AgentDecision {
+export interface ParticipateAgentDecision {
+  /** Discriminant marking this as a participate-style decision. */
+  readonly type: "participate";
   /** Task-specific role selected by the agent for this turn. */
   readonly selectedRole: string;
   /** Whether the agent contributed or voluntarily abstained. */
@@ -221,6 +239,46 @@ export interface AgentDecision {
   /** Agent-provided contribution text, or abstention explanation. */
   readonly contribution: string;
 }
+
+/**
+ * Decision emitted by a coordinator agent that delegates a sub-mission to a
+ * coordination protocol rather than contributing directly. The runtime
+ * dispatches a child run when this decision is returned.
+ */
+export interface DelegateAgentDecision {
+  /** Discriminant marking this as a delegate-style decision. */
+  readonly type: "delegate";
+  /** Coordination protocol the child sub-run will execute. */
+  readonly protocol: ProtocolName;
+  /** Mission text passed to the child sub-run. */
+  readonly intent: string;
+  /**
+   * Optional model provider id assertion. When set, the runtime requires the
+   * value to match the parent's `ConfiguredModelProvider.id` (D-11) — child
+   * runs always inherit the parent provider instance verbatim.
+   */
+  readonly model?: string;
+  /** Optional per-decision budget caps applied to the child run. */
+  readonly budget?: BudgetCaps;
+  /**
+   * Optional per-decision child concurrency ceiling. This can only lower the
+   * engine/run effective max for the current coordinator fan-out turn (D-05).
+   */
+  readonly maxConcurrentChildren?: number;
+}
+
+/**
+ * Discriminated union of structured agent decisions parsed from model output.
+ *
+ * - `participate`: paper-style turn contribution; carries the four labeled
+ *   fields (`selectedRole`, `participation`, `rationale`, `contribution`).
+ * - `delegate`: coordinator-only delegation to a child sub-run. The runtime
+ *   dispatches a sub-mission when this branch is returned.
+ *
+ * Consumers MUST narrow on `decision.type === "participate"` before reading
+ * paper-style fields.
+ */
+export type AgentDecision = ParticipateAgentDecision | DelegateAgentDecision;
 
 /**
  * Agent participation state for a paper-style turn decision.
@@ -256,6 +314,8 @@ export interface TurnEvent {
   readonly type: "agent-turn";
   /** Stable run id shared by all events in one workflow. */
   readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
   /** ISO-8601 event timestamp. */
   readonly at: string;
   /** Agent that produced this turn. */
@@ -267,7 +327,7 @@ export interface TurnEvent {
   /** Model output produced by the agent. */
   readonly output: string;
   /** Optional structured role/participation decision parsed from model output. */
-  readonly decision?: AgentDecision;
+  readonly decision?: AgentDecision | readonly DelegateAgentDecision[];
   /** Cumulative cost after this turn. */
   readonly cost: CostSummary;
 }
@@ -296,7 +356,7 @@ export interface BroadcastContribution {
   /** Independent model output produced for the shared mission. */
   readonly output: string;
   /** Optional structured role/participation decision parsed from model output. */
-  readonly decision?: AgentDecision;
+  readonly decision?: AgentDecision | readonly DelegateAgentDecision[];
 }
 
 /**
@@ -323,6 +383,8 @@ export interface BroadcastEvent {
   readonly type: "broadcast";
   /** Stable run id shared by all events in one workflow. */
   readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
   /** ISO-8601 event timestamp. */
   readonly at: string;
   /** One-based broadcast round number. */
@@ -346,6 +408,8 @@ export interface BudgetStopEvent {
   readonly type: "budget-stop";
   /** Stable run id shared by all events in one workflow. */
   readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
   /** ISO-8601 event timestamp. */
   readonly at: string;
   /** Normalized machine-readable budget stop reason. */
@@ -419,6 +483,259 @@ export interface FinalEvent {
 }
 
 /**
+ * Event emitted when the coordinator dispatches a delegated sub-run.
+ *
+ * @remarks
+ * Recorded immediately before the child run starts executing. Carries the
+ * child's run id, the parent decision id that triggered the dispatch, and the
+ * resolved protocol/intent/depth. The `recursive` flag marks the diagnostic
+ * case where a coordinator delegates to another coordinator (D-16).
+ *
+ * The event's `runId` is the PARENT run id, matching the existing trace
+ * convention; `parentRunId` duplicates it for explicit cross-reference.
+ */
+export interface SubRunStartedEvent {
+  /** Discriminant for event rendering and exhaustive switches. */
+  readonly type: "sub-run-started";
+  /** Parent run id; matches the surrounding trace runId. */
+  readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
+  /** ISO-8601 event timestamp. */
+  readonly at: string;
+  /** Child run id assigned to the dispatched sub-run. */
+  readonly childRunId: string;
+  /** Parent run id (duplicates `runId` for explicit cross-reference). */
+  readonly parentRunId: string;
+  /** Replay decision id of the parent decision that triggered this sub-run. */
+  readonly parentDecisionId: string;
+  /**
+   * 0-indexed position of this delegate within the fan-out array of its
+   * originating coordinator plan-turn (Phase 3 D-10). Single-delegate turns
+   * use `0` for backward compatibility. Together with `parentDecisionId`, this
+   * uniquely identifies the delegate within a fan-out.
+   */
+  readonly parentDecisionArrayIndex: number;
+  /** Coordination protocol the child run will execute. */
+  readonly protocol: ProtocolName;
+  /** Mission intent passed to the child run. */
+  readonly intent: string;
+  /** Recursion depth of the child run (1 for first-level sub-run). */
+  readonly depth: number;
+  /**
+   * Diagnostic flag set when a coordinator delegates to another coordinator
+   * (parent protocol === "coordinator" and child protocol === "coordinator").
+   */
+  readonly recursive?: boolean;
+}
+
+/**
+ * Event emitted when a delegated sub-run completes successfully.
+ *
+ * @remarks
+ * Carries the full {@link RunResult} as `subResult`, including the embedded
+ * child {@link Trace}. Replay walks the parent event sequence and recurses on
+ * `subResult.trace` to rehydrate sub-run accounting without re-invoking the
+ * provider (D-08).
+ */
+export interface SubRunCompletedEvent {
+  /** Discriminant for event rendering and exhaustive switches. */
+  readonly type: "sub-run-completed";
+  /** Parent run id; matches the surrounding trace runId. */
+  readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
+  /** ISO-8601 event timestamp. */
+  readonly at: string;
+  /** Child run id that produced this result. */
+  readonly childRunId: string;
+  /** Parent run id (duplicates `runId` for explicit cross-reference). */
+  readonly parentRunId: string;
+  /** Replay decision id of the parent decision that triggered the sub-run. */
+  readonly parentDecisionId: string;
+  /**
+   * 0-indexed position of this delegate within the fan-out array of its
+   * originating coordinator plan-turn (Phase 3 D-10). Single-delegate turns
+   * use `0` for backward compatibility. Together with `parentDecisionId`, this
+   * uniquely identifies the delegate within a fan-out.
+   */
+  readonly parentDecisionArrayIndex: number;
+  /** Full child {@link RunResult}, including the embedded child {@link Trace}. */
+  readonly subResult: RunResult;
+}
+
+/**
+ * Event emitted when a delegated sub-run fails before completion.
+ *
+ * @remarks
+ * Captures a structured `error` plus the partial {@link Trace} accumulated
+ * before failure. The same `Trace` shape used by completed runs is preserved
+ * — consumers can replay or inspect the partial child events without bespoke
+ * deserialization logic.
+ */
+export interface SubRunFailedEvent {
+  /** Discriminant for event rendering and exhaustive switches. */
+  readonly type: "sub-run-failed";
+  /** Parent run id; matches the surrounding trace runId. */
+  readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
+  /** ISO-8601 event timestamp. */
+  readonly at: string;
+  /** Child run id that failed. */
+  readonly childRunId: string;
+  /** Parent run id (duplicates `runId` for explicit cross-reference). */
+  readonly parentRunId: string;
+  /** Replay decision id of the parent decision that triggered the sub-run. */
+  readonly parentDecisionId: string;
+  /**
+   * 0-indexed position of this delegate within the fan-out array of its
+   * originating coordinator plan-turn (Phase 3 D-10). Single-delegate turns
+   * use `0` for backward compatibility. Together with `parentDecisionId`, this
+   * uniquely identifies the delegate within a fan-out.
+   */
+  readonly parentDecisionArrayIndex: number;
+  /** Structured failure description. */
+  readonly error: {
+    /** Stable error code (matches DogpileError code shape). */
+    readonly code: string;
+    /** Human-readable failure description. */
+    readonly message: string;
+    /** Provider id when the failure originated in a model call. */
+    readonly providerId?: string;
+    /** Optional structured detail (e.g., the failed delegate decision payload). */
+    readonly detail?: JsonObject;
+  };
+  /** Partial child {@link Trace} accumulated up to the failure point. */
+  readonly partialTrace: Trace;
+  /**
+   * Cost from provider calls completed before the child threw (BUDGET-03 / D-02).
+   *
+   * Equals `lastCostBearingEventCost(partialTrace.events) ?? emptyCost()`. The
+   * parent rolls this into its own `accounting.cost` so failed children
+   * contribute their real wallet spend.
+   */
+  readonly partialCost: CostSummary;
+}
+
+/**
+ * Event emitted when the parent's `signal` aborts AFTER a sub-run has already
+ * completed successfully but BEFORE the parent advances to its next coordinator
+ * turn (BUDGET-01 / D-10).
+ *
+ * @remarks
+ * Provides replay/streaming provenance for "parent gave up after a successful
+ * child finished." The marker is observable on `Dogpile.stream()` subscribers
+ * before the run errors with `code: "aborted"`. Non-streaming `run()` rejects
+ * with the abort error and does NOT expose the marker — `engine.ts` does not
+ * attach the parent events array to the rejected error (verified at
+ * `engine.ts:230-239`). Streaming-subscriber observability is the contract.
+ */
+export interface SubRunParentAbortedEvent {
+  /** Discriminant for event rendering and exhaustive switches. */
+  readonly type: "sub-run-parent-aborted";
+  /** Parent run id; matches the surrounding trace runId. */
+  readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
+  /** ISO-8601 event timestamp. */
+  readonly at: string;
+  /** Most-recent completed child run id whose completion preceded the abort. */
+  readonly childRunId: string;
+  /** Parent run id (duplicates `runId` for explicit cross-reference). */
+  readonly parentRunId: string;
+  /** Discriminator (currently always "parent-aborted"; reserved for future variants). */
+  readonly reason: "parent-aborted";
+}
+
+/**
+ * Event emitted when a delegated sub-run's requested `budget.timeoutMs`
+ * exceeds the parent's remaining deadline and is therefore clamped to the
+ * parent's remaining time (BUDGET-02 / D-12).
+ *
+ * @remarks
+ * Emitted on the parent trace BEFORE `sub-run-started`. When the requested
+ * decision-level timeout fits within the parent's remaining deadline, the
+ * event is NOT emitted (zero-overhead happy path). The parent's deadline is
+ * a hard ceiling for the whole tree, so any decision-level override that
+ * exceeds it is silently clamped rather than throwing — recording the
+ * requested-vs-clamped pair on the trace preserves provenance for replay.
+ */
+export interface SubRunBudgetClampedEvent {
+  /** Discriminant for event rendering and exhaustive switches. */
+  readonly type: "sub-run-budget-clamped";
+  /** Parent run id; matches the surrounding trace runId. */
+  readonly runId: string;
+  /** Root-first ancestry chain when bubbled through a parent stream. */
+  readonly parentRunIds?: readonly string[];
+  /** ISO-8601 event timestamp. */
+  readonly at: string;
+  /** Child run id whose budget was clamped. */
+  readonly childRunId: string;
+  /** Parent run id (duplicates `runId` for explicit cross-reference). */
+  readonly parentRunId: string;
+  /** Replay decision id of the parent decision that triggered the sub-run. */
+  readonly parentDecisionId: string;
+  /** The decision's originally requested `budget.timeoutMs` value (milliseconds). */
+  readonly requestedTimeoutMs: number;
+  /** The clamped child timeout actually applied (parent's remaining deadline, in milliseconds). */
+  readonly clampedTimeoutMs: number;
+  /** Discriminator for the clamp cause (currently always "exceeded-parent-remaining"). */
+  readonly reason: "exceeded-parent-remaining";
+}
+
+/**
+ * Event emitted when a delegated sub-run is enqueued because the
+ * coordinator's effective `maxConcurrentChildren` budget is fully in flight
+ * (Phase 3 D-07). Emitted ONLY when the slot is not immediately free —
+ * no-pressure runs do NOT emit this event.
+ *
+ * Three-event timeline under pressure: sub-run-queued → sub-run-started →
+ * sub-run-completed (or sub-run-failed). Without pressure: sub-run-started
+ * → completion (no queued event).
+ */
+export interface SubRunQueuedEvent {
+  readonly type: "sub-run-queued";
+  readonly runId: string;
+  readonly parentRunIds?: readonly string[];
+  readonly at: string;
+  readonly childRunId: string;
+  readonly parentRunId: string;
+  readonly parentDecisionId: string;
+  readonly parentDecisionArrayIndex: number;
+  readonly protocol: ProtocolName;
+  readonly intent: string;
+  readonly depth: number;
+  readonly queuePosition: number;
+}
+
+/**
+ * Event emitted ONCE per run when the runtime detects a `"local"` provider
+ * in the coordinator's active tree and clamps `maxConcurrentChildren` to 1
+ * (Phase 3 CONCURRENCY-02 / D-12). Emitted at the FIRST delegate dispatch
+ * where the local-provider check trips. Subsequent dispatches in the same
+ * run do NOT re-emit. Runs with no delegates, or runs with delegates but
+ * no local provider, never emit this event.
+ *
+ * The clamp is silent (no throw, no console output) per D-13 — this event
+ * IS the warning surface; subscribers can react via the engine's `emit`
+ * callback.
+ */
+export interface SubRunConcurrencyClampedEvent {
+  readonly type: "sub-run-concurrency-clamped";
+  readonly runId: string;
+  readonly parentRunIds?: readonly string[];
+  readonly at: string;
+  /** The pre-clamp effective max that would have applied (engine/run/decision min). */
+  readonly requestedMax: number;
+  /** Always 1 — locality-clamp is a fixed cap. */
+  readonly effectiveMax: 1;
+  readonly reason: "local-provider-detected";
+  /** Stable id of the FIRST local provider found during the active-tree walk. */
+  readonly providerId: string;
+}
+
+/**
  * Successful coordination event emitted by Dogpile and persisted in traces.
  *
  * @remarks
@@ -434,6 +751,11 @@ export interface FinalEvent {
  * - `tool-result`: one runtime tool invocation completed.
  * - `agent-turn`: one agent completed a prompt/response turn.
  * - `broadcast`: a broadcast round gathered independent contributions.
+ * - `sub-run-started`: a delegated sub-run was dispatched.
+ * - `sub-run-completed`: a delegated sub-run completed and embedded its full result.
+ * - `sub-run-failed`: a delegated sub-run failed before completion.
+ * - `sub-run-queued`: a delegated sub-run waited for a concurrency slot.
+ * - `sub-run-concurrency-clamped`: a local provider forced child concurrency to 1.
  * - `budget-stop`: a configured budget cap halted further model turns.
  * - `final`: the run completed and produced the final output.
  *
@@ -464,6 +786,13 @@ export type RunEvent =
   | ToolResultEvent
   | TurnEvent
   | BroadcastEvent
+  | SubRunStartedEvent
+  | SubRunCompletedEvent
+  | SubRunFailedEvent
+  | SubRunParentAbortedEvent
+  | SubRunBudgetClampedEvent
+  | SubRunQueuedEvent
+  | SubRunConcurrencyClampedEvent
   | BudgetStopEvent
   | FinalEvent;
 
@@ -483,10 +812,33 @@ export type ToolActivityEvent = ToolCallEvent | ToolResultEvent;
  * Lifecycle event yielded by `stream()`.
  *
  * These events describe workflow coordination state rather than model text.
- * Role assignment establishes the participant roster, while `budget-stop`
- * records a lifecycle halt before the terminal completion event.
+ * Role assignment establishes the participant roster, `budget-stop` records a
+ * lifecycle halt before the terminal completion event, and the `sub-run-*`
+ * variants surface delegated child-run dispatch boundaries.
  */
-export type StreamLifecycleEvent = RoleAssignmentEvent | BudgetStopEvent;
+export type StreamLifecycleEvent =
+  | RoleAssignmentEvent
+  | BudgetStopEvent
+  | SubRunStartedEvent
+  | SubRunCompletedEvent
+  | SubRunFailedEvent
+  | SubRunParentAbortedEvent
+  | SubRunBudgetClampedEvent
+  | SubRunQueuedEvent
+  | SubRunConcurrencyClampedEvent
+  | AbortedEvent;
+
+/**
+ * Lifecycle event yielded by `stream()` when a run is aborted.
+ */
+export interface AbortedEvent {
+  readonly type: "aborted";
+  readonly runId: string;
+  readonly at: string;
+  readonly reason: "parent-aborted" | "timeout";
+  readonly detail?: JsonObject;
+  readonly parentRunIds?: readonly string[];
+}
 
 /**
  * Output event yielded by `stream()`.
@@ -541,4 +893,3 @@ export type StreamCompletionEvent = FinalEvent;
  * {@link RunResult} trace to return.
  */
 export type StreamEvent = StreamLifecycleEvent | StreamOutputEvent | StreamErrorEvent | StreamCompletionEvent;
-

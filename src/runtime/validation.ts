@@ -17,6 +17,7 @@ import type {
 
 const protocolNames = ["coordinator", "sequential", "broadcast", "shared"] as const;
 const budgetTiers = ["fast", "balanced", "quality"] as const;
+const onChildFailureModes = ["continue", "abort"] as const;
 
 type ValidationRule =
   | "required"
@@ -24,6 +25,7 @@ type ValidationRule =
   | "finite-number"
   | "non-negative-number"
   | "positive-integer"
+  | "positive-finite-number"
   | "non-negative-integer"
   | "range"
   | "enum"
@@ -69,10 +71,27 @@ export function validateDogpileOptions(options: DogpileOptions): void {
   validateOptionalFunction(options.evaluate, "evaluate");
   validateOptionalSeed(options.seed, "seed");
   validateOptionalAbortSignal(options.signal, "signal");
+  validateOptionalNonNegativeInteger(options.maxDepth, "maxDepth");
+  validateOptionalPositiveInteger(options.maxConcurrentChildren, "maxConcurrentChildren");
+  validateOptionalPositiveFiniteNumber(options.defaultSubRunTimeoutMs, "defaultSubRunTimeoutMs");
+  validateOptionalOnChildFailure(options.onChildFailure, "onChildFailure");
 }
 
 export function validateMissionIntent(intent: unknown, path = "intent"): void {
   validateNonEmptyString(intent, path, "intent is required.");
+}
+
+/**
+ * Validate per-call run/stream options (`Engine.run(intent, options)` / `Engine.stream(...)`).
+ */
+export function validateRunCallOptions(options: unknown, path = "options"): void {
+  if (options === undefined) {
+    return;
+  }
+  const record = requireRecord(options, path);
+  validateOptionalNonNegativeInteger(record.maxDepth, `${path}.maxDepth`);
+  validateOptionalPositiveInteger(record.maxConcurrentChildren, `${path}.maxConcurrentChildren`);
+  validateOptionalOnChildFailure(record.onChildFailure, `${path}.onChildFailure`);
 }
 
 /**
@@ -92,6 +111,10 @@ export function validateEngineOptions(options: EngineOptions): void {
   validateOptionalFunction(options.evaluate, "evaluate");
   validateOptionalSeed(options.seed, "seed");
   validateOptionalAbortSignal(options.signal, "signal");
+  validateOptionalNonNegativeInteger(options.maxDepth, "maxDepth");
+  validateOptionalPositiveInteger(options.maxConcurrentChildren, "maxConcurrentChildren");
+  validateOptionalPositiveFiniteNumber(options.defaultSubRunTimeoutMs, "defaultSubRunTimeoutMs");
+  validateOptionalOnChildFailure(options.onChildFailure, "onChildFailure");
 }
 
 /**
@@ -195,6 +218,28 @@ function validateBudgetTier(value: BudgetTier, path: string): void {
   }
 }
 
+function validateOptionalOnChildFailure(value: unknown, path: string): void {
+  if (value === undefined) {
+    return;
+  }
+  if (value === "continue" || value === "abort") {
+    return;
+  }
+  throw new DogpileError({
+    code: "invalid-configuration",
+    message: `Invalid onChildFailure: expected "continue" or "abort", got ${JSON.stringify(value)}`,
+    retryable: false,
+    detail: {
+      kind: "configuration-validation",
+      path,
+      rule: "enum",
+      expected: onChildFailureModes.join(" | "),
+      received: describeValue(value),
+      reason: "invalid-on-child-failure"
+    }
+  });
+}
+
 /**
  * Validate configured model provider definitions at registration boundaries.
  */
@@ -203,6 +248,27 @@ export function validateModelProviderRegistration(value: unknown, path = "model"
   validateNonEmptyString(record.id, `${path}.id`, "model.id is required.");
   validateFunction(record.generate, `${path}.generate`);
   validateOptionalFunction(record.stream, `${path}.stream`);
+}
+
+/**
+ * Engine-time defense-in-depth check that a provider's optional
+ * `metadata.locality` is one of the two valid values when present (Phase 3 D-03).
+ * Catches user-implemented providers that bypass TypeScript checks.
+ */
+export function validateProviderLocality(
+  provider: ConfiguredModelProvider,
+  pathPrefix: string = "model"
+): void {
+  const loc = provider.metadata?.locality;
+  if (loc !== undefined && loc !== "local" && loc !== "remote") {
+    invalidConfiguration({
+      path: `${pathPrefix}.metadata.locality`,
+      rule: "enum",
+      message: `${pathPrefix}.metadata.locality must be "local" or "remote" when provided.`,
+      expected: "\"local\" | \"remote\"",
+      actual: loc
+    });
+  }
 }
 
 function validateVercelAILanguageModel(value: unknown, path: string): void {
@@ -699,6 +765,21 @@ function validateOptionalNonNegativeInteger(value: unknown, path: string): void 
       rule: "non-negative-integer",
       message: "value must be a non-negative integer.",
       expected: "integer >= 0",
+      actual: value
+    });
+  }
+}
+
+function validateOptionalPositiveFiniteNumber(value: unknown, path: string): void {
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    invalidConfiguration({
+      path,
+      rule: "positive-finite-number",
+      message: "value must be a positive finite number.",
+      expected: "finite number > 0",
       actual: value
     });
   }

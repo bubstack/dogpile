@@ -1,6 +1,8 @@
 import { DogpileError } from "../types.js";
 import type {
+  AbortedEvent,
   BudgetTier,
+  DogpileErrorCode,
   DogpileOptions,
   Engine,
   EngineOptions,
@@ -8,9 +10,11 @@ import type {
   JsonObject,
   JsonValue,
   ProtocolSelection,
+  RunCallOptions,
   RunEvaluation,
   RunEvent,
   RunResult,
+  SubRunFailedEvent,
   StreamErrorEvent,
   StreamEvent,
   StreamEventSubscriber,
@@ -19,7 +23,7 @@ import type {
   Trace
 } from "../types.js";
 import { runBroadcast } from "./broadcast.js";
-import { runCoordinator } from "./coordinator.js";
+import { runCoordinator, type AbortDrainFn } from "./coordinator.js";
 import {
   createReplayTraceFinalOutput,
   createReplayTraceBudgetStateChanges,
@@ -32,13 +36,29 @@ import {
   defaultAgents,
   normalizeProtocol,
   orderAgentsForTemperature,
+  recomputeAccountingFromTrace,
+  resolveOnChildFailure,
   tierTemperature
 } from "./defaults.js";
 import { runSequential } from "./sequential.js";
 import { runShared } from "./shared.js";
-import { createAbortErrorFromSignal, createTimeoutError } from "./cancellation.js";
+import {
+  classifyChildTimeoutSource,
+  createAbortErrorFromSignal,
+  createEngineDeadlineTimeoutError,
+  createTimeoutError
+} from "./cancellation.js";
 import { budget as budgetCondition } from "./termination.js";
-import { validateDogpileOptions, validateEngineOptions, validateMissionIntent } from "./validation.js";
+import {
+  validateDogpileOptions,
+  validateEngineOptions,
+  validateMissionIntent,
+  validateProviderLocality,
+  validateRunCallOptions
+} from "./validation.js";
+
+const DEFAULT_MAX_DEPTH = 4;
+const DEFAULT_MAX_CONCURRENT_CHILDREN = 4;
 
 const defaultHighLevelProtocol = "sequential";
 const defaultHighLevelTier = "balanced";
@@ -67,10 +87,34 @@ export function createEngine(options: EngineOptions): Engine {
   const temperature = options.temperature ?? tierTemperature(options.tier);
   const agents = orderAgentsForTemperature(options.agents ?? defaultAgents(), temperature, options.seed);
   const terminate = options.terminate ?? (options.budget ? conditionFromBudget(options.budget) : undefined);
+  const engineMaxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const engineMaxConcurrentChildren = options.maxConcurrentChildren ?? DEFAULT_MAX_CONCURRENT_CHILDREN;
+  const engineOnChildFailure = options.onChildFailure;
 
   return {
-    run(intent: string): Promise<RunResult> {
+    run(intent: string, runOptions?: RunCallOptions): Promise<RunResult> {
       validateMissionIntent(intent);
+      validateRunCallOptions(runOptions);
+      validateProviderLocality(options.model, "model");
+
+      const effectiveMaxDepth = Math.min(
+        engineMaxDepth,
+        runOptions?.maxDepth ?? Number.POSITIVE_INFINITY
+      );
+      assertRunDoesNotRaiseEngineMax(
+        "maxConcurrentChildren",
+        runOptions?.maxConcurrentChildren,
+        engineMaxConcurrentChildren
+      );
+      const effectiveMaxConcurrentChildren = Math.min(
+        engineMaxConcurrentChildren,
+        runOptions?.maxConcurrentChildren ?? Number.POSITIVE_INFINITY
+      );
+      const onChildFailure = resolveOnChildFailure(runOptions?.onChildFailure, engineOnChildFailure);
+
+      const startedAtMs = Date.now();
+      const parentDeadlineMs =
+        options.budget?.timeoutMs !== undefined ? startedAtMs + options.budget.timeoutMs : undefined;
 
       return runNonStreamingProtocol({
         intent,
@@ -85,12 +129,37 @@ export function createEngine(options: EngineOptions): Engine {
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(terminate ? { terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
-        ...(options.evaluate ? { evaluate: options.evaluate } : {})
+        ...(options.evaluate ? { evaluate: options.evaluate } : {}),
+        currentDepth: 0,
+        effectiveMaxDepth,
+        effectiveMaxConcurrentChildren,
+        onChildFailure,
+        ...(parentDeadlineMs !== undefined ? { parentDeadlineMs } : {}),
+        ...(options.defaultSubRunTimeoutMs !== undefined
+          ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
+          : {})
       });
     },
 
-    stream(intent: string): StreamHandle {
+    stream(intent: string, runOptions?: RunCallOptions): StreamHandle {
       validateMissionIntent(intent);
+      validateRunCallOptions(runOptions);
+      validateProviderLocality(options.model, "model");
+
+      const effectiveMaxDepth = Math.min(
+        engineMaxDepth,
+        runOptions?.maxDepth ?? Number.POSITIVE_INFINITY
+      );
+      assertRunDoesNotRaiseEngineMax(
+        "maxConcurrentChildren",
+        runOptions?.maxConcurrentChildren,
+        engineMaxConcurrentChildren
+      );
+      const effectiveMaxConcurrentChildren = Math.min(
+        engineMaxConcurrentChildren,
+        runOptions?.maxConcurrentChildren ?? Number.POSITIVE_INFINITY
+      );
+      const onChildFailure = resolveOnChildFailure(runOptions?.onChildFailure, engineOnChildFailure);
 
       const pendingEvents: StreamEvent[] = [];
       const pendingResolvers: Array<(value: IteratorResult<StreamEvent>) => void> = [];
@@ -105,7 +174,10 @@ export function createEngine(options: EngineOptions): Engine {
       const abortRace = createAbortRace(abortController.signal, options.model.id);
       let complete = false;
       let lastRunId = "";
+      let rootRunId: string | undefined;
       let pendingFinalEvent: FinalEvent | undefined;
+      let activeAbortDrain: AbortDrainFn | undefined;
+      const failureInstancesByChildRunId = new Map<string, DogpileError>();
       let status: StreamHandleStatus = "running";
       let resolveResult!: (result: RunResult) => void;
       let rejectResult!: (error: unknown) => void;
@@ -163,6 +235,9 @@ export function createEngine(options: EngineOptions): Engine {
         }
 
         try {
+          const streamStartedAtMs = Date.now();
+          const streamParentDeadlineMs =
+            options.budget?.timeoutMs !== undefined ? streamStartedAtMs + options.budget.timeoutMs : undefined;
           const baseResult = await abortRace.run(runProtocol({
             intent,
             protocol,
@@ -175,21 +250,43 @@ export function createEngine(options: EngineOptions): Engine {
             ...(options.seed !== undefined ? { seed: options.seed } : {}),
             signal: abortController.signal,
             ...(terminate ? { terminate } : {}),
+            currentDepth: 0,
+            effectiveMaxDepth,
+            effectiveMaxConcurrentChildren,
+            onChildFailure,
+            ...(streamParentDeadlineMs !== undefined ? { parentDeadlineMs: streamParentDeadlineMs } : {}),
+            ...(options.defaultSubRunTimeoutMs !== undefined
+              ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
+              : {}),
+            streamEvents: true,
             emit(event: RunEvent): void {
               if (status !== "running") {
                 return;
               }
 
+              const parentRunIds = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
+              if (rootRunId === undefined && parentRunIds === undefined) {
+                rootRunId = event.runId;
+              }
+
               lastRunId = event.runId;
-              if (event.type === "final") {
+              if (event.type === "final" && event.runId === rootRunId) {
                 pendingFinalEvent = event;
                 return;
               }
               publish(event);
-            }
+            },
+            registerAbortDrain(drain: AbortDrainFn): void {
+              activeAbortDrain = drain;
+            },
+            failureInstancesByChildRunId
           }));
           if (status !== "running") {
             return;
+          }
+          const terminalThrow = resolveRuntimeTerminalThrow(baseResult.trace, failureInstancesByChildRunId);
+          if (terminalThrow) {
+            throw terminalThrow;
           }
 
           const finalizedResult = await abortRace.run(applyRunEvaluation(baseResult, options.evaluate));
@@ -213,6 +310,10 @@ export function createEngine(options: EngineOptions): Engine {
 
           const runtimeError = timeoutLifecycle.translateError(error);
           status = isCancellationError(runtimeError) ? "cancelled" : "failed";
+          if (shouldPublishAborted(runtimeError)) {
+            activeAbortDrain?.(runtimeError);
+            publish(createStreamAbortedEvent(runtimeError, lastRunId));
+          }
           publish(createStreamErrorEvent(runtimeError, lastRunId));
           closeStream();
           rejectResult(runtimeError);
@@ -225,9 +326,11 @@ export function createEngine(options: EngineOptions): Engine {
         }
 
         const error = createStreamCancellationError(options.model.id, cause);
-        status = "cancelled";
         abortController.abort(error);
+        activeAbortDrain?.(error);
+        publish(createStreamAbortedEvent(error, lastRunId));
         publish(createStreamErrorEvent(error, lastRunId));
+        status = "cancelled";
         closeStream();
         rejectResult(error);
       }
@@ -238,6 +341,7 @@ export function createEngine(options: EngineOptions): Engine {
         }
 
         complete = true;
+        failureInstancesByChildRunId.clear();
         removeCallerAbortListener();
         timeoutLifecycle.cleanup();
         abortRace.cleanup();
@@ -303,6 +407,7 @@ function createNonStreamingAbortLifecycle(options: {
   readonly callerSignal?: AbortSignal | undefined;
   readonly timeoutMs?: number | undefined;
   readonly providerId: string;
+  readonly timeoutErrorSource?: "runtime" | "engine";
 }): AbortLifecycle {
   if (options.timeoutMs === undefined) {
     return {
@@ -321,7 +426,8 @@ function createNonStreamingAbortLifecycle(options: {
   const timeoutLifecycle = createTimeoutAbortLifecycle({
     abortController,
     timeoutMs: options.timeoutMs,
-    providerId: options.providerId
+    providerId: options.providerId,
+    timeoutErrorSource: options.timeoutErrorSource ?? "runtime"
   });
   const abortRace = createAbortRace(abortController.signal, options.providerId);
   const removeCallerAbortListener = wireCallerAbortSignal(options.callerSignal, abortController, () => {
@@ -348,6 +454,7 @@ function createTimeoutAbortLifecycle(options: {
   readonly abortController: AbortController;
   readonly timeoutMs?: number | undefined;
   readonly providerId: string;
+  readonly timeoutErrorSource?: "runtime" | "engine";
 }): TimeoutAbortLifecycle {
   if (options.timeoutMs === undefined) {
     return {
@@ -358,7 +465,14 @@ function createTimeoutAbortLifecycle(options: {
     };
   }
 
-  const timeoutError = createTimeoutError(options.providerId, options.timeoutMs);
+  const timeoutSource = classifyChildTimeoutSource(undefined, {
+    ...(options.timeoutErrorSource === "engine" ? { engineDefaultTimeoutMs: options.timeoutMs } : {}),
+    isProviderError: false
+  });
+  const timeoutError =
+    options.timeoutErrorSource === "engine" && timeoutSource === "engine"
+      ? createEngineDeadlineTimeoutError(options.providerId, options.timeoutMs)
+      : createTimeoutError(options.providerId, options.timeoutMs);
   const timeoutId = setTimeout(() => {
     options.abortController.abort(timeoutError);
   }, options.timeoutMs);
@@ -454,6 +568,28 @@ function readAbortSignalReason(signal: AbortSignal | undefined): unknown {
   return signal?.aborted ? signal.reason : undefined;
 }
 
+function createStreamAbortedEvent(error: unknown, runId: string): AbortedEvent {
+  return {
+    type: "aborted",
+    runId,
+    at: new Date().toISOString(),
+    reason: streamAbortedReason(error)
+  };
+}
+
+function shouldPublishAborted(error: unknown): boolean {
+  return DogpileError.isInstance(error) && (error.code === "aborted" || error.code === "timeout");
+}
+
+function streamAbortedReason(error: unknown): AbortedEvent["reason"] {
+  if (DogpileError.isInstance(error)) {
+    if (error.code === "timeout" || error.detail?.["reason"] === "timeout") {
+      return "timeout";
+    }
+  }
+  return "parent-aborted";
+}
+
 function createStreamErrorEvent(error: unknown, runId: string): StreamErrorEvent {
   if (DogpileError.isInstance(error)) {
     return {
@@ -519,15 +655,49 @@ interface RunProtocolOptions {
   readonly terminate?: EngineOptions["terminate"];
   readonly wrapUpHint?: EngineOptions["wrapUpHint"];
   readonly emit?: (event: RunEvent) => void;
+  readonly streamEvents?: boolean;
+  /**
+   * Current recursion depth. Top-level runs use 0; the coordinator dispatch
+   * loop increments before invoking {@link runProtocol} for a child run.
+   * Plan 04 will wire `effectiveMaxDepth` validation around this value.
+   */
+  readonly currentDepth?: number;
+  /**
+   * Effective max recursion depth. Plan 04 enforces; Plan 03 plumbs the param.
+   */
+  readonly effectiveMaxDepth?: number;
+  /** Effective max delegated child concurrency resolved at run start. */
+  readonly effectiveMaxConcurrentChildren?: number;
+  readonly onChildFailure?: EngineOptions["onChildFailure"];
+  /**
+   * Root-run deadline (epoch ms) threaded through every recursive coordinator
+   * dispatch (BUDGET-02 / D-12). Children inherit `parentDeadlineMs - now()`
+   * as their default timeout window.
+   */
+  readonly parentDeadlineMs?: number;
+  /**
+   * Engine-level fallback sub-run timeout (BUDGET-02 / D-14). Applied only when
+   * neither the parent nor the decision specifies a `budget.timeoutMs`.
+   */
+  readonly defaultSubRunTimeoutMs?: number;
+  readonly registerAbortDrain?: (drain: AbortDrainFn) => void;
+  readonly failureInstancesByChildRunId?: Map<string, DogpileError>;
 }
 
 type NonStreamingProtocolOptions = Omit<RunProtocolOptions, "emit"> & Pick<EngineOptions, "evaluate">;
 
 async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Promise<RunResult> {
+  const failureInstancesByChildRunId = new Map<string, DogpileError>();
   const abortLifecycle = createNonStreamingAbortLifecycle({
     callerSignal: options.signal,
     timeoutMs: runtimeTimeoutMs(options),
-    providerId: options.model.id
+    providerId: options.model.id,
+    timeoutErrorSource:
+      options.currentDepth !== undefined &&
+      options.currentDepth > 0 &&
+      options.parentDeadlineMs === undefined
+        ? "engine"
+        : "runtime"
   });
 
   try {
@@ -537,7 +707,8 @@ async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Pr
       ...(abortLifecycle.signal !== undefined ? { signal: abortLifecycle.signal } : {}),
       emit(event: RunEvent): void {
         emittedEvents.push(event);
-      }
+      },
+      failureInstancesByChildRunId
     }));
     const events = emittedEvents.length > 0 ? emittedEvents : result.trace.events;
     const trace = {
@@ -559,10 +730,15 @@ async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Pr
       eventLog: createRunEventLog(trace.runId, trace.protocol, events),
       trace
     };
+    const terminalThrow = resolveRuntimeTerminalThrow(runResult.trace, failureInstancesByChildRunId);
+    if (terminalThrow) {
+      throw terminalThrow;
+    }
     return canonicalizeRunResult(await abortLifecycle.run(applyRunEvaluation(runResult, options.evaluate)));
   } catch (error: unknown) {
     throw abortLifecycle.translateError(error);
   } finally {
+    failureInstancesByChildRunId.clear();
     abortLifecycle.cleanup();
   }
 }
@@ -653,7 +829,25 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
-        ...(options.emit ? { emit: options.emit } : {})
+        ...(options.emit ? { emit: options.emit } : {}),
+        ...(options.streamEvents !== undefined ? { streamEvents: options.streamEvents } : {}),
+        currentDepth: options.currentDepth ?? 0,
+        effectiveMaxDepth: options.effectiveMaxDepth ?? Infinity,
+        effectiveMaxConcurrentChildren: options.effectiveMaxConcurrentChildren ?? DEFAULT_MAX_CONCURRENT_CHILDREN,
+        onChildFailure: options.onChildFailure ?? "continue",
+        ...(options.parentDeadlineMs !== undefined ? { parentDeadlineMs: options.parentDeadlineMs } : {}),
+        ...(options.defaultSubRunTimeoutMs !== undefined
+          ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
+          : {}),
+        ...(options.registerAbortDrain !== undefined ? { registerAbortDrain: options.registerAbortDrain } : {}),
+        ...(options.failureInstancesByChildRunId !== undefined
+          ? { failureInstancesByChildRunId: options.failureInstancesByChildRunId }
+          : {}),
+        runProtocol: (childInput) =>
+          runProtocol({
+            ...childInput,
+            protocol: normalizeProtocol(childInput.protocol)
+          })
       });
     case "shared":
       return runShared({
@@ -726,6 +920,15 @@ export function stream(options: DogpileOptions): StreamHandle {
 export function replay(trace: Trace): RunResult {
   const cost = trace.finalOutput.cost;
   const lastEvent = trace.events.at(-1);
+  // D-08 / D-10: rebuild accounting recursively from the saved trace and
+  // verify every embedded sub-run's recorded accounting matches what the
+  // child trace recomputes. Mismatches throw `invalid-configuration` with
+  // `detail.reason: "trace-accounting-mismatch"`. No provider invocation.
+  const accounting = recomputeAccountingFromTrace(trace);
+  const replayThrow = resolveReplayTerminalThrow(trace);
+  if (replayThrow) {
+    throw replayThrow;
+  }
   const baseResult = {
     output: trace.finalOutput.output,
     eventLog: createRunEventLog(trace.runId, trace.protocol, trace.events),
@@ -740,13 +943,7 @@ export function replay(trace: Trace): RunResult {
       agentsUsed: trace.agentsUsed,
       events: trace.events
     }),
-    accounting: createRunAccounting({
-      tier: trace.tier,
-      ...(trace.budget.caps ? { budget: trace.budget.caps } : {}),
-      ...(trace.budget.termination ? { termination: trace.budget.termination } : {}),
-      cost,
-      events: trace.events
-    }),
+    accounting,
     cost
   };
 
@@ -761,6 +958,104 @@ export function replay(trace: Trace): RunResult {
   };
 }
 
+function resolveRuntimeTerminalThrow(
+  trace: Trace,
+  failureInstancesByChildRunId: ReadonlyMap<string, DogpileError>
+): DogpileError | null {
+  if (trace.triggeringFailureForAbortMode !== undefined) {
+    return failureInstancesByChildRunId.get(trace.triggeringFailureForAbortMode.childRunId) ?? null;
+  }
+
+  const finalEvent = trace.events.at(-1);
+  if (finalEvent?.type !== "final" || finalEvent.termination === undefined) {
+    return null;
+  }
+
+  const lastFailure = findLastRealFailure(trace.events, failureInstancesByChildRunId);
+  if (lastFailure === null) {
+    return null;
+  }
+  if (hasFinalSynthesisAfterEvent(trace, lastFailure.eventIndex)) {
+    return null;
+  }
+  return lastFailure.error;
+}
+
+function findLastRealFailure(
+  events: readonly RunEvent[],
+  failureInstancesByChildRunId: ReadonlyMap<string, DogpileError>
+): { readonly error: DogpileError; readonly eventIndex: number } | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type !== "sub-run-failed") {
+      continue;
+    }
+    const instance = failureInstancesByChildRunId.get(event.childRunId);
+    if (instance) {
+      return { error: instance, eventIndex: index };
+    }
+  }
+  return null;
+}
+
+function resolveReplayTerminalThrow(trace: Trace): DogpileError | null {
+  if (trace.triggeringFailureForAbortMode !== undefined) {
+    return dogpileErrorFromSerializedPayload(trace.triggeringFailureForAbortMode.error);
+  }
+
+  const finalEvent = trace.events.at(-1);
+  if (finalEvent?.type !== "final" || finalEvent.termination === undefined) {
+    return null;
+  }
+
+  const lastFailure = reconstructLastRealFailure(trace.events);
+  if (lastFailure === null) {
+    return null;
+  }
+  if (hasFinalSynthesisAfterEvent(trace, lastFailure.eventIndex)) {
+    return null;
+  }
+  return lastFailure.error;
+}
+
+function reconstructLastRealFailure(
+  events: readonly RunEvent[]
+): { readonly error: DogpileError; readonly eventIndex: number } | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type !== "sub-run-failed" || isSyntheticSubRunFailure(event)) {
+      continue;
+    }
+    return { error: dogpileErrorFromSerializedPayload(event.error), eventIndex: index };
+  }
+  return null;
+}
+
+function hasFinalSynthesisAfterEvent(trace: Trace, eventIndex: number): boolean {
+  return trace.protocolDecisions.some((decision) => {
+    return decision.phase === "final-synthesis" && decision.eventIndex > eventIndex;
+  });
+}
+
+function isSyntheticSubRunFailure(event: SubRunFailedEvent): boolean {
+  const reason = event.error.detail?.["reason"];
+  return reason === "sibling-failed" || reason === "parent-aborted";
+}
+
+function dogpileErrorFromSerializedPayload(input: {
+  readonly code: string;
+  readonly message: string;
+  readonly providerId?: string;
+  readonly detail?: JsonObject;
+}): DogpileError {
+  return new DogpileError({
+    code: input.code as DogpileErrorCode,
+    message: input.message,
+    ...(input.providerId !== undefined ? { providerId: input.providerId } : {}),
+    ...(input.detail !== undefined ? { detail: input.detail } : {})
+  });
+}
+
 /**
  * Replay a saved completed trace as a stream without invoking a model provider.
  *
@@ -772,6 +1067,7 @@ export function replay(trace: Trace): RunResult {
  */
 export function replayStream(trace: Trace): StreamHandle {
   const result = Promise.resolve(replay(trace));
+  const replayEvents = replayStreamEvents(trace);
 
   return {
     get status(): StreamHandleStatus {
@@ -782,7 +1078,7 @@ export function replayStream(trace: Trace): StreamHandle {
       // Replay streams are already completed snapshots, so cancellation is a no-op.
     },
     subscribe(subscriber: StreamEventSubscriber) {
-      for (const event of trace.events) {
+      for (const event of replayEvents) {
         subscriber(event);
       }
 
@@ -797,7 +1093,7 @@ export function replayStream(trace: Trace): StreamHandle {
 
       return {
         next(): Promise<IteratorResult<StreamEvent>> {
-          const event = trace.events[index];
+          const event = replayEvents[index];
           if (event) {
             index += 1;
             return Promise.resolve({ done: false, value: event });
@@ -808,6 +1104,31 @@ export function replayStream(trace: Trace): StreamHandle {
       };
     }
   };
+}
+
+function replayStreamEvents(trace: Trace, parentRunIds: readonly string[] = []): StreamEvent[] {
+  const events: StreamEvent[] = [];
+
+  for (const event of trace.events) {
+    if (event.type === "sub-run-completed") {
+      events.push(...replayStreamEvents(event.subResult.trace, [...parentRunIds, trace.runId]));
+    }
+    events.push(wrapReplayStreamEvent(event, parentRunIds));
+  }
+
+  return events;
+}
+
+function wrapReplayStreamEvent(event: RunEvent, parentRunIds: readonly string[]): StreamEvent {
+  if (parentRunIds.length === 0) {
+    return event;
+  }
+
+  const inbound = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
+  return {
+    ...event,
+    parentRunIds: [...parentRunIds, ...(inbound ?? [])]
+  } as StreamEvent;
 }
 
 function wireCallerAbortSignal(
@@ -844,7 +1165,8 @@ function createStreamCancellationError(providerId: string, cause?: unknown): Dog
     providerId,
     ...(cause !== undefined ? { cause } : {}),
     detail: {
-      status: "cancelled"
+      status: "cancelled",
+      reason: "parent-aborted"
     }
   });
 }
@@ -863,6 +1185,23 @@ function withHighLevelDefaults(options: DogpileOptions): NormalizedDogpileOption
     protocol: options.protocol ?? defaultHighLevelProtocol,
     tier: options.tier ?? defaultHighLevelTier
   };
+}
+
+function assertRunDoesNotRaiseEngineMax(path: string, runValue: number | undefined, engineValue: number): void {
+  if (runValue === undefined || runValue <= engineValue) {
+    return;
+  }
+  throw new DogpileError({
+    code: "invalid-configuration",
+    message: `${path} cannot raise the engine ceiling (${engineValue}).`,
+    retryable: false,
+    detail: {
+      kind: "configuration-validation",
+      path,
+      expected: `integer <= ${engineValue}`,
+      actual: runValue
+    }
+  });
 }
 
 /**

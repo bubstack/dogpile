@@ -149,6 +149,24 @@ observability. When `retryable` is present, prefer it over a hard-coded policy.
 | `provider-error` | The configured adapter reports a generic provider failure that Dogpile cannot map to a narrower provider code. | Check `retryable` and `detail.statusCode` when present. Retry transient status codes; otherwise inspect provider diagnostics. |
 | `unknown` | Dogpile catches an unrecognized provider or adapter failure with no stable mapping. | Treat conservatively: log `detail`, avoid assuming retry safety unless `retryable` is true, and add handling once the underlying failure is understood. |
 
+### Recursive coordination detail.reason vocabulary (v0.4.0)
+
+These `error.detail.reason` values were added in v0.4.0:
+
+- `depth-overflow` — depth exceeds `maxDepth`
+- `parent-aborted` — child aborted because the parent aborted
+- `timeout` — on `code: "aborted"` for parent-budget propagation
+- `sibling-failed` — queued sibling drained after another delegate failed
+- `remote-override-on-local-host` — caller forced `locality: "remote"` on a detected-local OpenAI-compatible host
+- `trace-accounting-mismatch` (with `subReason: "parent-rollup-drift"` for the rollup variant) — replay drift detection
+- `local-provider-detected` — on the `sub-run-concurrency-clamped` event payload, not on a thrown error
+
+Provider-timeout errors gain optional `detail.source?: "provider" | "engine"`
+discriminator; absence means `"provider"` for backwards compatibility.
+
+See [`recursive-coordination-reference.md#error-matrix`](./recursive-coordination-reference.md#error-matrix)
+for the exhaustive code and detail.reason matrix.
+
 ## Single-Call Workflow Contract
 
 Application code starts with `Dogpile.pile()`: provide the mission and a model
@@ -231,6 +249,79 @@ the live events yielded by `stream()` use the same order for completed runs.
 Provider responses are preserved in `trace.providerCalls`, not inferred from
 final text. Use `replay()` / `Dogpile.replay()` or `replayStream()` /
 `Dogpile.replayStream()` when loading a trace artifact you already persisted.
+
+### Recursive coordination decision literals (v0.4.0)
+
+`ReplayTraceProtocolDecisionType` gained these literals in v0.4.0:
+
+- `start-sub-run` — pairs with `sub-run-started`
+- `complete-sub-run` — pairs with `sub-run-completed`
+- `fail-sub-run` — pairs with `sub-run-failed`
+- `queue-sub-run` — pairs with `sub-run-queued`
+- `mark-sub-run-parent-aborted` — pairs with `sub-run-parent-aborted`
+- `mark-sub-run-budget-clamped` — pairs with `sub-run-budget-clamped`
+- `mark-sub-run-concurrency-clamped` — pairs with `sub-run-concurrency-clamped`
+
+See [`recursive-coordination-reference.md#replay-decision-literals`](./recursive-coordination-reference.md#replay-decision-literals)
+for the full payload schema of each event variant.
+
+## Recursive Coordination Surface (v0.4.0)
+
+Recursive coordination is documented in detail in
+[`recursive-coordination.md`](./recursive-coordination.md) for concepts and a
+worked example, and
+[`recursive-coordination-reference.md`](./recursive-coordination-reference.md)
+for exhaustive event, error, and option details. This section catalogs only the
+public exports and reachable surface added since v0.3.x.
+
+### Run / engine options
+
+- `RunCallOptions` — second-arg options on `Engine.run` and `Engine.stream`.
+  Re-exported from `@dogpile/sdk` and `@dogpile/sdk/types`. Fields:
+  - `maxDepth?: number` (default `4`; can only lower the engine ceiling)
+  - `maxConcurrentChildren?: number` (default `4`; lowering-only)
+  - `onChildFailure?: "continue" | "abort"` (default `"continue"`)
+- `EngineOptions` and high-level run options accept the same recursive
+  coordination controls as engine-level defaults: `maxDepth`,
+  `maxConcurrentChildren`, `defaultSubRunTimeoutMs`, and `onChildFailure`.
+
+### Sub-run events (RunEvent union additions)
+
+The seven `SubRun*Event` types are exported from `@dogpile/sdk` and
+`@dogpile/sdk/types`:
+
+- `SubRunStartedEvent`
+- `SubRunQueuedEvent`
+- `SubRunCompletedEvent`
+- `SubRunFailedEvent`
+- `SubRunParentAbortedEvent`
+- `SubRunBudgetClampedEvent`
+- `SubRunConcurrencyClampedEvent`
+
+Full payload schemas live in
+[`recursive-coordination-reference.md#sub-run-events`](./recursive-coordination-reference.md#sub-run-events).
+
+### Provider locality
+
+- `ConfiguredModelProvider.metadata?.locality?: "local" | "remote"` — optional
+  readonly hint.
+- `classifyHostLocality(host: string)` — exported from
+  `@dogpile/sdk/providers/openai-compatible` for callers building custom
+  adapters or tests.
+
+### Replay helper
+
+- `recomputeAccountingFromTrace(trace)` — exported from
+  `@dogpile/sdk/runtime/defaults`. Walks embedded child traces and verifies
+  recorded `RunAccounting` against a per-child recompute. Throws
+  `DogpileError({ code: "invalid-configuration", detail.reason:
+  "trace-accounting-mismatch" })` on drift.
+
+### Stream-only field
+
+- `event.parentRunIds?: readonly string[]` — ancestry chain on bubbled child
+  events. Set on live stream events; not persisted on `RunResult.events`. See
+  [`recursive-coordination.md#parentrunids-chain`](./recursive-coordination.md#parentrunids-chain).
 
 ## Benchmark Artifacts
 
