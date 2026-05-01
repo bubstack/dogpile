@@ -1,0 +1,315 @@
+{
+  "phase": "07-structured-event-introspection-health-diagnostics",
+  "generated_at": "2026-05-01T00:00:00Z",
+  "stats": {
+    "total": 11,
+    "answered": 11,
+    "chat_more": 0,
+    "remaining": 0
+  },
+  "sections": [
+    {
+      "id": "introspection-query-api",
+      "title": "Introspection Query API",
+      "questions": [
+        {
+          "id": "Q-01",
+          "title": "Query function location",
+          "context": "INTR-01 requires a 'typed query function'. The existing RunEventLog has events[] and eventTypes[]. RunResult already has eventLog, trace, and transcript as top-level fields. Phase 6 added /runtime/provenance as a standalone subpath. The pattern established in prior phases is standalone subpath exports for new observability surface.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Standalone function in new subpath",
+              "description": "queryEvents(events: readonly RunEvent[], filter: EventQueryFilter) exported from /runtime/introspection. Pure function — no coupling to RunResult or RunEventLog interfaces."
+            },
+            {
+              "id": "b",
+              "label": "Method on RunEventLog",
+              "description": "result.eventLog.query(filter) — ergonomic call site, but adds a method to the RunEventLog interface (public API surface change). Breaks callers who construct RunEventLog manually."
+            },
+            {
+              "id": "c",
+              "label": "Both standalone and eventLog convenience",
+              "description": "Export the standalone function AND add a query() method to RunEventLog that delegates to it. Two surfaces to maintain. More convenient but larger footprint."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-02",
+          "title": "Filter composition shape",
+          "context": "INTR-01 lists filter criteria: event type, agent id, turn number, cost range. INTR-02 says filters compose (empty = all events, unmatched = empty array). The TypeScript type needs to be ergonomic to construct at the call site without extra imports.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Single EventQueryFilter object (all optional fields)",
+              "description": "{ type?: RunEvent['type'], agentId?: string, turnRange?: { min?: number, max?: number }, costRange?: { min?: number, max?: number } } — AND semantics across fields, OR left to caller by calling query twice. Simple object literal at call site."
+            },
+            {
+              "id": "b",
+              "label": "Array of atomic filter predicates (OR | AND configurable)",
+              "description": "queryEvents(events, [{ field: 'agentId', value: 'agent-1' }, { field: 'type', value: 'agent-turn' }], { combine: 'and' }). More powerful, more complex to type and use. Harder to narrow return type."
+            },
+            {
+              "id": "c",
+              "label": "Custom predicate function",
+              "description": "queryEvents(events, (e) => e.type === 'agent-turn' && e.agentId === 'x'). Maximally flexible, zero SDK complexity. But no type narrowing possible and not 'typed' per INTR-02."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-03",
+          "title": "Return type narrowing when filtering by event type",
+          "context": "INTR-02 says 'no type assertions required at the call site'. If a caller passes { type: 'agent-turn' }, ideally they get back TurnEvent[] not RunEvent[]. The RunEvent union has ~14 member types. TypeScript overloads or conditional types can narrow the return — both add compile complexity.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Overloaded signatures per event type",
+              "description": "One overload per event type: queryEvents(events, { type: 'agent-turn' }): TurnEvent[]; queryEvents(events, { type: 'model-response' }): ModelResponseEvent[]; etc. Fully typed, but 14+ overloads to maintain — heavy but reliable."
+            },
+            {
+              "id": "b",
+              "label": "Generic conditional type on filter",
+              "description": "function queryEvents<F extends EventQueryFilter>(events, filter: F): F extends { type: infer T } ? Extract<RunEvent, { type: T }>[] : RunEvent[]. One signature, type-safe, no overloads. Slightly opaque for callers reading hover types."
+            },
+            {
+              "id": "c",
+              "label": "No narrowing — returns RunEvent[], caller uses type guards",
+              "description": "queryEvents always returns RunEvent[]. INTR-02 is satisfied by providing type guard helpers (isTurnEvent, isModelResponseEvent) in the same module so no 'as' casts are needed. Simplest implementation."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-04",
+          "title": "Cost range filter — which cost field?",
+          "context": "Events have heterogeneous cost fields: TurnEvent.cost.usd (cumulative after turn), BroadcastEvent.cost.usd (cumulative after round), ModelResponseEvent.response.costUsd (per-call). A 'cost range' filter from INTR-01 needs to match something. Mismatching event types return no cost field.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Match against turn-level cumulative cost (TurnEvent.cost.usd, BroadcastEvent.cost.usd only)",
+              "description": "costRange only applies to events that carry a cost.usd field. Events without cost (model-request, role-assignment, etc.) are excluded from cost-filtered results. Most useful for 'which agents cost the most'."
+            },
+            {
+              "id": "b",
+              "label": "Match against per-call cost (ModelResponseEvent.response.costUsd only)",
+              "description": "costRange filters model-response events by the provider's per-call costUsd. Most precise for provider cost attribution. Other event types pass through when costRange is set."
+            },
+            {
+              "id": "c",
+              "label": "Drop costRange — too event-type-specific for a generic filter",
+              "description": "Remove costRange from EventQueryFilter. Document that callers can compose cost filtering with array.filter() after the typed query. Simplifies the API and avoids the semantic ambiguity."
+            },
+            {
+              "id": "d",
+              "label": "Caller-supplied cost extractor function",
+              "description": "costRange: { min?: number, max?: number, extract: (event: RunEvent) => number | undefined }. Maximum flexibility — caller decides which cost field to match. More complex call site."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "health-diagnostics",
+      "title": "Health Diagnostics",
+      "questions": [
+        {
+          "id": "Q-05",
+          "title": "result.health shape — beyond anomalies[]",
+          "context": "HLTH-01 requires anomalies[] with machine-readable codes. RunResult currently has output, eventLog, trace, transcript, usage, metadata, accounting, cost, quality, evaluation. Adding 'health' must fit the existing result shape convention. HLTH-02 requires byte-for-byte identical re-computation from replay().",
+          "options": [
+            {
+              "id": "a",
+              "label": "Minimal: { anomalies: HealthAnomaly[] }",
+              "description": "Just the anomaly list. Callers derive everything else from the trace. Smallest surface, easiest to freeze and version. health.anomalies.length === 0 means healthy."
+            },
+            {
+              "id": "b",
+              "label": "Summary + anomalies: { status: 'healthy' | 'warning' | 'critical', anomalies: HealthAnomaly[] }",
+              "description": "Top-level status roll-up lets callers branch on health without iterating the array. 'warning' = anomalies present, 'critical' = any 'error'-severity anomaly. Useful for dashboards."
+            },
+            {
+              "id": "c",
+              "label": "Rich diagnostics: { anomalies: HealthAnomaly[], stats: { totalTurns, agentCount, budgetUtilizationPct } }",
+              "description": "Includes derived stats alongside anomalies — these are deterministically computable from trace events so they satisfy HLTH-02. Larger surface to maintain and version."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-06",
+          "title": "Threshold configuration — where does the caller control them?",
+          "context": "HLTH-01 says thresholds are 'configurable'. The existing pattern for optional engine config is EngineOptions (already has budget, tier, protocol, tools, etc.). Phase 9 adds 'tracer' to EngineOptions. Phase 10 adds 'metricsHook'. Adding 'healthThresholds' would follow the same pattern.",
+          "options": [
+            {
+              "id": "a",
+              "label": "EngineOptions.healthThresholds (optional)",
+              "description": "{ healthThresholds?: { runawyTurns?: number, budgetNearMissPct?: number } } on EngineOptions. Thresholds stored in trace.inputs so replay() uses the same thresholds as the original run — satisfies HLTH-02."
+            },
+            {
+              "id": "b",
+              "label": "Standalone computeHealth(trace, thresholds?) function only",
+              "description": "health is NOT auto-computed on RunResult. Callers call computeHealth(result.trace, { runawyTurns: 30 }) explicitly. No threshold on EngineOptions. More explicit — callers always see how health is computed."
+            },
+            {
+              "id": "c",
+              "label": "Both: auto-compute with defaults AND standalone computeHealth() for custom thresholds",
+              "description": "result.health uses defaults. Callers who want custom thresholds call computeHealth(result.trace, opts) from /runtime/health. Two ways to get health — one auto, one explicit."
+            },
+            {
+              "id": "d",
+              "label": "Fixed built-in defaults only, no caller configuration",
+              "description": "Thresholds are not configurable. runawyTurns=20, budgetNearMissPct=90. Simpler API — health is purely deterministic from the trace with no caller config. HLTH-01's 'configurable' may be read as 'threshold values are defined' not 'caller-tunable'."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-07",
+          "title": "HealthAnomaly per-record shape",
+          "context": "HLTH-01 lists four machine-readable codes: runaway-turns, budget-near-miss, empty-contribution, provider-error-recovered. Each may fire multiple times (e.g., multiple agents with empty-contribution). The shape determines how callers process and display anomalies.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Minimal: { code: AnomalyCode }",
+              "description": "Just the code. Callers re-derive context from the trace if they need detail. Smallest footprint, easiest to version. Works for pass/fail gate use cases."
+            },
+            {
+              "id": "b",
+              "label": "Code + severity + numeric context: { code, severity: 'warning' | 'error', value: number, threshold: number }",
+              "description": "Includes the actual value that triggered the anomaly vs the threshold that was exceeded. E.g., { code: 'runaway-turns', severity: 'warning', value: 25, threshold: 20 }. Machine-readable without trace re-parsing."
+            },
+            {
+              "id": "c",
+              "label": "Code + severity + value + threshold + optional agentId: { code, severity, value, threshold, agentId? }",
+              "description": "For per-agent anomalies (empty-contribution, provider-error-recovered), includes which agent triggered it. Most informative. Deterministic from trace events — safe for HLTH-02."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-08",
+          "title": "runaway-turns default threshold",
+          "context": "The sequential protocol loops until termination fires. A coordinator can run many turns per child. The wrapUpHint fires one turn before hard caps. In real SDK usage (benchmark-fixtures, demo), typical runs are 2-5 turns. The success criteria says this is a configurable threshold but needs a sensible default.",
+          "options": [
+            {
+              "id": "a",
+              "label": "20 turns",
+              "description": "Catches genuinely runaway runs without false-positives on long-but-legitimate coordinator missions. Pragmatic for most SDK use cases."
+            },
+            {
+              "id": "b",
+              "label": "50 turns",
+              "description": "Very conservative — only catches extreme runaway. Reduces false-positive risk for power users with large budgets."
+            },
+            {
+              "id": "c",
+              "label": "No default — requires explicit configuration",
+              "description": "runaway-turns anomaly is suppressed unless caller sets healthThresholds.runawyTurns. No guessing what 'runaway' means for the caller's domain."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-09",
+          "title": "budget-near-miss default threshold",
+          "context": "budget-near-miss fires when cost or turn count reaches >= N% of the configured budget cap. A run at 91% of budget may or may not be alarming depending on intent. budgetStateChanges in the trace tracks utilization. Only fires when a budget cap is configured (no cap = no near-miss possible).",
+          "options": [
+            {
+              "id": "a",
+              "label": "90% of budget cap",
+              "description": "Aggressive — surfaces near-misses frequently as a monitoring signal. Good for callers tracking budget discipline."
+            },
+            {
+              "id": "b",
+              "label": "95% of budget cap",
+              "description": "Balanced — signals genuine budget risk while avoiding alarm fatigue for runs that naturally use most of their budget."
+            },
+            {
+              "id": "c",
+              "label": "No default — requires explicit configuration",
+              "description": "budget-near-miss is suppressed unless caller sets healthThresholds.budgetNearMissPct. No semantic assumption about what counts as 'near'."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "public-surface",
+      "title": "Public Surface + Subpath Exports",
+      "questions": [
+        {
+          "id": "Q-10",
+          "title": "New subpath export(s)",
+          "context": "Each new subpath adds to: package.json exports, package.json files allowlist, src/tests/package-exports.test.ts, and CHANGELOG. Phase 6 added /runtime/provenance. The CLAUDE.md invariant: 'Adding or removing any subpath export is a public-surface change'. Phase 7 introduces two distinct capabilities: event introspection + health diagnostics.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Two separate subpaths: /runtime/introspection + /runtime/health",
+              "description": "Clean separation of concerns. Callers who only need one don't import the other. Consistent with the 'one module per observability concept' pattern Phase 6 established."
+            },
+            {
+              "id": "b",
+              "label": "One combined subpath: /runtime/diagnostics",
+              "description": "Bundles queryEvents and health utilities together. One subpath to add to package.json. Health and introspection often used together. Risk: module becomes a grab-bag over time."
+            },
+            {
+              "id": "c",
+              "label": "No new subpaths — expose via main @dogpile/sdk export only",
+              "description": "queryEvents and HealthSummary types are re-exported from src/index.ts. No additional subpath plumbing. Simpler packaging, but couples introspection/health to the main entry point."
+            }
+          ],
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-11",
+          "title": "Frozen fixture for health summary shape",
+          "context": "Phase 6 adds provenance-event-v1.json to protect event shape. Phase 8 (Audit) requires a frozen fixture by spec (AUDT-02). Health summary is a computed type that will evolve — anomaly codes may be added in future phases. A frozen fixture prevents unintentional shape drift.",
+          "options": [
+            {
+              "id": "a",
+              "label": "Yes — health-summary-v1.json frozen fixture",
+              "description": "Same protection pattern as Phase 6 and Phase 8. Tests reject any shape change without explicit fixture update. Consistent approach across all v0.5.0 observability shapes."
+            },
+            {
+              "id": "b",
+              "label": "No — result-contract.test.ts assertions are sufficient",
+              "description": "Health is a computed summary, not a published schema with an independent versioning contract. The existing result-contract test suite enforces the RunResult shape. A separate frozen fixture adds maintenance overhead."
+            },
+            {
+              "id": "c",
+              "label": "Partial — freeze only the HealthAnomaly record shape, not the whole RunHealthSummary",
+              "description": "anomaly-record-v1.json fixes the per-anomaly shape (most likely to be consumed by tooling). The top-level summary structure (which fields beyond anomalies[]) is allowed to evolve without a fixture update."
+            }
+          ],
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    }
+  ]
+}
