@@ -264,7 +264,8 @@ export function createEngine(options: EngineOptions): Engine {
                 return;
               }
 
-              if (rootRunId === undefined && event.parentRunIds === undefined) {
+              const parentRunIds = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
+              if (rootRunId === undefined && parentRunIds === undefined) {
                 rootRunId = event.runId;
               }
 
