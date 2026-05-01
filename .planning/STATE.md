@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.5.0
 milestone_name: Observability and Auditability
 status: executing
-last_updated: "2026-05-01T21:03:25Z"
-last_activity: 2026-05-01 -- Completed 07-03 computeHealth implementation + unit tests
+last_updated: "2026-05-01T21:15:33Z"
+last_activity: 2026-05-01 -- Completed 07-04 engine health attachment + contract tests
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 11
-  completed_plans: 9
-  percent: 82
+  completed_plans: 10
+  percent: 91
 ---
 
 # State
@@ -24,12 +24,12 @@ progress:
 ## Current Position
 
 Phase: 07 (structured-event-introspection-health-diagnostics) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Executing Phase 07
-Last activity: 2026-05-01 -- Completed 07-03 computeHealth implementation + unit tests
+Last activity: 2026-05-01 -- Completed 07-04 engine health attachment + contract tests
 
 ```
-Progress [████████--] 82% (9/11 milestone plans)
+Progress [█████████-] 91% (10/11 milestone plans)
 ```
 
 ## Performance Metrics
@@ -38,7 +38,7 @@ Progress [████████--] 82% (9/11 milestone plans)
 |--------|-------|
 | Phases complete | 1 / 5 |
 | Requirements complete | 6 / 13 |
-| Plans complete | 9 / 11 |
+| Plans complete | 10 / 11 |
 
 ## Accumulated Context
 
@@ -52,6 +52,8 @@ Progress [████████--] 82% (9/11 milestone plans)
 - **Phase 7 contracts ship before behavior.** `queryEvents` and `computeHealth` are stubbed contract surfaces in 07-01; 07-02 and 07-03 implement behavior against those signatures.
 - **queryEvents filter semantics are locked.** Filters compose with AND semantics; `turnRange` uses global 1-based `agent-turn` positions and excludes non-turn events, while `costRange` only includes `agent-turn` and `broadcast` events.
 - **computeHealth provider recovery is deferred.** `provider-error-recovered` remains in the anomaly union and fixture but is never emitted until a future event-shape change provides a trace signal.
+- **RunResult.health is required.** All public and embedded RunResult construction paths now compute health from trace data before returning or embedding results.
+- **Protocol-level health is part of the result contract.** Sequential, broadcast, shared, and coordinator constructors compute health so stream results and delegated child subResults satisfy the same required contract as top-level run and replay results.
 
 ### Todos
 
@@ -72,7 +74,7 @@ Progress [████████--] 82% (9/11 milestone plans)
 
 ## Session Continuity
 
-**Next action:** Continue Phase 7 with 07-04 engine health attachment on run/replay paths.
+**Next action:** Continue Phase 7 with 07-05 public-surface lockstep for runtime subpaths, package exports, changelog, and invariant docs.
 
 ---
 
