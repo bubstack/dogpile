@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDeterministicModelProvider } from "../internal.js";
 import { Dogpile, replay, replayStream, run } from "../index.js";
+import { computeHealth, DEFAULT_HEALTH_THRESHOLDS } from "../runtime/health.js";
 import type {
   ConfiguredModelProvider,
   BudgetCaps,
@@ -41,6 +42,7 @@ import type {
   Trace,
   TranscriptEntry
 } from "../index.js";
+import type { RunHealthSummary } from "../types.js";
 
 function protocolDecisionEventEntries(
   events: readonly RunEvent[]
@@ -90,7 +92,7 @@ describe("single-call result contract", () => {
     expect(engineOptions.budget).toEqual(budget);
   });
 
-  it("returns output, event log, transcript, usage, metadata, trace, cost, and optional quality in one typed contract", async () => {
+  it("returns output, event log, transcript, usage, metadata, trace, cost, health, and optional quality in one typed contract", async () => {
     const result = await run({
       intent: "Define the public single-call result artifact.",
       protocol: { kind: "sequential", maxTurns: 1 },
@@ -106,6 +108,7 @@ describe("single-call result contract", () => {
     const metadata: RunMetadata = result.metadata;
     const accounting: RunAccounting = result.accounting;
     const cost: CostSummary = result.cost;
+    const health: RunHealthSummary = result.health;
     const quality: NormalizedQualityScore = 0.91;
     const judgedResult: RunResult = { ...result, quality };
     const finalEvent = trace.events.at(-1);
@@ -114,6 +117,7 @@ describe("single-call result contract", () => {
       "accounting",
       "cost",
       "eventLog",
+      "health",
       "metadata",
       "output",
       "trace",
@@ -124,6 +128,7 @@ describe("single-call result contract", () => {
       "accounting",
       "cost",
       "eventLog",
+      "health",
       "metadata",
       "output",
       "quality",
@@ -147,6 +152,13 @@ describe("single-call result contract", () => {
     expect(transcript).toEqual(trace.transcript);
     expect(usage).toEqual(cost);
     expect(cost).toEqual(finalEvent.cost);
+    expect(health).toEqual(computeHealth(trace, DEFAULT_HEALTH_THRESHOLDS));
+    expect(Array.isArray(health.anomalies)).toBe(true);
+    expect(typeof health.stats.totalTurns).toBe("number");
+    expect(typeof health.stats.agentCount).toBe("number");
+    expect(
+      typeof health.stats.budgetUtilizationPct === "number" || health.stats.budgetUtilizationPct === null
+    ).toBe(true);
     expect(accounting).toEqual({
       kind: "run-accounting",
       tier: "fast",
@@ -170,6 +182,31 @@ describe("single-call result contract", () => {
     });
     expect(judgedResult.quality).toBe(0.91);
     expect(JSON.parse(JSON.stringify(judgedResult))).toEqual(judgedResult);
+  });
+
+  it("preserves health when caller evaluation augments the result", async () => {
+    let evaluatorInputHealth: RunHealthSummary | undefined;
+    const evaluation = {
+      quality: 0.77,
+      rationale: "contract fixture"
+    };
+
+    const result = await run({
+      intent: "Evaluate a run while preserving its computed health.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: createDeterministicModelProvider("evaluated-health-contract-model"),
+      evaluate(input) {
+        evaluatorInputHealth = input.health;
+        return evaluation;
+      }
+    });
+    const expectedHealth = computeHealth(result.trace, DEFAULT_HEALTH_THRESHOLDS);
+
+    expect(evaluatorInputHealth).toEqual(expectedHealth);
+    expect(result.health).toEqual(expectedHealth);
+    expect(result.quality).toBe(evaluation.quality);
+    expect(result.evaluation).toEqual(evaluation);
   });
 
   it("defines a versioned replay trace artifact with inputs, budget, seed, protocol decisions, provider calls, and final output", async () => {
@@ -483,6 +520,7 @@ describe("single-call result contract", () => {
     expect(replayed.metadata).toEqual(result.metadata);
     expect(replayed.accounting).toEqual(result.accounting);
     expect(replayed.cost).toEqual(result.cost);
+    expect(replayed.health).toEqual(computeHealth(savedTrace, DEFAULT_HEALTH_THRESHOLDS));
     expect(replayed.eventLog).toEqual({
       kind: "run-event-log",
       runId: savedTrace.runId,
@@ -497,6 +535,13 @@ describe("single-call result contract", () => {
     expect(replayed.transcript).toBe(savedTrace.transcript);
     expect(replayed.output).toBe(savedTrace.finalOutput.output);
     expect(JSON.parse(JSON.stringify(replayed))).toEqual(replayed);
+
+    const nonFinalTrace: Trace = {
+      ...savedTrace,
+      events: savedTrace.events.slice(0, -1)
+    };
+    const replayedNonFinal = replay(nonFinalTrace);
+    expect(replayedNonFinal.health).toEqual(computeHealth(nonFinalTrace, DEFAULT_HEALTH_THRESHOLDS));
   });
 
   it("synthesizes replay model provenance events from provider calls for legacy traces", async () => {

@@ -1200,7 +1200,15 @@ function minimalRunResult(runId: string): RunResult {
       cost,
       budgetStateChanges: []
     },
-    cost
+    cost,
+    health: {
+      anomalies: [],
+      stats: {
+        totalTurns: 0,
+        agentCount: 0,
+        budgetUtilizationPct: null
+      }
+    }
   };
 }
 

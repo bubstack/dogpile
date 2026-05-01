@@ -16,6 +16,7 @@ import type {
   TerminationCondition,
   TerminationStopRecord,
   Tier,
+  Trace,
   TranscriptEntry
 } from "../types.js";
 import { createRunId, elapsedMs, nowMs } from "./ids.js";
@@ -35,6 +36,7 @@ import {
   emptyCost,
   nextProviderCallId
 } from "./defaults.js";
+import { computeHealth, DEFAULT_HEALTH_THRESHOLDS } from "./health.js";
 import { throwIfAborted } from "./cancellation.js";
 import { isParticipatingDecision, parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
@@ -242,45 +244,46 @@ export async function runSequential(options: SequentialRunOptions): Promise<RunR
     transcriptEntryCount: transcript.length
   });
   const finalEvent = events.at(-1);
+  const trace: Trace = {
+    schemaVersion: "1.0",
+    runId,
+    protocol: "sequential",
+    tier: options.tier,
+    modelProviderId: options.model.id,
+    agentsUsed: activeAgents,
+    inputs: createReplayTraceRunInputs({
+      intent: options.intent,
+      protocol: options.protocol,
+      tier: options.tier,
+      modelProviderId: options.model.id,
+      agents: activeAgents,
+      temperature: options.temperature
+    }),
+    budget: createReplayTraceBudget({
+      tier: options.tier,
+      ...(options.budget ? { caps: options.budget } : {}),
+      ...(options.terminate ? { termination: options.terminate } : {})
+    }),
+    budgetStateChanges: createReplayTraceBudgetStateChanges(events),
+    seed: createReplayTraceSeed(options.seed),
+    protocolDecisions,
+    providerCalls,
+    finalOutput: createReplayTraceFinalOutput(output, finalEvent ?? events[0] ?? {
+      type: "final",
+      runId,
+      at: "",
+      output,
+      cost: totalCost,
+      transcript: createTranscriptLink(transcript)
+    }),
+    events,
+    transcript
+  };
 
   return {
     output,
     eventLog: createRunEventLog(runId, "sequential", events),
-    trace: {
-      schemaVersion: "1.0",
-      runId,
-      protocol: "sequential",
-      tier: options.tier,
-      modelProviderId: options.model.id,
-      agentsUsed: activeAgents,
-      inputs: createReplayTraceRunInputs({
-        intent: options.intent,
-        protocol: options.protocol,
-        tier: options.tier,
-        modelProviderId: options.model.id,
-        agents: activeAgents,
-        temperature: options.temperature
-      }),
-      budget: createReplayTraceBudget({
-        tier: options.tier,
-        ...(options.budget ? { caps: options.budget } : {}),
-        ...(options.terminate ? { termination: options.terminate } : {})
-      }),
-      budgetStateChanges: createReplayTraceBudgetStateChanges(events),
-      seed: createReplayTraceSeed(options.seed),
-      protocolDecisions,
-      providerCalls,
-      finalOutput: createReplayTraceFinalOutput(output, finalEvent ?? events[0] ?? {
-        type: "final",
-        runId,
-        at: "",
-        output,
-        cost: totalCost,
-        transcript: createTranscriptLink(transcript)
-      }),
-      events,
-      transcript
-    },
+    trace,
     transcript,
     usage: createRunUsage(totalCost),
     metadata: createRunMetadata({
@@ -298,7 +301,8 @@ export async function runSequential(options: SequentialRunOptions): Promise<RunR
       cost: totalCost,
       events
     }),
-    cost: totalCost
+    cost: totalCost,
+    health: computeHealth(trace, DEFAULT_HEALTH_THRESHOLDS)
   };
 
   function stopIfNeeded(): boolean {
@@ -377,4 +381,3 @@ function responseCost(response: ModelResponse): CostSummary {
     totalTokens: response.usage?.totalTokens ?? 0
   };
 }
-

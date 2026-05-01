@@ -1694,12 +1694,12 @@ export interface RunResult {
   /**
    * Machine-readable health summary for the run, auto-computed from trace events.
    *
-   * Always present after Phase 7 engine integration. Typed as optional here for
-   * incremental wave safety — tightened to required in plan 07-04 after the engine
-   * attaches it. Use `computeHealth()` from `@dogpile/sdk/runtime/health` to
+   * Always present. Re-computed identically by `replay()` from the same trace —
+   * contains no information beyond what the trace events carry. Use
+   * `computeHealth(trace, thresholds)` from `@dogpile/sdk/runtime/health` to
    * re-compute with custom thresholds on a stored trace.
    */
-  readonly health?: RunHealthSummary;
+  readonly health: RunHealthSummary;
 }
 
 /**
