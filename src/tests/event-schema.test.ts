@@ -23,6 +23,7 @@ import type {
   StreamOutputEvent,
   SubRunCompletedEvent,
   SubRunFailedEvent,
+  SubRunParentAbortedEvent,
   SubRunStartedEvent,
   ToolActivityEvent,
   ToolCallEvent,
@@ -44,6 +45,7 @@ const expectedEventTypes = [
   "sub-run-started",
   "sub-run-completed",
   "sub-run-failed",
+  "sub-run-parent-aborted",
   "budget-stop",
   "final"
 ] as const satisfies readonly RunEvent["type"][];
@@ -64,6 +66,7 @@ describe("trace event schema", () => {
       "sub-run-started",
       "sub-run-completed",
       "sub-run-failed",
+      "sub-run-parent-aborted",
       "budget-stop",
       "final"
     ]);
@@ -464,6 +467,32 @@ describe("trace event schema", () => {
     expect(roundTripped).toEqual(fixture);
     expect(roundTripped.error.detail).toEqual(fixture.error.detail);
     expect(roundTripped.partialTrace.events).toEqual(partialTrace.events);
+  });
+
+  it("locks the sub-run-parent-aborted event payload shape and JSON round-trip", () => {
+    const fixture: SubRunParentAbortedEvent = {
+      type: "sub-run-parent-aborted",
+      runId: "run-parent-sub-run-parent-aborted",
+      at: "2026-04-30T00:00:03.000Z",
+      childRunId: "run-child-sub-run-parent-aborted",
+      parentRunId: "run-parent-sub-run-parent-aborted",
+      reason: "parent-aborted"
+    };
+    const variant: RunEvent = fixture;
+
+    expect(variant.type).toBe("sub-run-parent-aborted");
+    expect(sortedKeys(fixture)).toEqual([
+      "at",
+      "childRunId",
+      "parentRunId",
+      "reason",
+      "runId",
+      "type"
+    ]);
+    expect(fixture.runId).toBe(fixture.parentRunId);
+    expect(fixture.reason).toBe("parent-aborted");
+    expectIsoTimestamp(fixture.at);
+    expect(JSON.parse(JSON.stringify(fixture))).toEqual(fixture);
   });
 });
 

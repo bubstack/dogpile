@@ -42,7 +42,7 @@ import {
   emptyCost,
   nextProviderCallId
 } from "./defaults.js";
-import { createAbortErrorFromSignal, throwIfAborted } from "./cancellation.js";
+import { classifyAbortReason, createAbortErrorFromSignal, throwIfAborted } from "./cancellation.js";
 import { assertDepthWithinLimit, parseAgentDecision } from "./decisions.js";
 import { generateModelTurn } from "./model.js";
 import { evaluateTerminationStop, warnOnProtocolTerminationMisconfiguration } from "./termination.js";
@@ -931,7 +931,14 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
       ...(options.seed !== undefined ? { seed: options.seed } : {})
     });
 
-    const errorPayload = errorPayloadFromUnknown(error, failedDecision);
+    // BUDGET-01 / D-08: when the child aborted because the parent.signal
+    // aborted, lock detail.reason on the surfaced error. Upstream engine
+    // wrapping (e.g., createStreamCancellationError) attaches its own
+    // detail.status; we add detail.reason so consumers can discriminate
+    // parent-aborted vs timeout regardless of which engine path produced the
+    // abort error.
+    const enrichedError = enrichAbortErrorWithParentReason(error, parentSignal);
+    const errorPayload = errorPayloadFromUnknown(enrichedError, failedDecision);
     const failEvent: SubRunFailedEvent = {
       type: "sub-run-failed",
       runId: input.parentRunId,
@@ -946,8 +953,8 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     input.recordProtocolDecision(failEvent);
 
     // Re-throw a DogpileError so the parent run terminates with a typed error.
-    if (DogpileError.isInstance(error)) {
-      throw error;
+    if (DogpileError.isInstance(enrichedError)) {
+      throw enrichedError;
     }
     throw new DogpileError({
       code: "invalid-configuration",
@@ -993,7 +1000,10 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
     };
     parentEmit(abortMarker);
     input.recordProtocolDecision(abortMarker);
-    throw createAbortErrorFromSignal(parentSignal, options.model.id);
+    throw enrichAbortErrorWithParentReason(
+      createAbortErrorFromSignal(parentSignal, options.model.id),
+      parentSignal
+    );
   }
 
   // D-18 synthetic transcript entry.
@@ -1104,6 +1114,39 @@ function buildPartialTrace(input: {
     events: input.events,
     transcript: []
   };
+}
+
+/**
+ * BUDGET-01 / D-08: when a child sub-run threw because the parent's signal
+ * aborted, lock the `detail.reason` discriminator on the resulting
+ * `code: "aborted"` error. Preserves any pre-existing detail keys (e.g.,
+ * `detail.status: "cancelled"` attached by `createStreamCancellationError`).
+ *
+ * No-op when:
+ *   - parent.signal is undefined or not aborted (child failure was unrelated)
+ *   - error is not a DogpileError with `code: "aborted"`
+ *   - error already has a `detail.reason` set (preserve upstream classification)
+ */
+function enrichAbortErrorWithParentReason(error: unknown, parentSignal: AbortSignal | undefined): unknown {
+  if (parentSignal === undefined || !parentSignal.aborted) {
+    return error;
+  }
+  if (!DogpileError.isInstance(error) || error.code !== "aborted") {
+    return error;
+  }
+  const existingDetail = error.detail ?? {};
+  if (existingDetail["reason"] !== undefined) {
+    return error;
+  }
+  const reason = classifyAbortReason(parentSignal.reason);
+  return new DogpileError({
+    code: "aborted",
+    message: error.message,
+    retryable: error.retryable ?? false,
+    ...(error.providerId !== undefined ? { providerId: error.providerId } : {}),
+    detail: { ...existingDetail, reason },
+    ...(error.cause !== undefined ? { cause: error.cause } : {})
+  });
 }
 
 function errorPayloadFromUnknown(error: unknown, failedDecision: JsonObject): SubRunFailedEvent["error"] {

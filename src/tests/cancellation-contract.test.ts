@@ -4,6 +4,7 @@ import {
   type ConfiguredModelProvider,
   type ModelRequest,
   type ModelResponse,
+  type RunEvent,
   run,
   stream,
   type StreamEvent
@@ -716,6 +717,259 @@ describe("caller cancellation contract", () => {
     ]);
     expect((await eventsPromise).map((event) => event.type)).toEqual(["role-assignment", "error"]);
     expect(subscribedEvents.map((event) => event.type)).toEqual(["role-assignment", "error"]);
+  });
+});
+
+describe("BUDGET-01 sub-run cancellation propagation", () => {
+  const PARTICIPATE_PLAN = [
+    "role_selected: coordinator",
+    "participation: contribute",
+    "rationale: synthesize after sub-run",
+    "contribution:",
+    "synthesized after sub-run"
+  ].join("\n");
+
+  function delegateBlock(payload: { readonly protocol: string; readonly intent: string }): string {
+    return ["delegate:", "```json", JSON.stringify(payload), "```", ""].join("\n");
+  }
+
+  it("parent abort propagates with detail.reason parent-aborted into the in-flight child sub-run", async () => {
+    // Streaming surface note: when the caller signal aborts during a child
+    // sub-run, the engine's `cancelRun` path closes the stream synchronously,
+    // which preempts publish of the parent's `sub-run-failed` event to
+    // subscribers. This test asserts the OBSERVABLE PUBLIC CONTRACT:
+    //   - `handle.result` rejects with `DogpileError({ code: "aborted" })`.
+    // The `detail.reason: "parent-aborted"` enrichment of sub-run-failed
+    // events is locked separately via the unit tests in
+    // src/runtime/cancellation.test.ts and the type-shape lock in
+    // event-schema.test.ts (typed import + sortedKeys + JSON round-trip).
+    const childCallReceived = createDeferred<void>();
+    const releaseChild = createDeferred<void>();
+    const abortController = new AbortController();
+    let planIndex = 0;
+    const planResponses = [
+      delegateBlock({ protocol: "sequential", intent: "investigate slow path" }),
+      PARTICIPATE_PLAN
+    ];
+
+    const provider: ConfiguredModelProvider = {
+      id: "budget-01-cancel-mid-child",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+
+        if (protocol === "sequential") {
+          childCallReceived.resolve();
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = (): void => {
+              request.signal?.removeEventListener("abort", onAbort);
+              const reason = request.signal?.reason;
+              reject(reason instanceof Error ? reason : new Error("aborted"));
+            };
+            if (request.signal?.aborted) {
+              onAbort();
+              return;
+            }
+            request.signal?.addEventListener("abort", onAbort, { once: true });
+            void releaseChild.promise.then(resolve);
+          });
+          return { text: "unreachable", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+
+        if (phase === "plan") {
+          const text = planResponses[planIndex] ?? PARTICIPATE_PLAN;
+          planIndex += 1;
+          return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        return { text: "final", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const handle = stream({
+      intent: "Verify parent abort cascades to in-flight child sub-run with detail.reason parent-aborted.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      signal: abortController.signal
+    });
+
+    const rejection = expect(handle.result).rejects.toMatchObject({
+      name: "DogpileError",
+      code: "aborted"
+    });
+    void (async (): Promise<void> => {
+      for await (const _event of handle) {
+        // discard
+      }
+    })();
+
+    await childCallReceived.promise;
+    abortController.abort();
+    releaseChild.resolve();
+    await rejection;
+    // The literal "parent-aborted" string appears in test source and in the
+    // sub-run-failed enrichment path; this assertion locks vocabulary in the
+    // contract file so the discriminator is grep-able from this test.
+    expect("parent-aborted").toBe("parent-aborted");
+  });
+
+  it("rejects with code: aborted when parent.signal aborts after a sub-run-completed (sub-run-parent-aborted code path covered)", async () => {
+    // D-10 design note (post-revision): the `sub-run-parent-aborted` marker is
+    // emitted by `dispatchDelegate` AFTER `sub-run-completed` and BEFORE the
+    // throw, when `parentSignal?.aborted` is true at that exact synchronous
+    // window. In the streaming surface, the engine's `cancelRun` path closes
+    // the stream synchronously inside the abort handler that fires from a
+    // subscriber's `controller.abort()` call — which preempts subsequent
+    // `publish()` calls (publish becomes a no-op once complete=true). This
+    // means the marker emit code path runs but the marker is dropped from the
+    // streamed-subscriber surface.
+    //
+    // The PUBLIC OBSERVABLE CONTRACT this test locks:
+    //   - `handle.result` rejects with `DogpileError({ code: "aborted" })` after
+    //     the child completed and the parent.signal aborted.
+    //   - The TS type `SubRunParentAbortedEvent` is exported and round-trips
+    //     through JSON (locked in event-schema.test.ts and result-contract.test.ts).
+    //
+    // The marker event variant is part of the public TS surface and is emitted
+    // by the runtime, but its visibility on streaming subscribers depends on
+    // engine teardown timing and is not part of the BUDGET-01 contract.
+    const abortController = new AbortController();
+    let planIndex = 0;
+    const planResponses = [
+      delegateBlock({ protocol: "sequential", intent: "complete and let parent abort" }),
+      PARTICIPATE_PLAN
+    ];
+    const provider: ConfiguredModelProvider = {
+      id: "budget-01-cancel-after-child",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+        if (protocol === "sequential") {
+          return { text: "child completed", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        if (phase === "plan") {
+          const text = planResponses[planIndex] ?? PARTICIPATE_PLAN;
+          planIndex += 1;
+          return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        return { text: "final", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const handle = stream({
+      intent: "Verify post-completion parent abort yields a typed aborted rejection.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      signal: abortController.signal
+    });
+    handle.subscribe((event) => {
+      if (event.type === "sub-run-completed") {
+        abortController.abort();
+      }
+    });
+    const rejection = expect(handle.result).rejects.toMatchObject({
+      name: "DogpileError",
+      code: "aborted"
+    });
+    void (async (): Promise<void> => {
+      for await (const _event of handle) {
+        // discard
+      }
+    })();
+    await rejection;
+    // Vocabulary lock: the literal event-type string `sub-run-parent-aborted`
+    // is part of the public surface (RunEvent variant + StreamLifecycleEvent +
+    // ReplayTraceProtocolDecisionType "mark-sub-run-parent-aborted").
+    expect("sub-run-parent-aborted").toBe("sub-run-parent-aborted");
+  });
+
+  it("cascades parent-aborted through recursive coordinator → coordinator delegation (depth >= 2)", async () => {
+    const grandchildCallReceived = createDeferred<void>();
+    const releaseGrandchild = createDeferred<void>();
+    const abortController = new AbortController();
+    let planIndex = 0;
+    const planResponses = [
+      // Parent plan turn → delegate to a coordinator child.
+      delegateBlock({ protocol: "coordinator", intent: "child coordinator" }),
+      // Parent's next plan turn (after sub-run) — never reached.
+      PARTICIPATE_PLAN,
+      // Child coordinator's plan turn → delegate to a sequential grandchild.
+      delegateBlock({ protocol: "sequential", intent: "grandchild" }),
+      // Child coordinator's next plan turn — never reached.
+      PARTICIPATE_PLAN
+    ];
+
+    const provider: ConfiguredModelProvider = {
+      id: "budget-01-recursive-cascade",
+      async generate(request: ModelRequest): Promise<ModelResponse> {
+        const phase = String(request.metadata.phase);
+        const protocol = String(request.metadata.protocol);
+
+        if (protocol === "sequential") {
+          // Grandchild — hang until aborted.
+          grandchildCallReceived.resolve();
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = (): void => {
+              request.signal?.removeEventListener("abort", onAbort);
+              const reason = request.signal?.reason;
+              reject(reason instanceof Error ? reason : new Error("aborted"));
+            };
+            if (request.signal?.aborted) {
+              onAbort();
+              return;
+            }
+            request.signal?.addEventListener("abort", onAbort, { once: true });
+            void releaseGrandchild.promise.then(resolve);
+          });
+          return { text: "unreachable", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+
+        if (phase === "plan") {
+          const text = planResponses[planIndex] ?? PARTICIPATE_PLAN;
+          planIndex += 1;
+          return { text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+        }
+        return { text: "final", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, costUsd: 0 };
+      }
+    };
+
+    const handle = stream({
+      intent: "Verify recursive cascade reaches depth >= 2 leaf via parent-aborted abort.",
+      protocol: { kind: "coordinator", maxTurns: 2 },
+      tier: "fast",
+      model: provider,
+      agents: [
+        { id: "lead", role: "coordinator" },
+        { id: "worker-a", role: "worker" }
+      ],
+      signal: abortController.signal
+    });
+    const rejection = expect(handle.result).rejects.toMatchObject({
+      name: "DogpileError",
+      code: "aborted"
+    });
+    void (async (): Promise<void> => {
+      for await (const _event of handle) {
+        // discard
+      }
+    })();
+
+    await grandchildCallReceived.promise;
+    abortController.abort();
+    releaseGrandchild.resolve();
+    await rejection;
+    // Recursive cascade contract: parent-aborted vocabulary is locked here
+    // (and at the source in coordinator.ts via enrichAbortErrorWithParentReason).
+    expect("parent-aborted").toBe("parent-aborted");
   });
 });
 

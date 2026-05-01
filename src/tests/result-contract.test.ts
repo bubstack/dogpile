@@ -33,6 +33,7 @@ import type {
   RunUsage,
   StreamEvent,
   SubRunCompletedEvent,
+  SubRunParentAbortedEvent,
   Trace,
   TranscriptEntry
 } from "../index.js";
@@ -971,6 +972,22 @@ describe("single-call result contract", () => {
     );
     // Full event-array equality, not just type sequence.
     expect(replayed.trace.events).toEqual(result.trace.events);
+  });
+
+  it("round-trips a sub-run-parent-aborted RunEvent variant through JSON serialization", () => {
+    const fixture: SubRunParentAbortedEvent = {
+      type: "sub-run-parent-aborted",
+      runId: "run-parent-aborted-roundtrip",
+      at: "2026-04-30T00:00:04.000Z",
+      childRunId: "run-child-aborted-roundtrip",
+      parentRunId: "run-parent-aborted-roundtrip",
+      reason: "parent-aborted"
+    };
+    const variant: RunEvent = fixture;
+    expect(variant.type).toBe("sub-run-parent-aborted");
+    const roundTripped = JSON.parse(JSON.stringify(fixture)) as SubRunParentAbortedEvent;
+    expect(roundTripped).toEqual(fixture);
+    expect(roundTripped.reason).toBe("parent-aborted");
   });
 });
 

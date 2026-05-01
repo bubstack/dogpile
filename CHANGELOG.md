@@ -16,6 +16,7 @@
 - Fenced-JSON delegate parsing convention added to `parseAgentDecision` (no new tool surface — delegate is a parser-level concern). Coordinator runs accept a `delegate:` prefix followed by a fenced ```json block.
 - `Dogpile.replay()` rehydrates embedded sub-run traces without provider invocation; the new `recomputeAccountingFromTrace` helper verifies recorded child `RunAccounting` against a per-child recompute and throws `invalid-configuration` with `detail.reason: "trace-accounting-mismatch"` and `detail.field` identifying the offending numeric field on tamper. The eight enumerated comparable numeric fields are `cost.usd`, `cost.inputTokens`, `cost.outputTokens`, `cost.totalTokens`, `usage.usd`, `usage.inputTokens`, `usage.outputTokens`, `usage.totalTokens`. Top-level parent drift is reported with `eventIndex: -1`; child drift is reported with the offending event's index plus `childRunId`.
 - New `ReplayTraceProtocolDecisionType` literals: `start-sub-run`, `complete-sub-run`, `fail-sub-run`.
+- Added: parent abort propagates to all in-flight sub-runs via a per-child derived `AbortController`; aborted children carry `detail.reason: "parent-aborted"` on `code: "aborted"` errors. New trace event `sub-run-parent-aborted` (also exported as TS type `SubRunParentAbortedEvent`) marks parent aborts that land after a sub-run completes; observable on `Dogpile.stream()` subscribers when stream teardown timing permits. New `ReplayTraceProtocolDecisionType` literal `mark-sub-run-parent-aborted`.
 
 ### Notes
 

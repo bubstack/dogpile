@@ -63,6 +63,35 @@ describe("public DogpileError API", () => {
     expect(classifyDogpileError(publicError)).toBe("retryable-provider");
   });
 
+  it("locks the BUDGET-01 detail.reason vocabulary on code: aborted errors", () => {
+    // BUDGET-01 / D-08: aborted errors carry `detail.reason: "parent-aborted"`
+    // when the parent.signal aborted (BUDGET-01 lands "parent-aborted"; the
+    // "timeout" half lands in BUDGET-02). Vocabulary is documented-convention
+    // (no exported string-literal type union) but is observable through
+    // `error.detail.reason` on the public error surface.
+    const error = new DogpileError({
+      code: "aborted",
+      message: "The operation was aborted.",
+      retryable: false,
+      providerId: "budget-01-detail-reason-lock",
+      detail: {
+        reason: "parent-aborted"
+      }
+    });
+    expect(error.code).toBe("aborted");
+    expect(error.detail).toEqual({ reason: "parent-aborted" });
+    expect(error.toJSON()).toEqual({
+      name: "DogpileError",
+      code: "aborted",
+      message: "The operation was aborted.",
+      retryable: false,
+      providerId: "budget-01-detail-reason-lock",
+      detail: {
+        reason: "parent-aborted"
+      }
+    });
+  });
+
   it("guards cross-realm error-shaped values with the stable code set", () => {
     expect(
       DogpileError.isInstance({
