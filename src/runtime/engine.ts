@@ -2,6 +2,7 @@ import { DogpileError } from "../types.js";
 import type {
   AbortedEvent,
   BudgetTier,
+  DogpileErrorCode,
   DogpileOptions,
   Engine,
   EngineOptions,
@@ -13,6 +14,7 @@ import type {
   RunEvaluation,
   RunEvent,
   RunResult,
+  SubRunFailedEvent,
   StreamErrorEvent,
   StreamEvent,
   StreamEventSubscriber,
@@ -270,6 +272,10 @@ export function createEngine(options: EngineOptions): Engine {
           }));
           if (status !== "running") {
             return;
+          }
+          const terminalThrow = resolveRuntimeTerminalThrow(baseResult.trace, failureInstancesByChildRunId);
+          if (terminalThrow) {
+            throw terminalThrow;
           }
 
           const finalizedResult = await abortRace.run(applyRunEvaluation(baseResult, options.evaluate));
@@ -697,6 +703,10 @@ async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Pr
       eventLog: createRunEventLog(trace.runId, trace.protocol, events),
       trace
     };
+    const terminalThrow = resolveRuntimeTerminalThrow(runResult.trace, failureInstancesByChildRunId);
+    if (terminalThrow) {
+      throw terminalThrow;
+    }
     return canonicalizeRunResult(await abortLifecycle.run(applyRunEvaluation(runResult, options.evaluate)));
   } catch (error: unknown) {
     throw abortLifecycle.translateError(error);
@@ -888,6 +898,10 @@ export function replay(trace: Trace): RunResult {
   // child trace recomputes. Mismatches throw `invalid-configuration` with
   // `detail.reason: "trace-accounting-mismatch"`. No provider invocation.
   const accounting = recomputeAccountingFromTrace(trace);
+  const replayThrow = resolveReplayTerminalThrow(trace);
+  if (replayThrow) {
+    throw replayThrow;
+  }
   const baseResult = {
     output: trace.finalOutput.output,
     eventLog: createRunEventLog(trace.runId, trace.protocol, trace.events),
@@ -915,6 +929,82 @@ export function replay(trace: Trace): RunResult {
     ...(lastEvent.quality !== undefined ? { quality: lastEvent.quality } : {}),
     ...(lastEvent.evaluation !== undefined ? { evaluation: lastEvent.evaluation } : {})
   };
+}
+
+function resolveRuntimeTerminalThrow(
+  trace: Trace,
+  failureInstancesByChildRunId: ReadonlyMap<string, DogpileError>
+): DogpileError | null {
+  if (trace.triggeringFailureForAbortMode !== undefined) {
+    return failureInstancesByChildRunId.get(trace.triggeringFailureForAbortMode.childRunId) ?? null;
+  }
+
+  const finalEvent = trace.events.at(-1);
+  if (finalEvent?.type !== "final" || finalEvent.termination === undefined) {
+    return null;
+  }
+
+  return findLastRealFailure(trace.events, failureInstancesByChildRunId);
+}
+
+function findLastRealFailure(
+  events: readonly RunEvent[],
+  failureInstancesByChildRunId: ReadonlyMap<string, DogpileError>
+): DogpileError | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type !== "sub-run-failed") {
+      continue;
+    }
+    const instance = failureInstancesByChildRunId.get(event.childRunId);
+    if (instance) {
+      return instance;
+    }
+  }
+  return null;
+}
+
+function resolveReplayTerminalThrow(trace: Trace): DogpileError | null {
+  if (trace.triggeringFailureForAbortMode !== undefined) {
+    return dogpileErrorFromSerializedPayload(trace.triggeringFailureForAbortMode.error);
+  }
+
+  const finalEvent = trace.events.at(-1);
+  if (finalEvent?.type !== "final" || finalEvent.termination === undefined) {
+    return null;
+  }
+
+  return reconstructLastRealFailure(trace.events);
+}
+
+function reconstructLastRealFailure(events: readonly RunEvent[]): DogpileError | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type !== "sub-run-failed" || isSyntheticSubRunFailure(event)) {
+      continue;
+    }
+    return dogpileErrorFromSerializedPayload(event.error);
+  }
+  return null;
+}
+
+function isSyntheticSubRunFailure(event: SubRunFailedEvent): boolean {
+  const reason = event.error.detail?.["reason"];
+  return reason === "sibling-failed" || reason === "parent-aborted";
+}
+
+function dogpileErrorFromSerializedPayload(input: {
+  readonly code: string;
+  readonly message: string;
+  readonly providerId?: string;
+  readonly detail?: JsonObject;
+}): DogpileError {
+  return new DogpileError({
+    code: input.code as DogpileErrorCode,
+    message: input.message,
+    ...(input.providerId !== undefined ? { providerId: input.providerId } : {}),
+    ...(input.detail !== undefined ? { detail: input.detail } : {})
+  });
 }
 
 /**
