@@ -24,14 +24,27 @@ type ModelUsage = NonNullable<ModelResponse["usage"]>;
 
 export async function generateModelTurn(options: GenerateModelTurnOptions): Promise<ModelResponse> {
   const startedAt = new Date().toISOString();
+  const modelId = options.model.modelId ?? options.model.id;
   let response: ModelResponse;
 
   throwIfAborted(options.request.signal, options.model.id);
 
+  options.emit({
+    type: "model-request",
+    runId: options.runId,
+    callId: options.callId,
+    providerId: options.model.id,
+    modelId,
+    startedAt,
+    agentId: options.agent.id,
+    role: options.agent.role,
+    request: requestForTrace(options.request)
+  });
+
   if (!options.model.stream) {
     response = await options.model.generate(options.request);
     throwIfAborted(options.request.signal, options.model.id);
-    recordProviderCall(response, startedAt, options);
+    recordProviderCall(response, startedAt, modelId, options);
     return response;
   }
 
@@ -86,22 +99,38 @@ export async function generateModelTurn(options: GenerateModelTurnOptions): Prom
     ...(metadata !== undefined ? { metadata } : {})
   };
   throwIfAborted(options.request.signal, options.model.id);
-  recordProviderCall(response, startedAt, options);
+  recordProviderCall(response, startedAt, modelId, options);
   return response;
 }
 
 function recordProviderCall(
   response: ModelResponse,
   startedAt: string,
+  modelId: string,
   options: GenerateModelTurnOptions
 ): void {
+  const completedAt = new Date().toISOString();
+
+  options.emit({
+    type: "model-response",
+    runId: options.runId,
+    callId: options.callId,
+    providerId: options.model.id,
+    modelId,
+    startedAt,
+    completedAt,
+    agentId: options.agent.id,
+    role: options.agent.role,
+    response
+  });
+
   options.onProviderCall?.({
     kind: "replay-trace-provider-call",
     callId: options.callId,
     providerId: options.model.id,
-    modelId: options.model.modelId ?? options.model.id,
+    modelId,
     startedAt,
-    completedAt: new Date().toISOString(),
+    completedAt,
     agentId: options.agent.id,
     role: options.agent.role,
     request: requestForTrace(options.request),
