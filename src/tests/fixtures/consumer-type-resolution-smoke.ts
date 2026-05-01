@@ -112,6 +112,8 @@ function recordEvent(event: RunEvent): string {
     case "sub-run-failed":
     case "sub-run-parent-aborted":
     case "sub-run-budget-clamped":
+    case "sub-run-queued":
+    case "sub-run-concurrency-clamped":
       return event.type;
   }
 }
