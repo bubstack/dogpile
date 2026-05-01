@@ -50,7 +50,7 @@ last_completed: v0.4.0
 3. A trace produced by `run()` and passed through `replay()` returns provenance fields identical to the originals, confirming event-shape stability.
 **Plans:** 6 plans
 Plans:
-- [ ] 06-01-PLAN.md — Type shape mutation + defaults.ts blast-radius fix
+- [x] 06-01-PLAN.md — Type shape mutation + defaults.ts blast-radius fix
 - [ ] 06-02-PLAN.md — Runtime emission in model.ts + replay synthesis in engine.ts
 - [ ] 06-03-PLAN.md — Provider adapter modelId population (openai-compatible + vercel-ai)
 - [ ] 06-04-PLAN.md — /runtime/provenance subpath module + package.json wiring
@@ -103,7 +103,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 6. Provenance Annotations | 0/6 | Planning | — |
+| 6. Provenance Annotations | 1/6 | In Progress | — |
 | 7. Structured Event Introspection + Health Diagnostics | 0/? | Not started | — |
 | 8. Audit Event Schema | 0/? | Not started | — |
 | 9. OTEL Tracing Bridge | 0/? | Not started | — |
