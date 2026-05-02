@@ -895,12 +895,15 @@ function buildSubRunSnapshot(
 }
 
 function nestedSubRunCosts(result: RunResult): CostSummary[] {
-  return result.trace.events
-    .filter(
-      (event): event is Extract<RunEvent, { readonly type: "sub-run-completed" }> =>
-        event.type === "sub-run-completed"
-    )
-    .map((event) => event.subResult.cost);
+  return result.trace.events.flatMap((event) => {
+    if (event.type === "sub-run-completed") {
+      return [event.subResult.cost];
+    }
+    if (event.type === "sub-run-failed") {
+      return [event.partialCost];
+    }
+    return [];
+  });
 }
 
 function handleMetricsEvent(state: MetricsState, event: RunEvent): void {

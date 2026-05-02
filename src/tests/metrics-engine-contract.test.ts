@@ -6,7 +6,7 @@ import {
   createDelegatingDeterministicProvider,
   createDeterministicModelProvider
 } from "../testing/deterministic-provider.js";
-import type { ConfiguredModelProvider, ModelRequest, ModelResponse } from "../types.js";
+import { DogpileError, type ConfiguredModelProvider, type ModelRequest, type ModelResponse } from "../types.js";
 
 describe("MetricsHook engine lifecycle", () => {
   it("fires onRunComplete with completed counters for a successful root run", async () => {
@@ -186,6 +186,48 @@ describe("MetricsHook engine lifecycle", () => {
     });
   });
 
+  it("excludes failed sub-run partial spend from parent own counters while retaining totals", async () => {
+    const snapshots: RunMetricsSnapshot[] = [];
+
+    const result = await run({
+      intent: "Continue parent metrics after a partially spent child failure.",
+      model: createPartiallyFailingDelegationProvider({
+        id: "metrics-failed-child-rollup",
+        afterChildFailure: "continue"
+      }),
+      protocol: { kind: "coordinator", maxTurns: 1 },
+      tier: "fast",
+      agents: [
+        { id: "coordinator", role: "coordinator" },
+        { id: "child-worker", role: "child-worker" }
+      ],
+      metricsHook: {
+        onRunComplete(snapshot): void {
+          snapshots.push(snapshot);
+        }
+      }
+    });
+
+    const failed = result.trace.events.find((event) => event.type === "sub-run-failed");
+    expect(failed?.type).toBe("sub-run-failed");
+    if (failed?.type !== "sub-run-failed") {
+      throw new Error("expected sub-run-failed");
+    }
+
+    expect(failed.partialCost.usd).toBeGreaterThan(0);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({
+      outcome: "completed",
+      inputTokens: result.cost.inputTokens - failed.partialCost.inputTokens,
+      outputTokens: result.cost.outputTokens - failed.partialCost.outputTokens,
+      costUsd: result.cost.usd - failed.partialCost.usd,
+      totalInputTokens: result.cost.inputTokens,
+      totalOutputTokens: result.cost.outputTokens,
+      totalCostUsd: result.cost.usd,
+      turns: result.trace.events.filter((event) => event.type === "agent-turn").length
+    });
+  });
+
   it("routes synchronous and async hook failures to logger.error without changing the run result", async () => {
     const calls: Array<{ readonly message: string; readonly fields: unknown }> = [];
     const logger: Logger = {
@@ -269,4 +311,89 @@ async function waitForCondition(condition: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   expect(condition()).toBe(true);
+}
+
+function createPartiallyFailingDelegationProvider(options: {
+  readonly id: string;
+  readonly afterChildFailure: "continue" | "throw";
+}): ConfiguredModelProvider {
+  let parentPlanCalls = 0;
+  let childSequentialCalls = 0;
+
+  return {
+    id: options.id,
+    async generate(request: ModelRequest): Promise<ModelResponse> {
+      const protocol = readMetadata(request, "protocol");
+      const phase = readMetadata(request, "phase");
+      const role = readMetadata(request, "role");
+      const agentId = readMetadata(request, "agentId");
+
+      if (protocol === "coordinator" && phase === "plan") {
+        parentPlanCalls += 1;
+        if (parentPlanCalls === 1) {
+          return response(delegateText(), 2, 3, 0.01);
+        }
+        if (options.afterChildFailure === "throw") {
+          throw new Error("parent aborted after child partial spend");
+        }
+        return response(participateText(), 5, 7, 0.02);
+      }
+
+      if (protocol === "coordinator" && phase === "final-synthesis") {
+        return response(`${role}:${agentId} synthesized after child failure.`, 11, 13, 0.03);
+      }
+
+      if (protocol === "sequential") {
+        childSequentialCalls += 1;
+        if (childSequentialCalls === 1) {
+          return response(`${role}:${agentId} recorded partial child work.`, 17, 19, 0.25);
+        }
+        throw new DogpileError({
+          code: "provider-timeout",
+          message: "child failed after partial spend",
+          retryable: true,
+          providerId: options.id
+        });
+      }
+
+      return response(`${role}:${agentId} completed deterministic work.`, 1, 1, 0);
+    }
+  };
+}
+
+function response(text: string, inputTokens: number, outputTokens: number, costUsd: number): ModelResponse {
+  return {
+    text,
+    usage: {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens
+    },
+    costUsd
+  };
+}
+
+function delegateText(): string {
+  return [
+    "delegate:",
+    "```json",
+    JSON.stringify({ protocol: "sequential", intent: "child records partial spend before failing" }),
+    "```",
+    ""
+  ].join("\n");
+}
+
+function participateText(): string {
+  return [
+    "role_selected: coordinator",
+    "participation: contribute",
+    "rationale: continue after failed child",
+    "contribution:",
+    "continued after failed child"
+  ].join("\n");
+}
+
+function readMetadata(request: ModelRequest, key: string): string {
+  const value = request.metadata[key];
+  return typeof value === "string" ? value : "unknown";
 }
