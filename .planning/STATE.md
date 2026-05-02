@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v0.5.0
 milestone_name: milestone
-status: executing
-last_updated: "2026-05-02T00:20:15Z"
-last_activity: 2026-05-02 -- Phase 9 Plan 04 complete
+status: planning
+last_updated: "2026-05-02T00:40:00Z"
+last_activity: 2026-05-02 -- Phase 9 complete and verified
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 19
   completed_plans: 19
   percent: 100
@@ -19,14 +19,14 @@ progress:
 
 **Core value:** Coordinated, observable, replayable multi-agent runs with a strict boundary — Dogpile owns the coordination loop; the application owns credentials, pricing, storage, queues, UI, and tool side effects.
 
-**Current focus:** Phase 09 — OTEL Tracing Bridge
+**Current focus:** Phase 10 — Metrics / Counters
 
 ## Current Position
 
-Phase: 09
-Plan: Verification
-Status: Ready for phase verification
-Last activity: 2026-05-02 -- Phase 9 Plan 04 complete
+Phase: 10
+Plan: Planning
+Status: Ready for Phase 10 planning
+Last activity: 2026-05-02 -- Phase 9 complete and verified
 
 ```
 Progress [██████████] 100% (19/19 milestone plans)
@@ -36,7 +36,7 @@ Progress [██████████] 100% (19/19 milestone plans)
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 3 / 5 |
+| Phases complete | 4 / 5 |
 | Requirements complete | 11 / 13 |
 | Plans complete | 19 / 19 |
 | Phase 08 P01 | 5 min | 2 tasks | 2 files |
@@ -68,6 +68,7 @@ Progress [██████████] 100% (19/19 milestone plans)
 - **Phase 9 engine tracing uses internal runProtocol wrapping.** `openRunTracing`, `handleTracingEvent`, and `closeRunTracing` wrap internal `runProtocol` so both top-level and delegated child runs emit `dogpile.run` spans. A narrow coordinator callback-shape change passes the planned `childRunId` through as internal `runId` for deterministic `subRunSpansByChildId` lookup.
 - **Phase 9 tracing public surface is locked.** `@dogpile/sdk/runtime/tracing` is package-exported, package-exports tests assert the subpath and type surface, no-otel-imports guards runtime/browser/provider roots, and the live OTEL contract test verifies run/sub-run/child-run parentage through `createDelegatingDeterministicProvider`.
 - **Phase 9 docs lockstep is complete.** CHANGELOG.md, CLAUDE.md, and docs/developer-usage.md document the OTEL tracing bridge, WeakMap bridge pattern, span hierarchy, attribute surface, zero-overhead absent tracer behavior, and tracing-free replay contract. `pnpm run verify` passed.
+- **Phase 9 code review findings were fixed before verification.** `dogpile.agent-turn` spans now use per-turn model-call accounting, and failed `dogpile.run` spans retain best-effort run id/count/cost attributes. Regression coverage lives in `src/tests/otel-tracing-contract.test.ts`.
 
 ### Todos
 
@@ -88,8 +89,8 @@ Progress [██████████] 100% (19/19 milestone plans)
 
 ## Session Continuity
 
-**Next action:** Verify Phase 9 — OTEL Tracing Bridge.
+**Next action:** Plan Phase 10 — Metrics / Counters.
 
 ---
 
-*Last updated: 2026-05-02 — Phase 9 Plan 04 complete.*
+*Last updated: 2026-05-02 — Phase 9 complete and verified.*
