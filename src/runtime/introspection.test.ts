@@ -5,6 +5,8 @@ import type {
   BudgetStopEvent,
   CostSummary,
   FinalEvent,
+  ModelRequestEvent,
+  ModelResponseEvent,
   RunEvent,
   TurnEvent
 } from "../types.js";
@@ -18,6 +20,8 @@ const turn3 = turnEvent("agent-1", 3, 1.5);
 const broadcast1 = broadcastEvent(1, 0.03);
 const budgetStop = budgetStopEvent();
 const final = finalEvent();
+const modelReq1 = modelRequestEvent("call-1", "agent-1");
+const modelRes1 = modelResponseEvent("call-1", "agent-1");
 
 const mixedEvents = [
   budgetStop,
@@ -135,6 +139,28 @@ describe("queryEvents", () => {
     // @ts-expect-error FinalEvent intentionally has no agentId.
     result[0]?.agentId;
   });
+
+  it("narrows model-request type filter to ModelRequestEvent[] without caller casts", () => {
+    const events = [turn1, modelReq1, modelRes1, final] satisfies readonly RunEvent[];
+    const result = queryEvents(events, { type: "model-request" });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.callId).toBe("call-1");
+    expect(result[0]?.agentId).toBe("agent-1");
+    // @ts-expect-error ModelRequestEvent has no completedAt (that field belongs to ModelResponseEvent).
+    result[0]?.completedAt;
+  });
+
+  it("narrows model-response type filter to ModelResponseEvent[] without caller casts", () => {
+    const events = [turn1, modelReq1, modelRes1, final] satisfies readonly RunEvent[];
+    const result = queryEvents(events, { type: "model-response" });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.callId).toBe("call-1");
+    expect(result[0]?.completedAt).toBe(at);
+    // @ts-expect-error ModelResponseEvent has no request (that field belongs to ModelRequestEvent).
+    result[0]?.request;
+  });
 });
 
 function turnEvent(agentId: string, index: number, usd: number): TurnEvent {
@@ -201,5 +227,38 @@ function costSummary(usd: number): CostSummary {
     inputTokens: Math.round(usd * 1000),
     outputTokens: Math.round(usd * 2000),
     totalTokens: Math.round(usd * 3000)
+  };
+}
+
+function modelRequestEvent(callId: string, agentId: string): ModelRequestEvent {
+  return {
+    type: "model-request",
+    runId,
+    startedAt: at,
+    callId,
+    providerId: "test-provider",
+    modelId: "test-model",
+    agentId,
+    role: `role-${agentId}`,
+    request: {
+      messages: [{ role: "user", content: `request-${callId}` }],
+      temperature: 0.7,
+      metadata: {}
+    }
+  };
+}
+
+function modelResponseEvent(callId: string, agentId: string): ModelResponseEvent {
+  return {
+    type: "model-response",
+    runId,
+    startedAt: at,
+    completedAt: at,
+    callId,
+    providerId: "test-provider",
+    modelId: "test-model",
+    agentId,
+    role: `role-${agentId}`,
+    response: { text: `response-${callId}` }
   };
 }
