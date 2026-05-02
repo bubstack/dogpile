@@ -1,4 +1,6 @@
 import type { DogpileTracer } from "./runtime/tracing.js";
+import type { Logger } from "./runtime/logger.js";
+import type { MetricsHook } from "./runtime/metrics.js";
 
 /**
  * Primitive JSON value accepted in serializable trace metadata.
@@ -1894,6 +1896,23 @@ export interface DogpileOptions extends BudgetCostTierOptions {
    */
   readonly tracer?: DogpileTracer;
   /**
+   * Optional callback object for run-completion metrics. When provided,
+   * `onRunComplete` fires with a `RunMetricsSnapshot` at every terminal state
+   * (completed, budget-stopped, or aborted). `onSubRunComplete` fires for each
+   * coordinator-dispatched child run that completes. Hook errors are routed to
+   * `logger.error` (or `console.error` when no logger is provided) and never
+   * propagate into the run result. When absent, zero overhead — no allocations.
+   * See `@dogpile/sdk/runtime/metrics` for the interface.
+   */
+  readonly metricsHook?: MetricsHook;
+  /**
+   * Optional structured logger for SDK-internal diagnostics (hook errors and
+   * future debug/info events). Implement against pino, winston, or any other
+   * logger by satisfying the `Logger` interface from `@dogpile/sdk/runtime/logger`.
+   * When absent, hook errors fall back to `console.error`.
+   */
+  readonly logger?: Logger;
+  /**
    * Maximum coordinator → sub-run recursion depth.
    *
    * Defaults to 4. Per-run values can only LOWER the engine ceiling; raising
@@ -2006,6 +2025,23 @@ export interface EngineOptions {
    * See {@link DogpileTracer} in `@dogpile/sdk/runtime/tracing`.
    */
   readonly tracer?: DogpileTracer;
+  /**
+   * Optional callback object for run-completion metrics. When provided,
+   * `onRunComplete` fires with a `RunMetricsSnapshot` at every terminal state
+   * (completed, budget-stopped, or aborted). `onSubRunComplete` fires for each
+   * coordinator-dispatched child run that completes. Hook errors are routed to
+   * `logger.error` (or `console.error` when no logger is provided) and never
+   * propagate into the run result. When absent, zero overhead — no allocations.
+   * See `@dogpile/sdk/runtime/metrics` for the interface.
+   */
+  readonly metricsHook?: MetricsHook;
+  /**
+   * Optional structured logger for SDK-internal diagnostics (hook errors and
+   * future debug/info events). Implement against pino, winston, or any other
+   * logger by satisfying the `Logger` interface from `@dogpile/sdk/runtime/logger`.
+   * When absent, hook errors fall back to `console.error`.
+   */
+  readonly logger?: Logger;
   /**
    * Maximum coordinator → sub-run recursion depth ceiling.
    *
