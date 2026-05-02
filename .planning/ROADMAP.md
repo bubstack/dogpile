@@ -117,7 +117,7 @@ Plans:
 - [x] 09-02-PLAN.md — Engine span lifecycle: runNonStreamingProtocol + streaming execute() + RunProtocolOptions.parentSpan + replay tracing-free comments
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 09-03-PLAN.md — Public-surface lockstep: /runtime/tracing subpath + package-exports.test.ts + no-otel-imports.test.ts + otel-tracing-contract.test.ts
+- [x] 09-03-PLAN.md — Public-surface lockstep: /runtime/tracing subpath + package-exports.test.ts + no-otel-imports.test.ts + otel-tracing-contract.test.ts
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 09-04-PLAN.md — Docs lockstep: CHANGELOG + CLAUDE.md invariant + docs/developer-usage.md OTEL section + pnpm run verify
@@ -139,7 +139,7 @@ Plans:
 | 6. Provenance Annotations | 6/6 | Complete | 2026-05-01 |
 | 7. Structured Event Introspection + Health Diagnostics | 5/5 | Complete | 2026-05-01 |
 | 8. Audit Event Schema | 3/3 | Complete | 2026-05-01 |
-| 9. OTEL Tracing Bridge | 3/5 | In Progress | — |
+| 9. OTEL Tracing Bridge | 4/5 | In Progress | — |
 | 10. Metrics / Counters | 0/? | Not started | — |
 
 ---

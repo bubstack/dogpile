@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.5.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-02T00:12:40Z"
-last_activity: 2026-05-02 -- Phase 9 Plan 02 complete
+last_updated: "2026-05-02T00:17:22Z"
+last_activity: 2026-05-02 -- Phase 9 Plan 03 complete
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 19
-  completed_plans: 17
-  percent: 89
+  completed_plans: 18
+  percent: 95
 ---
 
 # State
@@ -24,12 +24,12 @@ progress:
 ## Current Position
 
 Phase: 09
-Plan: 09-03
+Plan: 09-04
 Status: Ready to execute
-Last activity: 2026-05-02 -- Phase 9 Plan 02 complete
+Last activity: 2026-05-02 -- Phase 9 Plan 03 complete
 
 ```
-Progress [█████████░] 89% (17/19 milestone plans)
+Progress [█████████░] 95% (18/19 milestone plans)
 ```
 
 ## Performance Metrics
@@ -38,13 +38,14 @@ Progress [█████████░] 89% (17/19 milestone plans)
 |--------|-------|
 | Phases complete | 3 / 5 |
 | Requirements complete | 11 / 13 |
-| Plans complete | 17 / 19 |
+| Plans complete | 18 / 19 |
 | Phase 08 P01 | 5 min | 2 tasks | 2 files |
 | Phase 08 P02 | 4 min | 2 tasks | 3 files |
 | Phase 08 P03 | 4 min | 2 tasks | 4 files |
 | Phase 09 P00 | 4 min | 1 task | 2 files |
 | Phase 09 P01 | 6 min | 2 tasks | 8 files |
 | Phase 09 P02 | 14 min | 3 tasks | 2 files |
+| Phase 09 P03 | 8 min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -64,6 +65,7 @@ Progress [█████████░] 89% (17/19 milestone plans)
 - **Phase 7 public surface is locked.** `AnomalyCode`, `HealthAnomaly`, and `RunHealthSummary` are root-exported; `@dogpile/sdk/runtime/health` and `@dogpile/sdk/runtime/introspection` are package subpaths with package export tests, source-map packaging coverage, changelog, and CLAUDE.md invariants.
 - **Phase 9 live sub-run fixture is available.** `createDelegatingDeterministicProvider` emits a real delegate decision and paired sub-run lifecycle events for OTEL-02 contract tests without synthetic event injection.
 - **Phase 9 engine tracing uses internal runProtocol wrapping.** `openRunTracing`, `handleTracingEvent`, and `closeRunTracing` wrap internal `runProtocol` so both top-level and delegated child runs emit `dogpile.run` spans. A narrow coordinator callback-shape change passes the planned `childRunId` through as internal `runId` for deterministic `subRunSpansByChildId` lookup.
+- **Phase 9 tracing public surface is locked.** `@dogpile/sdk/runtime/tracing` is package-exported, package-exports tests assert the subpath and type surface, no-otel-imports guards runtime/browser/provider roots, and the live OTEL contract test verifies run/sub-run/child-run parentage through `createDelegatingDeterministicProvider`.
 
 ### Todos
 
@@ -84,8 +86,8 @@ Progress [█████████░] 89% (17/19 milestone plans)
 
 ## Session Continuity
 
-**Next action:** Execute Phase 9 Plan 03 — Public-surface lockstep.
+**Next action:** Execute Phase 9 Plan 04 — Docs lockstep.
 
 ---
 
-*Last updated: 2026-05-02 — Phase 9 Plan 02 complete.*
+*Last updated: 2026-05-02 — Phase 9 Plan 03 complete.*
