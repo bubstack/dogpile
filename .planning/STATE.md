@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
 milestone: v0.5.0
-milestone_name: milestone
-status: ready_for_milestone_completion
-last_updated: "2026-05-02T02:02:57Z"
-last_activity: 2026-05-02 -- Phase 10 verified; code review clean after fixes
+milestone_name: Observability and Auditability
+status: complete
+last_updated: "2026-05-02T00:00:00Z"
+last_activity: 2026-05-02 -- v0.5.0 milestone complete and archived
 progress:
   total_phases: 5
   completed_phases: 5
@@ -17,16 +17,18 @@ progress:
 
 ## Project Reference
 
+See: .planning/PROJECT.md (updated 2026-05-02)
+
 **Core value:** Coordinated, observable, replayable multi-agent runs with a strict boundary — Dogpile owns the coordination loop; the application owns credentials, pricing, storage, queues, UI, and tool side effects.
 
-**Current focus:** v0.5.0 milestone completion
+**Current focus:** Planning next milestone (v0.6.0)
 
 ## Current Position
 
 Phase: 10
 Plan: Complete
-Status: Phase 10 complete; ready for v0.5.0 milestone completion
-Last activity: 2026-05-02 -- Phase 10 verified; code review clean after fixes
+Status: v0.5.0 milestone complete; archived; tagged v0.5.0
+Last activity: 2026-05-02 -- v0.5.0 milestone archived and tagged
 
 ```
 Progress [██████████] 100% (23/23 milestone plans)
@@ -99,8 +101,8 @@ Progress [██████████] 100% (23/23 milestone plans)
 
 ## Session Continuity
 
-**Next action:** Complete the v0.5.0 milestone / release prep.
+**Next action:** Start v0.6.0 milestone planning via `/gsd-new-milestone`.
 
 ---
 
-*Last updated: 2026-05-02 — Phase 10 verified and ready for milestone completion.*
+*Last updated: 2026-05-02 — v0.5.0 milestone complete and archived.*

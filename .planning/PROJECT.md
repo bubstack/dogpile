@@ -10,13 +10,20 @@ Coordinated, observable, replayable multi-agent runs with a strict boundary: Dog
 
 ## Current State
 
-**Shipped version:** `@dogpile/sdk@0.4.0` on 2026-05-01.
+**Shipped version:** `@dogpile/sdk@0.5.0` on 2026-05-02.
 
-**Latest shipped milestone:** v0.4.0 Recursive Coordination.
+**Latest shipped milestone:** v0.5.0 Observability and Auditability.
 
-Dogpile now supports agent-driven recursive coordination and the full v0.5 observability implementation. A `coordinator` agent can return a `delegate` decision that runs a real child mission, embeds the child trace, rolls up accounting, propagates abort/timeout budget ceilings, streams child events with ancestry, and surfaces child failures back into coordinator decision context. Phase 6 added live model request/response provenance events, replay/replayStream provenance parity, and the `@dogpile/sdk/runtime/provenance` helper. Phase 7 added typed completed-trace event introspection, required `RunResult.health`, deterministic replay health parity, and the `@dogpile/sdk/runtime/introspection` and `@dogpile/sdk/runtime/health` helpers. Phase 8 added the independent `AuditRecord` schema and frozen fixture guard. Phase 9 added the duck-typed OTEL tracing bridge, `@dogpile/sdk/runtime/tracing`, live run/sub-run/child-run span parentage, no-OTEL-import guards, and documentation for caller-side WeakMap bridging. Phase 10 added the `MetricsHook` / `RunMetricsSnapshot` contract, `@dogpile/sdk/runtime/metrics`, root and sub-run metrics lifecycle hooks, package export guards, frozen metrics snapshot fixture, and developer usage docs.
+Dogpile now supports agent-driven recursive coordination (v0.4.0) and a full observability stack (v0.5.0). The v0.5.0 milestone delivered six new capabilities without adding required dependencies or breaking the pure-TS runtime contract:
 
-**Validated v0.4.0 features:**
+- **Provenance annotations** — `model-request`/`model-response` events carry `modelId`, `providerId`, `callId`, and ISO timestamps; `replay()` preserves provenance from provider calls; `@dogpile/sdk/runtime/provenance` helper.
+- **Typed event introspection** — `queryEvents(events, filter)` with AND-composable filters (type, agentId, turn range, cost range); overloads return discriminant-narrowed `RunEvent[]` subtypes; `@dogpile/sdk/runtime/introspection`.
+- **Health diagnostics** — required `RunResult.health: RunHealthSummary` on all result paths; deterministic replay parity; anomaly codes `runaway-turns`, `budget-near-miss`, `empty-contribution`, `provider-error-recovered`; `@dogpile/sdk/runtime/health`.
+- **Audit record schema** — `createAuditRecord(trace)` pure function producing `auditSchemaVersion: "1"` records; type-independent of `RunEvent`; frozen fixture guard; `@dogpile/sdk/runtime/audit`.
+- **OTEL tracing bridge** — duck-typed `tracer?: DogpileTracer` on `EngineOptions`; spans `dogpile.run`, `dogpile.sub-run`, `dogpile.agent-turn`, `dogpile.model-call`; sub-run span ancestry via `parentRunIds`; zero runtime OTEL deps; `@dogpile/sdk/runtime/tracing`.
+- **Metrics / counters** — `metricsHook?: MetricsHook` with `RunMetricsSnapshot` (tokens, cost, turns, duration) at root and sub-run completion; fire-and-forget isolation; metrics-free replay; `@dogpile/sdk/runtime/metrics`.
+
+**Validated v0.4.0 + v0.5.0 features:**
 - `delegate` decision on `coordinator` (no new protocol value)
 - Inline child traces; `replay()` replays embedded children
 - Budget / cancel / cost propagation parent → children
@@ -29,18 +36,9 @@ Dogpile now supports agent-driven recursive coordination and the full v0.5 obser
 - Replay and replayStream provenance stability
 - Typed event introspection through `queryEvents(events, filter)`
 - Required `RunResult.health` summaries with deterministic replay parity
-
-## Current Milestone: v0.5.0 Observability and Auditability
-
-**Goal:** Give callers full visibility into what Dogpile runs do — spans, metrics, event introspection, health diagnostics, stable audit records, and per-event provenance — without adding required dependencies or breaking the pure-TS runtime contract.
-
-**Target features:**
-- OTEL tracing bridge — completed in Phase 9: caller-injected `tracer` (duck-typed against OTEL Tracer interface); SDK emits spans for runs, sub-runs, model calls, and agent turns; no-op when absent; zero runtime deps
-- Metrics / counters — completed in Phase 10: named numeric metrics (tokens, cost, turns, duration) emitted through a caller-supplied hook
-- Structured event introspection — typed query/filter API over completed trace events (by type, agent, turn, cost)
-- Health / diagnostics API — per-run health summary at result time: warnings, anomalies (runaway turns, budget near-miss, provider errors)
-- Audit event schema — completed in Phase 8: stable, versioned, human-readable audit record format for compliance
-- Provenance annotations — completed in Phase 6: structured model id, provider id, call id, and timestamps on model request/response events with replay stability
+- Independent audit records via `createAuditRecord()` with frozen fixture guard
+- Duck-typed OTEL tracing bridge with zero runtime OTEL deps
+- Named counter metrics hook with fire-and-forget isolation
 
 ## Requirements
 
@@ -80,7 +78,7 @@ Dogpile now supports agent-driven recursive coordination and the full v0.5 obser
 
 ### Active
 
-None for v0.5.0. Implementation is complete and verified; the milestone is pending closeout and release prep.
+None — v0.5.0 complete. Pending definition of v0.6.0 requirements via `/gsd-new-milestone`.
 
 ### Out of Scope
 
@@ -134,6 +132,11 @@ None for v0.5.0. Implementation is complete and verified; the milestone is pendi
 | Embedded child traces are the recursive replay unit | Keeps traces self-contained and lets replay avoid provider calls | ✓ Good (v0.4.0) |
 | `parentRunIds` is the stream ancestry shape | Supports nested demux without adding a flat, ambiguous `parentRunId` | ✓ Good (v0.4.0) |
 | Local providers clamp child concurrency to 1 | Protects local runtimes from unsafe fan-out while preserving remote parallelism | ✓ Good (v0.4.0) |
+| `RunResult.health` is required (not optional) | All construction paths compute health; replay produces byte-identical health from same trace; optional would cause silent gaps | ✓ Good (v0.5.0) |
+| `AuditRecord` is type-independent from `RunEvent` | Callers can reference audit records without importing event types; decouples audit schema from trace schema evolution | ✓ Good (v0.5.0) |
+| OTEL bridge uses duck-typed tracer + caller WeakMap | Preserves zero OTEL runtime deps; structural identity with real OTEL Tracer was not achievable given parent-context differences | ✓ Good (v0.5.0) |
+| `metricsHook` fires at root depth only; sub-runs via `onSubRunComplete` | Prevents double-counting of child costs in parent `onRunComplete` callback | ✓ Good (v0.5.0) |
+| Hook throws (metrics, logger) routed to logger.error | Errors in observer hooks never propagate into run result; observer semantics guaranteed | ✓ Good (v0.5.0) |
 
 ## Evolution
 
@@ -153,4 +156,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-02 — Phase 10 Metrics / Counters complete and verified.*
+*Last updated: 2026-05-02 after v0.5.0 milestone*

@@ -94,6 +94,25 @@ Historical milestone log for `@dogpile/sdk`. Reconstructed from `CHANGELOG.md` o
 
 ---
 
+## v0.5.0 — Observability and Auditability
+
+**Shipped 2026-05-02.** Phases 6-10, 23 plans, 13/13 requirements complete.
+
+- Added structured provenance metadata (`modelId`, `providerId`, `callId`, ISO timestamps) to `model-request` and `model-response` events; `replay()` synthesizes provenance from provider calls; `@dogpile/sdk/runtime/provenance` helper.
+- Added typed event introspection via `queryEvents()` with AND-composable filters (type, agentId, global turn range, cost range); overloads return discriminant-narrowed `RunEvent[]` subtypes.
+- Added required `RunResult.health: RunHealthSummary` on all result paths including replay and embedded child results; `computeHealth()` is deterministic and replay-parity tested; `@dogpile/sdk/runtime/health`.
+- Added `createAuditRecord()` pure function producing `auditSchemaVersion: "1"` audit records independent of `RunEvent` types; frozen fixture guard; `@dogpile/sdk/runtime/audit`.
+- Added duck-typed OTEL tracing bridge: `tracer?: DogpileTracer` on `EngineOptions`; spans for `dogpile.run`, `dogpile.sub-run`, `dogpile.agent-turn`, `dogpile.model-call`; sub-run spans nest under parent via `parentRunIds` ancestry; zero runtime OTEL deps; `@dogpile/sdk/runtime/tracing`.
+- Added `metricsHook?: MetricsHook` counter hook: `RunMetricsSnapshot` (tokens, cost, turns, duration) at root run and sub-run completion; fire-and-forget isolation; metrics-free replay; `@dogpile/sdk/runtime/metrics`.
+
+**Archive:** `.planning/milestones/v0.5.0-ROADMAP.md`, `.planning/milestones/v0.5.0-REQUIREMENTS.md`, `.planning/milestones/v0.5.0-MILESTONE-AUDIT.md`
+
+**Release artifacts:** tag `v0.5.0`, npm `@dogpile/sdk@0.5.0`.
+
+**Known tech debt at close:** Phase 7 SUMMARY frontmatter missing `requirements-completed` field (documentation gap); OTEL span timing uses wall-clock rather than P6 provenance timestamps (accepted design tradeoff; `DogpileSpan.end()` has no timestamp parameter).
+
+---
+
 ## Next Milestone
 
 To be defined via `/gsd-new-milestone`.
