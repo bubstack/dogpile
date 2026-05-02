@@ -1,9 +1,9 @@
 ---
 phase: 6
 slug: provenance-annotations
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: complete
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-05-01
 ---
 
@@ -38,11 +38,11 @@ created: 2026-05-01
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 6-01-01 | 01 | 1 | PROV-01 | — | N/A | unit | `pnpm vitest run src/runtime/model.test.ts` | ❌ W0 | ⬜ pending |
-| 6-01-02 | 01 | 1 | PROV-01 | — | N/A | unit | `pnpm vitest run src/types` | ✅ | ⬜ pending |
-| 6-02-01 | 02 | 2 | PROV-02 | — | N/A | unit | `pnpm vitest run src/tests/event-schema.test.ts` | ✅ | ⬜ pending |
-| 6-02-02 | 02 | 2 | PROV-02 | — | N/A | unit | `pnpm vitest run src/tests/result-contract.test.ts` | ✅ | ⬜ pending |
-| 6-03-01 | 03 | 3 | PROV-01, PROV-02 | — | N/A | unit | `pnpm vitest run src/tests/package-exports.test.ts` | ✅ | ⬜ pending |
+| 6-01-01 | 01 | 1 | PROV-01 | — | N/A | unit | `pnpm vitest run src/runtime/model.test.ts` | ✅ | ✅ green |
+| 6-01-02 | 01 | 1 | PROV-01 | — | N/A | unit | `pnpm vitest run src/types` | ✅ | ✅ green |
+| 6-02-01 | 02 | 2 | PROV-02 | — | N/A | unit | `pnpm vitest run src/tests/event-schema.test.ts` | ✅ | ✅ green |
+| 6-02-02 | 02 | 2 | PROV-02 | — | N/A | unit | `pnpm vitest run src/tests/result-contract.test.ts` | ✅ | ✅ green |
+| 6-03-01 | 03 | 3 | PROV-01, PROV-02 | — | N/A | unit | `pnpm vitest run src/tests/package-exports.test.ts` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -50,8 +50,8 @@ created: 2026-05-01
 
 ## Wave 0 Requirements
 
-- [ ] `src/runtime/model.test.ts` — unit tests for `ModelRequestEvent`/`ModelResponseEvent` emission and provenance fields (PROV-01)
-- [ ] `src/tests/fixtures/provenance-event-v1.json` — frozen fixture protecting event shape
+- [x] `src/runtime/model.test.ts` — unit tests for `ModelRequestEvent`/`ModelResponseEvent` emission and provenance fields (PROV-01)
+- [x] `src/tests/fixtures/provenance-event-v1.json` — frozen fixture protecting event shape
 
 *Existing test infrastructure (Vitest) covers the framework; only new test files needed.*
 
@@ -65,13 +65,23 @@ created: 2026-05-01
 
 ---
 
+## Validation Audit 2026-05-01
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 1 |
+| Resolved | 1 |
+| Escalated | 0 |
+
+---
+
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** 2026-05-01
