@@ -1,0 +1,108 @@
+{
+  "phase": "08-audit-event-schema",
+  "generated_at": "2026-05-01T20:35:32.552Z",
+  "stats": {
+    "total": 12,
+    "answered": 12,
+    "chat_more": 0,
+    "remaining": 0
+  },
+  "sections": [
+    {
+      "id": "audit-function-api",
+      "title": "Audit Function API",
+      "questions": [
+        {
+          "id": "Q-01",
+          "answer": "b",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-02",
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-03",
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "audit-record-field-set",
+      "title": "AuditRecord Field Set",
+      "questions": [
+        {
+          "id": "Q-04",
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-05",
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-06",
+          "answer": "b",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-07",
+          "answer": "a",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "agent-subrun-handling",
+      "title": "Agent and Sub-Run Handling",
+      "questions": [
+        {
+          "id": "Q-08",
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-09",
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-10",
+          "answer": "b",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    },
+    {
+      "id": "fixture-and-testing",
+      "title": "Fixture and Testing",
+      "questions": [
+        {
+          "id": "Q-11",
+          "answer": "c",
+          "chat_more": "",
+          "status": "answered"
+        },
+        {
+          "id": "Q-12",
+          "answer": "b",
+          "chat_more": "",
+          "status": "answered"
+        }
+      ]
+    }
+  ]
+}
