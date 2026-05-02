@@ -120,7 +120,7 @@ Plans:
 - [x] 09-03-PLAN.md — Public-surface lockstep: /runtime/tracing subpath + package-exports.test.ts + no-otel-imports.test.ts + otel-tracing-contract.test.ts
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 09-04-PLAN.md — Docs lockstep: CHANGELOG + CLAUDE.md invariant + docs/developer-usage.md OTEL section + pnpm run verify
+- [x] 09-04-PLAN.md — Docs lockstep: CHANGELOG + CLAUDE.md invariant + docs/developer-usage.md OTEL section + pnpm run verify
 
 ### Phase 10: Metrics / Counters
 **Goal:** Callers can supply an optional metrics hook on `EngineOptions` and receive named counters (token usage, cost, turn count, duration) at run and sub-run completion; omitting the hook adds zero overhead.
@@ -139,7 +139,7 @@ Plans:
 | 6. Provenance Annotations | 6/6 | Complete | 2026-05-01 |
 | 7. Structured Event Introspection + Health Diagnostics | 5/5 | Complete | 2026-05-01 |
 | 8. Audit Event Schema | 3/3 | Complete | 2026-05-01 |
-| 9. OTEL Tracing Bridge | 4/5 | In Progress | — |
+| 9. OTEL Tracing Bridge | 5/5 | In Review | — |
 | 10. Metrics / Counters | 0/? | Not started | — |
 
 ---
