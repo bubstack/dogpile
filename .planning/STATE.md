@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.5.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-01T23:06:16Z"
-last_activity: 2026-05-01 -- Phase 9 Plan 01 complete
+last_updated: "2026-05-02T00:12:40Z"
+last_activity: 2026-05-02 -- Phase 9 Plan 02 complete
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 19
-  completed_plans: 16
-  percent: 84
+  completed_plans: 17
+  percent: 89
 ---
 
 # State
@@ -24,12 +24,12 @@ progress:
 ## Current Position
 
 Phase: 09
-Plan: 09-02
+Plan: 09-03
 Status: Ready to execute
-Last activity: 2026-05-01 -- Phase 9 Plan 01 complete
+Last activity: 2026-05-02 -- Phase 9 Plan 02 complete
 
 ```
-Progress [████████░░] 84% (16/19 milestone plans)
+Progress [█████████░] 89% (17/19 milestone plans)
 ```
 
 ## Performance Metrics
@@ -38,12 +38,13 @@ Progress [████████░░] 84% (16/19 milestone plans)
 |--------|-------|
 | Phases complete | 3 / 5 |
 | Requirements complete | 11 / 13 |
-| Plans complete | 16 / 19 |
+| Plans complete | 17 / 19 |
 | Phase 08 P01 | 5 min | 2 tasks | 2 files |
 | Phase 08 P02 | 4 min | 2 tasks | 3 files |
 | Phase 08 P03 | 4 min | 2 tasks | 4 files |
 | Phase 09 P00 | 4 min | 1 task | 2 files |
 | Phase 09 P01 | 6 min | 2 tasks | 8 files |
+| Phase 09 P02 | 14 min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -62,6 +63,7 @@ Progress [████████░░] 84% (16/19 milestone plans)
 - **Protocol-level health is part of the result contract.** Sequential, broadcast, shared, and coordinator constructors compute health so stream results and delegated child subResults satisfy the same required contract as top-level run and replay results.
 - **Phase 7 public surface is locked.** `AnomalyCode`, `HealthAnomaly`, and `RunHealthSummary` are root-exported; `@dogpile/sdk/runtime/health` and `@dogpile/sdk/runtime/introspection` are package subpaths with package export tests, source-map packaging coverage, changelog, and CLAUDE.md invariants.
 - **Phase 9 live sub-run fixture is available.** `createDelegatingDeterministicProvider` emits a real delegate decision and paired sub-run lifecycle events for OTEL-02 contract tests without synthetic event injection.
+- **Phase 9 engine tracing uses internal runProtocol wrapping.** `openRunTracing`, `handleTracingEvent`, and `closeRunTracing` wrap internal `runProtocol` so both top-level and delegated child runs emit `dogpile.run` spans. A narrow coordinator callback-shape change passes the planned `childRunId` through as internal `runId` for deterministic `subRunSpansByChildId` lookup.
 
 ### Todos
 
@@ -82,8 +84,8 @@ Progress [████████░░] 84% (16/19 milestone plans)
 
 ## Session Continuity
 
-**Next action:** Execute Phase 9 Plan 02 — Engine span lifecycle.
+**Next action:** Execute Phase 9 Plan 03 — Public-surface lockstep.
 
 ---
 
-*Last updated: 2026-05-01 — Phase 9 Plan 01 complete.*
+*Last updated: 2026-05-02 — Phase 9 Plan 02 complete.*

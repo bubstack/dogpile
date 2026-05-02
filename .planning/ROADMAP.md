@@ -114,7 +114,7 @@ Plans:
 - [x] 09-01-PLAN.md — Tracing module surface (DogpileTracer/Span/Options + DOGPILE_SPAN_NAMES) + tracer? on EngineOptions/DogpileOptions + devDeps
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 09-02-PLAN.md — Engine span lifecycle: runNonStreamingProtocol + streaming execute() + RunProtocolOptions.parentSpan + replay tracing-free comments
+- [x] 09-02-PLAN.md — Engine span lifecycle: runNonStreamingProtocol + streaming execute() + RunProtocolOptions.parentSpan + replay tracing-free comments
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 09-03-PLAN.md — Public-surface lockstep: /runtime/tracing subpath + package-exports.test.ts + no-otel-imports.test.ts + otel-tracing-contract.test.ts
@@ -139,7 +139,7 @@ Plans:
 | 6. Provenance Annotations | 6/6 | Complete | 2026-05-01 |
 | 7. Structured Event Introspection + Health Diagnostics | 5/5 | Complete | 2026-05-01 |
 | 8. Audit Event Schema | 3/3 | Complete | 2026-05-01 |
-| 9. OTEL Tracing Bridge | 2/5 | In Progress | — |
+| 9. OTEL Tracing Bridge | 3/5 | In Progress | — |
 | 10. Metrics / Counters | 0/? | Not started | — |
 
 ---
