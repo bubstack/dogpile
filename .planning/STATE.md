@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.5.0
 milestone_name: milestone
-status: executing
-last_updated: "2026-05-02T01:21:20Z"
-last_activity: 2026-05-02 -- Phase 10 Plan 03 metrics public-surface lockstep completed
+status: ready_for_milestone_completion
+last_updated: "2026-05-02T01:28:38Z"
+last_activity: 2026-05-02 -- Phase 10 Plan 04 metrics docs lockstep completed
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 23
-  completed_plans: 22
-  percent: 96
+  completed_plans: 23
+  percent: 100
 ---
 
 # State
@@ -24,21 +24,21 @@ progress:
 ## Current Position
 
 Phase: 10
-Plan: Wave 4 / 10-04
-Status: Executing Phase 10 plans
-Last activity: 2026-05-02 -- Phase 10 Plan 03 metrics public-surface lockstep completed
+Plan: Complete
+Status: Phase 10 complete; ready for v0.5.0 milestone completion
+Last activity: 2026-05-02 -- Phase 10 Plan 04 metrics docs lockstep completed
 
 ```
-Progress [██████████] 96% (22/23 milestone plans)
+Progress [██████████] 100% (23/23 milestone plans)
 ```
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases complete | 4 / 5 |
+| Phases complete | 5 / 5 |
 | Requirements complete | 13 / 13 |
-| Plans complete | 21 / 23 |
+| Plans complete | 23 / 23 |
 | Phase 08 P01 | 5 min | 2 tasks | 2 files |
 | Phase 08 P02 | 4 min | 2 tasks | 3 files |
 | Phase 08 P03 | 4 min | 2 tasks | 4 files |
@@ -50,6 +50,7 @@ Progress [██████████] 96% (22/23 milestone plans)
 | Phase 10 P01 | 4 min | 2 tasks | 3 files |
 | Phase 10 P02 | 6 min | 2 tasks | 2 files |
 | Phase 10 P03 | 7 min | 2 tasks | 5 files |
+| Phase 10 P04 | 2 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -76,6 +77,7 @@ Progress [██████████] 96% (22/23 milestone plans)
 - **Phase 10 metrics hooks are fire-and-forget.** Synchronous hook throws and async rejections are routed to `logger.error("dogpile:metricsHook threw", { error })` or `console.error` fallback and never change the run result.
 - **Phase 10 replay remains metrics-free.** `replay()` and `replayStream()` do not emit metrics callbacks, matching the existing tracing-free replay contract.
 - **Phase 10 metrics public surface is locked.** `@dogpile/sdk/runtime/metrics` is package-exported; package export tests assert the subpath and type surface, and `metrics-snapshot-v1.json` freezes the 9-field `RunMetricsSnapshot` shape.
+- **Phase 10 docs lockstep is complete.** CHANGELOG.md, CLAUDE.md, and docs/developer-usage.md document the MetricsHook interface, RunMetricsSnapshot counters, metricsHook/logger option fields, zero-overhead absent-hook behavior, async hook isolation, and metrics-free replay contract. `pnpm run verify` passed.
 
 ### Todos
 
@@ -96,8 +98,8 @@ Progress [██████████] 96% (22/23 milestone plans)
 
 ## Session Continuity
 
-**Next action:** Execute Phase 10 Plan 04 — Documentation lockstep for metrics.
+**Next action:** Complete the v0.5.0 milestone / release prep.
 
 ---
 
-*Last updated: 2026-05-02 — Phase 10 Plan 03 completed.*
+*Last updated: 2026-05-02 — Phase 10 Plan 04 completed.*

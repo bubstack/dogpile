@@ -1,6 +1,6 @@
 ---
 milestone: v0.5.0
-status: executing
+status: ready_for_milestone_completion
 last_completed: v0.4.0
 ---
 
@@ -9,7 +9,7 @@ last_completed: v0.4.0
 ## Milestones
 
 - [x] **v0.4.0 Recursive Coordination** — Phases 1-5, 22 plans, 27/27 requirements; shipped 2026-05-01. Archive: [v0.4.0-ROADMAP.md](milestones/v0.4.0-ROADMAP.md)
-- [ ] **v0.5.0 Observability and Auditability** — Phases 6-10, 13 requirements; in progress.
+- [ ] **v0.5.0 Observability and Auditability** — Phases 6-10, 13 requirements; implementation complete, pending milestone closeout.
 
 ---
 
@@ -26,7 +26,7 @@ last_completed: v0.4.0
 - [x] **Phase 7: Structured Event Introspection + Health Diagnostics** — Typed query API over trace events and per-run health summaries (completed 2026-05-01)
 - [x] **Phase 8: Audit Event Schema** — Stable, versioned, independent audit record format for compliance (completed 2026-05-01)
 - [x] **Phase 9: OTEL Tracing Bridge** — Duck-typed tracer injection with span ancestry matching parentRunIds (completed 2026-05-02)
-- [ ] **Phase 10: Metrics / Counters** — Named counter hook for token usage, cost, turn count, and duration
+- [x] **Phase 10: Metrics / Counters** — Named counter hook for token usage, cost, turn count, and duration (completed 2026-05-02)
 
 ## Phase Table
 
@@ -142,7 +142,7 @@ Plans:
 - [x] 10-03-PLAN.md — Public-surface lockstep: /runtime/metrics subpath + package-exports.test.ts + metrics-contract.test.ts + frozen fixture
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 10-04-PLAN.md — Docs lockstep: CHANGELOG + CLAUDE.md invariant + docs/developer-usage.md Metrics section + pnpm run verify
+- [x] 10-04-PLAN.md — Docs lockstep: CHANGELOG + CLAUDE.md invariant + docs/developer-usage.md Metrics section + pnpm run verify
 
 ## Progress Table
 
@@ -152,7 +152,7 @@ Plans:
 | 7. Structured Event Introspection + Health Diagnostics | 5/5 | Complete | 2026-05-01 |
 | 8. Audit Event Schema | 3/3 | Complete | 2026-05-01 |
 | 9. OTEL Tracing Bridge | 5/5 | Complete | 2026-05-02 |
-| 10. Metrics / Counters | 3/4 | In Progress | — |
+| 10. Metrics / Counters | 4/4 | Complete | 2026-05-02 |
 
 ---
 
@@ -169,4 +169,4 @@ Plans:
 
 ---
 
-*Last updated: 2026-05-02 — Phase 10 Plan 03 metrics public-surface lockstep completed.*
+*Last updated: 2026-05-02 — Phase 10 Plan 04 metrics docs lockstep completed.*
