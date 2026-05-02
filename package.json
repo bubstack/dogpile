@@ -90,6 +90,11 @@
       "import": "./dist/runtime/provenance.js",
       "default": "./dist/runtime/provenance.js"
     },
+    "./runtime/tracing": {
+      "types": "./dist/runtime/tracing.d.ts",
+      "import": "./dist/runtime/tracing.js",
+      "default": "./dist/runtime/tracing.js"
+    },
     "./providers/openai-compatible": {
       "types": "./dist/providers/openai-compatible.d.ts",
       "import": "./dist/providers/openai-compatible.js",
@@ -182,6 +187,7 @@
     "src/runtime/tools.ts",
     "src/runtime/tools/built-in.ts",
     "src/runtime/tools/vercel-ai.ts",
+    "src/runtime/tracing.ts",
     "src/runtime/wrap-up.ts",
     "src/runtime/validation.ts",
     "README.md",

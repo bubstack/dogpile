@@ -23,6 +23,7 @@ import {
   type RunHealthSummary
 } from "@dogpile/sdk/runtime/health";
 import { queryEvents, type EventQueryFilter } from "@dogpile/sdk/runtime/introspection";
+import { DOGPILE_SPAN_NAMES } from "@dogpile/sdk/runtime/tracing";
 import * as internalHelpers from "../internal.js";
 import type {
   AnomalyCode,
@@ -34,6 +35,7 @@ import type {
   RunHealthSummary as RootRunHealthSummary,
   SequentialProtocolConfig
 } from "@dogpile/sdk";
+import type { DogpileSpan, DogpileSpanOptions, DogpileTracer } from "@dogpile/sdk/runtime/tracing";
 
 type ExportCondition = {
   readonly types: string;
@@ -1170,6 +1172,7 @@ describe("package exports", () => {
       "src/runtime/tools.ts",
       "src/runtime/tools/built-in.ts",
       "src/runtime/tools/vercel-ai.ts",
+      "src/runtime/tracing.ts",
       "src/runtime/wrap-up.ts",
       "src/runtime/validation.ts",
       "README.md",
@@ -1324,6 +1327,11 @@ describe("package exports", () => {
         types: "./dist/runtime/provenance.d.ts",
         import: "./dist/runtime/provenance.js",
         default: "./dist/runtime/provenance.js"
+      },
+      "./runtime/tracing": {
+        types: "./dist/runtime/tracing.d.ts",
+        import: "./dist/runtime/tracing.js",
+        default: "./dist/runtime/tracing.js"
       },
       "./providers/openai-compatible": {
         types: "./dist/providers/openai-compatible.d.ts",
@@ -1525,6 +1533,20 @@ describe("package exports", () => {
     };
     const rootHealthSummary: RootRunHealthSummary = healthSummary;
     const queriedEvents = queryEvents([], eventQueryFilter);
+    const dogpileSpan: DogpileSpan = {
+      end(): void {},
+      setAttribute(_key: string, _value: string | number | boolean): void {},
+      setStatus(_code: "ok" | "error", _message?: string): void {}
+    };
+    const dogpileSpanOptions: DogpileSpanOptions = {
+      parent: dogpileSpan,
+      attributes: { a: "x", b: 1, c: true }
+    };
+    const dogpileTracer: DogpileTracer = {
+      startSpan(_name: string, _options?: DogpileSpanOptions): DogpileSpan {
+        return dogpileSpan;
+      }
+    };
     const auditRecord = createAuditRecord({
       runId: "package-export-audit",
       protocol: "sequential",
@@ -1559,6 +1581,12 @@ describe("package exports", () => {
     expect(queriedEvents).toEqual([]);
     expect(healthThresholds).toEqual({});
     expect(rootHealthSummary.anomalies[0]?.code).toBe("empty-contribution");
+    expect(DOGPILE_SPAN_NAMES.RUN).toBe("dogpile.run");
+    expect(DOGPILE_SPAN_NAMES.SUB_RUN).toBe("dogpile.sub-run");
+    expect(DOGPILE_SPAN_NAMES.AGENT_TURN).toBe("dogpile.agent-turn");
+    expect(DOGPILE_SPAN_NAMES.MODEL_CALL).toBe("dogpile.model-call");
+    expect(typeof dogpileSpanOptions.attributes).toBe("object");
+    expect(dogpileTracer.startSpan("test")).toBe(dogpileSpan);
     expect(typedAuditRecord.auditSchemaVersion).toBe("1");
   });
 });
