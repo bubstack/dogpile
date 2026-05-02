@@ -780,6 +780,9 @@ interface MetricsState {
   readonly logger: Logger | undefined;
   readonly startedAtMs: number;
   readonly subRunStartTimes: Map<string, number>;
+  totalCost: CostSummary;
+  nestedCost: CostSummary;
+  turns: number;
 }
 
 function openRunMetrics(options: {
@@ -794,7 +797,10 @@ function openRunMetrics(options: {
     metricsHook: options.metricsHook,
     logger: options.logger,
     startedAtMs: Date.now(),
-    subRunStartTimes: new Map()
+    subRunStartTimes: new Map(),
+    totalCost: emptyCost(),
+    nestedCost: emptyCost(),
+    turns: 0
   };
 }
 
@@ -906,6 +912,15 @@ function nestedSubRunCosts(result: RunResult): CostSummary[] {
   });
 }
 
+function subtractCost(total: CostSummary, nested: CostSummary): CostSummary {
+  return {
+    usd: total.usd - nested.usd,
+    inputTokens: total.inputTokens - nested.inputTokens,
+    outputTokens: total.outputTokens - nested.outputTokens,
+    totalTokens: total.totalTokens - nested.totalTokens
+  };
+}
+
 function handleMetricsEvent(state: MetricsState, event: RunEvent): void {
   const parentRunIds = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
   if (parentRunIds !== undefined) {
@@ -913,16 +928,35 @@ function handleMetricsEvent(state: MetricsState, event: RunEvent): void {
   }
 
   switch (event.type) {
+    case "agent-turn": {
+      state.totalCost = event.cost;
+      state.turns += 1;
+      break;
+    }
+    case "broadcast":
+    case "budget-stop":
+    case "final": {
+      state.totalCost = event.cost;
+      break;
+    }
     case "sub-run-started": {
       state.subRunStartTimes.set(event.childRunId, Date.now());
       break;
     }
     case "sub-run-completed": {
+      state.totalCost = addCost(state.totalCost, event.subResult.cost);
+      state.nestedCost = addCost(state.nestedCost, event.subResult.cost);
       const startMs = state.subRunStartTimes.get(event.childRunId);
       const durationMs = startMs !== undefined ? Date.now() - startMs : 0;
       state.subRunStartTimes.delete(event.childRunId);
       const snapshot = buildSubRunSnapshot(event.subResult, durationMs);
       fireHook(state.metricsHook.onSubRunComplete, snapshot, state.logger);
+      break;
+    }
+    case "sub-run-failed": {
+      state.totalCost = addCost(state.totalCost, event.partialCost);
+      state.nestedCost = addCost(state.nestedCost, event.partialCost);
+      state.subRunStartTimes.delete(event.childRunId);
       break;
     }
     default:
@@ -937,15 +971,16 @@ function closeRunMetrics(state: MetricsState, result: RunResult | undefined): vo
     return;
   }
 
+  const ownCost = subtractCost(state.totalCost, state.nestedCost);
   const snapshot: RunMetricsSnapshot = {
     outcome: "aborted",
-    inputTokens: 0,
-    outputTokens: 0,
-    costUsd: 0,
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
-    totalCostUsd: 0,
-    turns: 0,
+    inputTokens: ownCost.inputTokens,
+    outputTokens: ownCost.outputTokens,
+    costUsd: ownCost.usd,
+    totalInputTokens: state.totalCost.inputTokens,
+    totalOutputTokens: state.totalCost.outputTokens,
+    totalCostUsd: state.totalCost.usd,
+    turns: state.turns,
     durationMs: Date.now() - state.startedAtMs
   };
   fireHook(state.metricsHook.onRunComplete, snapshot, state.logger);

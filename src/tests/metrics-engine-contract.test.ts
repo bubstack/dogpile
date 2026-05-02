@@ -105,6 +105,40 @@ describe("MetricsHook engine lifecycle", () => {
     });
   });
 
+  it("keeps observed counters when non-streaming execution aborts after a completed turn", async () => {
+    const snapshots: RunMetricsSnapshot[] = [];
+
+    await expect(
+      run({
+        intent: "Abort metrics after one completed turn.",
+        model: createFailingAfterFirstSequentialTurnProvider("metrics-partial-abort-model"),
+        protocol: { kind: "sequential", maxTurns: 2 },
+        tier: "fast",
+        agents: [
+          { id: "planner", role: "planner" },
+          { id: "reviewer", role: "reviewer" }
+        ],
+        metricsHook: {
+          onRunComplete(snapshot): void {
+            snapshots.push(snapshot);
+          }
+        }
+      })
+    ).rejects.toThrow("provider failed after first turn");
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({
+      outcome: "aborted",
+      inputTokens: 13,
+      outputTokens: 17,
+      totalInputTokens: 13,
+      totalOutputTokens: 17,
+      turns: 1
+    });
+    expect(snapshots[0]!.costUsd).toBeCloseTo(0.42);
+    expect(snapshots[0]!.totalCostUsd).toBeCloseTo(0.42);
+  });
+
   it("fires onRunComplete with aborted when a streaming run is cancelled", async () => {
     const snapshots: RunMetricsSnapshot[] = [];
     const requestReceived = createDeferred<ModelRequest>();
@@ -226,6 +260,43 @@ describe("MetricsHook engine lifecycle", () => {
       totalCostUsd: result.cost.usd,
       turns: result.trace.events.filter((event) => event.type === "agent-turn").length
     });
+  });
+
+  it("keeps failed child partial spend in aborted totals while excluding it from parent own counters", async () => {
+    const snapshots: RunMetricsSnapshot[] = [];
+
+    await expect(
+      run({
+        intent: "Abort parent metrics after a partially spent child failure.",
+        model: createPartiallyFailingDelegationProvider({
+          id: "metrics-aborted-after-failed-child",
+          afterChildFailure: "throw"
+        }),
+        protocol: { kind: "coordinator", maxTurns: 1 },
+        tier: "fast",
+        agents: [
+          { id: "coordinator", role: "coordinator" },
+          { id: "child-worker", role: "child-worker" }
+        ],
+        metricsHook: {
+          onRunComplete(snapshot): void {
+            snapshots.push(snapshot);
+          }
+        }
+      })
+    ).rejects.toThrow("parent aborted after child partial spend");
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({
+      outcome: "aborted",
+      inputTokens: 2,
+      outputTokens: 3,
+      totalInputTokens: 19,
+      totalOutputTokens: 22,
+      turns: 1
+    });
+    expect(snapshots[0]!.costUsd).toBeCloseTo(0.01);
+    expect(snapshots[0]!.totalCostUsd).toBeCloseTo(0.26);
   });
 
   it("routes synchronous and async hook failures to logger.error without changing the run result", async () => {
@@ -357,6 +428,23 @@ function createPartiallyFailingDelegationProvider(options: {
       }
 
       return response(`${role}:${agentId} completed deterministic work.`, 1, 1, 0);
+    }
+  };
+}
+
+function createFailingAfterFirstSequentialTurnProvider(id: string): ConfiguredModelProvider {
+  let calls = 0;
+
+  return {
+    id,
+    async generate(request: ModelRequest): Promise<ModelResponse> {
+      calls += 1;
+      if (calls === 1) {
+        const role = readMetadata(request, "role");
+        const agentId = readMetadata(request, "agentId");
+        return response(`${role}:${agentId} completed the first turn.`, 13, 17, 0.42);
+      }
+      throw new Error("provider failed after first turn");
     }
   };
 }
