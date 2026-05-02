@@ -64,6 +64,8 @@ import {
   validateRunCallOptions
 } from "./validation.js";
 import { DOGPILE_SPAN_NAMES, type DogpileSpan, type DogpileTracer } from "./tracing.js";
+import type { Logger } from "./logger.js";
+import type { MetricsHook, RunMetricsSnapshot } from "./metrics.js";
 
 const DEFAULT_MAX_DEPTH = 4;
 const DEFAULT_MAX_CONCURRENT_CHILDREN = 4;
@@ -693,6 +695,8 @@ interface RunProtocolOptions {
   readonly registerAbortDrain?: (drain: AbortDrainFn) => void;
   readonly failureInstancesByChildRunId?: Map<string, DogpileError>;
   readonly tracer?: EngineOptions["tracer"];
+  readonly metricsHook?: EngineOptions["metricsHook"];
+  readonly logger?: EngineOptions["logger"];
   /**
    * Optional parent span for the next runProtocol invocation. Threaded by the
    * coordinator when dispatching child runs so that the child's `dogpile.run`
@@ -765,6 +769,179 @@ function openRunTracing(options: {
     turnCount: 0,
     lastCost: emptyCost()
   };
+}
+
+interface MetricsState {
+  readonly metricsHook: MetricsHook;
+  readonly logger: Logger | undefined;
+  readonly startedAtMs: number;
+  readonly subRunStartTimes: Map<string, number>;
+}
+
+function openRunMetrics(options: {
+  readonly metricsHook?: MetricsHook;
+  readonly logger?: Logger;
+}): MetricsState | undefined {
+  if (!options.metricsHook) {
+    return undefined;
+  }
+
+  return {
+    metricsHook: options.metricsHook,
+    logger: options.logger,
+    startedAtMs: Date.now(),
+    subRunStartTimes: new Map()
+  };
+}
+
+function routeMetricsError(err: unknown, logger: Logger | undefined): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  try {
+    if (logger !== undefined) {
+      logger.error("dogpile:metricsHook threw", { error: msg });
+    } else {
+      console.error("dogpile:metricsHook threw", { error: msg });
+    }
+  } catch {
+    // A logger that throws from error() cannot be helped.
+  }
+}
+
+function fireHook(
+  callback: ((snapshot: RunMetricsSnapshot) => void | Promise<void>) | undefined,
+  snapshot: RunMetricsSnapshot,
+  logger: Logger | undefined
+): void {
+  if (!callback) {
+    return;
+  }
+
+  try {
+    const result = callback(snapshot);
+    if (result instanceof Promise) {
+      result.catch((err: unknown) => {
+        routeMetricsError(err, logger);
+      });
+    }
+  } catch (err: unknown) {
+    routeMetricsError(err, logger);
+  }
+}
+
+function buildRunSnapshot(
+  result: RunResult,
+  startedAtMs: number
+): RunMetricsSnapshot {
+  const nestedCosts = nestedSubRunCosts(result);
+  const budgetStopEvent = result.trace.events.find((event): event is BudgetStopEvent => event.type === "budget-stop");
+  const outcome: RunMetricsSnapshot["outcome"] = budgetStopEvent !== undefined ? "budget-stopped" : "completed";
+  const totalInputTokens = result.cost.inputTokens;
+  const totalOutputTokens = result.cost.outputTokens;
+  const totalCostUsd = result.cost.usd;
+  const ownInputTokens =
+    totalInputTokens - nestedCosts.reduce((sum, cost) => sum + cost.inputTokens, 0);
+  const ownOutputTokens =
+    totalOutputTokens - nestedCosts.reduce((sum, cost) => sum + cost.outputTokens, 0);
+  const ownCostUsd =
+    totalCostUsd - nestedCosts.reduce((sum, cost) => sum + cost.usd, 0);
+  const turns = result.trace.events.filter((event) => event.type === "agent-turn").length;
+
+  return {
+    outcome,
+    inputTokens: ownInputTokens,
+    outputTokens: ownOutputTokens,
+    costUsd: ownCostUsd,
+    totalInputTokens,
+    totalOutputTokens,
+    totalCostUsd,
+    turns,
+    durationMs: Date.now() - startedAtMs
+  };
+}
+
+function buildSubRunSnapshot(
+  subResult: RunResult,
+  durationMs: number
+): RunMetricsSnapshot {
+  const nestedCosts = nestedSubRunCosts(subResult);
+  const budgetStopEvent = subResult.trace.events.find((event): event is BudgetStopEvent => event.type === "budget-stop");
+  const outcome: RunMetricsSnapshot["outcome"] = budgetStopEvent !== undefined ? "budget-stopped" : "completed";
+  const totalInputTokens = subResult.cost.inputTokens;
+  const totalOutputTokens = subResult.cost.outputTokens;
+  const totalCostUsd = subResult.cost.usd;
+  const ownInputTokens =
+    totalInputTokens - nestedCosts.reduce((sum, cost) => sum + cost.inputTokens, 0);
+  const ownOutputTokens =
+    totalOutputTokens - nestedCosts.reduce((sum, cost) => sum + cost.outputTokens, 0);
+  const ownCostUsd =
+    totalCostUsd - nestedCosts.reduce((sum, cost) => sum + cost.usd, 0);
+  const turns = subResult.trace.events.filter((event) => event.type === "agent-turn").length;
+
+  return {
+    outcome,
+    inputTokens: ownInputTokens,
+    outputTokens: ownOutputTokens,
+    costUsd: ownCostUsd,
+    totalInputTokens,
+    totalOutputTokens,
+    totalCostUsd,
+    turns,
+    durationMs
+  };
+}
+
+function nestedSubRunCosts(result: RunResult): CostSummary[] {
+  return result.trace.events
+    .filter(
+      (event): event is Extract<RunEvent, { readonly type: "sub-run-completed" }> =>
+        event.type === "sub-run-completed"
+    )
+    .map((event) => event.subResult.cost);
+}
+
+function handleMetricsEvent(state: MetricsState, event: RunEvent): void {
+  const parentRunIds = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
+  if (parentRunIds !== undefined) {
+    return;
+  }
+
+  switch (event.type) {
+    case "sub-run-started": {
+      state.subRunStartTimes.set(event.childRunId, Date.now());
+      break;
+    }
+    case "sub-run-completed": {
+      const startMs = state.subRunStartTimes.get(event.childRunId);
+      const durationMs = startMs !== undefined ? Date.now() - startMs : 0;
+      state.subRunStartTimes.delete(event.childRunId);
+      const snapshot = buildSubRunSnapshot(event.subResult, durationMs);
+      fireHook(state.metricsHook.onSubRunComplete, snapshot, state.logger);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function closeRunMetrics(state: MetricsState, result: RunResult | undefined): void {
+  if (result !== undefined) {
+    const snapshot = buildRunSnapshot(result, state.startedAtMs);
+    fireHook(state.metricsHook.onRunComplete, snapshot, state.logger);
+    return;
+  }
+
+  const snapshot: RunMetricsSnapshot = {
+    outcome: "aborted",
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCostUsd: 0,
+    turns: 0,
+    durationMs: Date.now() - state.startedAtMs
+  };
+  fireHook(state.metricsHook.onRunComplete, snapshot, state.logger);
 }
 
 function handleTracingEvent(state: TracingState, event: RunEvent): void {
