@@ -130,7 +130,19 @@ Plans:
 1. A caller provides a `metricsHook` function on `EngineOptions` and receives a call with named counters (`inputTokens`, `outputTokens`, `costUsd`, `turns`, `durationMs`) once per completed run and once per completed sub-run.
 2. A run configured without `metricsHook` completes with identical result shape, no thrown exceptions, and no counter-allocation overhead.
 3. A throwing `metricsHook` does not propagate the error into the run result — the error is routed to the logger's `error` channel and the run completes normally.
-**Plans:** TBD
+**Plans:** 4 plans
+Plans:
+**Wave 1**
+- [ ] 10-01-PLAN.md — MetricsHook/RunMetricsSnapshot types + metrics.ts module + metricsHook?/logger? on EngineOptions/DogpileOptions
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 10-02-PLAN.md — Engine integration: MetricsState + openRunMetrics + handleMetricsEvent + closeRunMetrics + fireHook + createEngine threading
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 10-03-PLAN.md — Public-surface lockstep: /runtime/metrics subpath + package-exports.test.ts + metrics-contract.test.ts + frozen fixture
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 10-04-PLAN.md — Docs lockstep: CHANGELOG + CLAUDE.md invariant + docs/developer-usage.md Metrics section + pnpm run verify
 
 ## Progress Table
 
@@ -140,7 +152,7 @@ Plans:
 | 7. Structured Event Introspection + Health Diagnostics | 5/5 | Complete | 2026-05-01 |
 | 8. Audit Event Schema | 3/3 | Complete | 2026-05-01 |
 | 9. OTEL Tracing Bridge | 5/5 | Complete | 2026-05-02 |
-| 10. Metrics / Counters | 0/? | Not started | — |
+| 10. Metrics / Counters | 0/4 | Not started | — |
 
 ---
 
@@ -157,4 +169,4 @@ Plans:
 
 ---
 
-*Last updated: 2026-05-02 — Phase 9 OTEL Tracing Bridge complete and verified.*
+*Last updated: 2026-05-01 — Phase 10 Metrics/Counters planning complete; 4 plans in 4 waves ready for execution.*
