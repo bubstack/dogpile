@@ -35,6 +35,7 @@ import type {
   RunHealthSummary as RootRunHealthSummary,
   SequentialProtocolConfig
 } from "@dogpile/sdk";
+import type { MetricsHook, RunMetricsSnapshot } from "@dogpile/sdk/runtime/metrics";
 import type { DogpileSpan, DogpileSpanOptions, DogpileTracer } from "@dogpile/sdk/runtime/tracing";
 
 type ExportCondition = {
@@ -1163,6 +1164,7 @@ describe("package exports", () => {
       "src/runtime/ids.ts",
       "src/runtime/introspection.ts",
       "src/runtime/logger.ts",
+      "src/runtime/metrics.ts",
       "src/runtime/model.ts",
       "src/runtime/provenance.ts",
       "src/runtime/retry.ts",
@@ -1332,6 +1334,11 @@ describe("package exports", () => {
         types: "./dist/runtime/tracing.d.ts",
         import: "./dist/runtime/tracing.js",
         default: "./dist/runtime/tracing.js"
+      },
+      "./runtime/metrics": {
+        types: "./dist/runtime/metrics.d.ts",
+        import: "./dist/runtime/metrics.js",
+        default: "./dist/runtime/metrics.js"
       },
       "./providers/openai-compatible": {
         types: "./dist/providers/openai-compatible.d.ts",
@@ -1547,6 +1554,20 @@ describe("package exports", () => {
         return dogpileSpan;
       }
     };
+    const metricsSnapshot: RunMetricsSnapshot = {
+      outcome: "completed",
+      inputTokens: 10,
+      outputTokens: 5,
+      costUsd: 0.001,
+      totalInputTokens: 10,
+      totalOutputTokens: 5,
+      totalCostUsd: 0.001,
+      turns: 2,
+      durationMs: 1500
+    };
+    const metricsHook: MetricsHook = {
+      onRunComplete(_s: RunMetricsSnapshot): void {}
+    };
     const auditRecord = createAuditRecord({
       runId: "package-export-audit",
       protocol: "sequential",
@@ -1587,6 +1608,8 @@ describe("package exports", () => {
     expect(DOGPILE_SPAN_NAMES.MODEL_CALL).toBe("dogpile.model-call");
     expect(typeof dogpileSpanOptions.attributes).toBe("object");
     expect(dogpileTracer.startSpan("test")).toBe(dogpileSpan);
+    expect(metricsSnapshot.outcome).toBe("completed");
+    expect(typeof metricsHook.onRunComplete).toBe("function");
     expect(typedAuditRecord.auditSchemaVersion).toBe("1");
   });
 });

@@ -95,6 +95,11 @@
       "import": "./dist/runtime/tracing.js",
       "default": "./dist/runtime/tracing.js"
     },
+    "./runtime/metrics": {
+      "types": "./dist/runtime/metrics.d.ts",
+      "import": "./dist/runtime/metrics.js",
+      "default": "./dist/runtime/metrics.js"
+    },
     "./providers/openai-compatible": {
       "types": "./dist/providers/openai-compatible.d.ts",
       "import": "./dist/providers/openai-compatible.js",
@@ -178,6 +183,7 @@
     "src/runtime/ids.ts",
     "src/runtime/introspection.ts",
     "src/runtime/logger.ts",
+    "src/runtime/metrics.ts",
     "src/runtime/model.ts",
     "src/runtime/provenance.ts",
     "src/runtime/retry.ts",
