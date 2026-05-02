@@ -1,6 +1,7 @@
 import { DogpileError } from "../types.js";
 import type {
   AbortedEvent,
+  BudgetStopEvent,
   BudgetTier,
   DogpileErrorCode,
   DogpileOptions,
@@ -9,6 +10,7 @@ import type {
   FinalEvent,
   JsonObject,
   JsonValue,
+  ModelRequestEvent,
   ProtocolSelection,
   RunCallOptions,
   RunEvaluation,
@@ -58,7 +60,7 @@ import {
   validateProviderLocality,
   validateRunCallOptions
 } from "./validation.js";
-import type { DogpileSpan } from "./tracing.js";
+import { DOGPILE_SPAN_NAMES, type DogpileSpan, type DogpileTracer } from "./tracing.js";
 
 const DEFAULT_MAX_DEPTH = 4;
 const DEFAULT_MAX_CONCURRENT_CHILDREN = 4;
@@ -133,6 +135,7 @@ export function createEngine(options: EngineOptions): Engine {
         ...(terminate ? { terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
         ...(options.evaluate ? { evaluate: options.evaluate } : {}),
+        ...(options.tracer ? { tracer: options.tracer } : {}),
         currentDepth: 0,
         effectiveMaxDepth,
         effectiveMaxConcurrentChildren,
@@ -261,6 +264,7 @@ export function createEngine(options: EngineOptions): Engine {
             ...(options.defaultSubRunTimeoutMs !== undefined
               ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
               : {}),
+            ...(options.tracer ? { tracer: options.tracer } : {}),
             streamEvents: true,
             emit(event: RunEvent): void {
               if (status !== "running") {
@@ -685,6 +689,7 @@ interface RunProtocolOptions {
   readonly defaultSubRunTimeoutMs?: number;
   readonly registerAbortDrain?: (drain: AbortDrainFn) => void;
   readonly failureInstancesByChildRunId?: Map<string, DogpileError>;
+  readonly tracer?: EngineOptions["tracer"];
   /**
    * Optional parent span for the next runProtocol invocation. Threaded by the
    * coordinator when dispatching child runs so that the child's `dogpile.run`
@@ -702,6 +707,209 @@ interface RunProtocolOptions {
 }
 
 type NonStreamingProtocolOptions = Omit<RunProtocolOptions, "emit"> & Pick<EngineOptions, "evaluate">;
+
+interface TracingState {
+  readonly tracer: DogpileTracer;
+  readonly runSpan: DogpileSpan;
+  readonly subRunSpans: Map<string, DogpileSpan>;
+  readonly agentTurnSpans: Map<string, DogpileSpan>;
+  readonly modelCallSpans: Map<string, DogpileSpan>;
+  readonly pendingModelRequests: Map<string, ModelRequestEvent>;
+  readonly agentTurnCounters: Map<string, number>;
+  readonly tokenAccumByAgent: Map<string, { inputTokens: number; outputTokens: number }>;
+}
+
+function openRunTracing(options: {
+  readonly tracer?: DogpileTracer;
+  readonly parentSpan?: DogpileSpan;
+  readonly intent: string;
+  readonly protocolKind: string;
+  readonly tier: unknown;
+}): TracingState | undefined {
+  if (!options.tracer) {
+    return undefined;
+  }
+
+  const runSpan = options.tracer.startSpan(DOGPILE_SPAN_NAMES.RUN, {
+    ...(options.parentSpan ? { parent: options.parentSpan } : {}),
+    attributes: {
+      "dogpile.run.protocol": options.protocolKind,
+      "dogpile.run.tier": String(options.tier),
+      "dogpile.run.intent": options.intent.slice(0, 200)
+    }
+  });
+
+  return {
+    tracer: options.tracer,
+    runSpan,
+    subRunSpans: new Map(),
+    agentTurnSpans: new Map(),
+    modelCallSpans: new Map(),
+    pendingModelRequests: new Map(),
+    agentTurnCounters: new Map(),
+    tokenAccumByAgent: new Map()
+  };
+}
+
+function handleTracingEvent(state: TracingState, event: RunEvent): void {
+  const parentRunIds = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
+  if (parentRunIds !== undefined) {
+    return;
+  }
+
+  switch (event.type) {
+    case "model-request": {
+      state.pendingModelRequests.set(event.callId, event);
+
+      if (!state.agentTurnSpans.has(event.agentId)) {
+        const turnNumber = (state.agentTurnCounters.get(event.agentId) ?? 0) + 1;
+        state.agentTurnCounters.set(event.agentId, turnNumber);
+        const turnParent = state.subRunSpans.get(event.runId) ?? state.runSpan;
+        const turnSpan = state.tracer.startSpan(DOGPILE_SPAN_NAMES.AGENT_TURN, {
+          parent: turnParent,
+          attributes: {
+            "dogpile.agent.id": event.agentId,
+            "dogpile.agent.role": event.role,
+            "dogpile.turn.number": turnNumber,
+            "dogpile.model.id": event.modelId
+          }
+        });
+        state.agentTurnSpans.set(event.agentId, turnSpan);
+      }
+
+      const callParent =
+        state.agentTurnSpans.get(event.agentId) ??
+        state.subRunSpans.get(event.runId) ??
+        state.runSpan;
+      const callSpan = state.tracer.startSpan(DOGPILE_SPAN_NAMES.MODEL_CALL, {
+        parent: callParent,
+        attributes: {
+          "dogpile.model.id": event.modelId,
+          "dogpile.call.id": event.callId,
+          "dogpile.provider.id": event.providerId
+        }
+      });
+      state.modelCallSpans.set(event.callId, callSpan);
+      break;
+    }
+    case "model-response": {
+      const span = state.modelCallSpans.get(event.callId);
+      if (span) {
+        const inputTokens = event.response.usage?.inputTokens ?? 0;
+        const outputTokens = event.response.usage?.outputTokens ?? 0;
+        span.setAttribute("dogpile.model.input_tokens", inputTokens);
+        span.setAttribute("dogpile.model.output_tokens", outputTokens);
+        if (event.response.costUsd !== undefined) {
+          span.setAttribute("dogpile.model.cost_usd", event.response.costUsd);
+        }
+        span.setStatus("ok");
+        span.end();
+        state.modelCallSpans.delete(event.callId);
+        const accum = state.tokenAccumByAgent.get(event.agentId) ?? { inputTokens: 0, outputTokens: 0 };
+        accum.inputTokens += inputTokens;
+        accum.outputTokens += outputTokens;
+        state.tokenAccumByAgent.set(event.agentId, accum);
+      }
+      state.pendingModelRequests.delete(event.callId);
+      break;
+    }
+    case "agent-turn": {
+      const turnSpan = state.agentTurnSpans.get(event.agentId);
+      if (turnSpan) {
+        turnSpan.setAttribute("dogpile.agent.role", event.role);
+        turnSpan.setAttribute("dogpile.turn.cost_usd", event.cost.usd);
+        const accum = state.tokenAccumByAgent.get(event.agentId);
+        turnSpan.setAttribute("dogpile.turn.input_tokens", accum?.inputTokens ?? event.cost.inputTokens);
+        turnSpan.setAttribute("dogpile.turn.output_tokens", accum?.outputTokens ?? event.cost.outputTokens);
+        turnSpan.setStatus("ok");
+        turnSpan.end();
+        state.agentTurnSpans.delete(event.agentId);
+      }
+      state.tokenAccumByAgent.delete(event.agentId);
+      break;
+    }
+    case "sub-run-started": {
+      const span = state.tracer.startSpan(DOGPILE_SPAN_NAMES.SUB_RUN, {
+        parent: state.runSpan,
+        attributes: {
+          "dogpile.sub_run.child_run_id": event.childRunId,
+          "dogpile.sub_run.parent_run_id": event.parentRunId,
+          "dogpile.sub_run.depth": event.depth
+        }
+      });
+      state.subRunSpans.set(event.childRunId, span);
+      break;
+    }
+    case "sub-run-completed": {
+      const span = state.subRunSpans.get(event.childRunId);
+      if (span) {
+        span.setStatus("ok");
+        span.end();
+        state.subRunSpans.delete(event.childRunId);
+      }
+      break;
+    }
+    case "sub-run-failed": {
+      const span = state.subRunSpans.get(event.childRunId);
+      if (span) {
+        span.setStatus("error", event.error.message);
+        span.end();
+        state.subRunSpans.delete(event.childRunId);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function closeRunTracing(state: TracingState, result: RunResult | undefined, error?: unknown): void {
+  if (error !== undefined) {
+    state.runSpan.setAttribute("dogpile.run.outcome", "aborted");
+    state.runSpan.setStatus("error", error instanceof Error ? error.message : String(error));
+    closeOpenTracingSpans(state);
+    state.runSpan.end();
+    return;
+  }
+
+  if (result === undefined) {
+    closeOpenTracingSpans(state);
+    state.runSpan.end();
+    return;
+  }
+
+  const budgetStopEvent = result.trace.events.find((event): event is BudgetStopEvent => event.type === "budget-stop");
+  const terminationReason = budgetStopEvent?.reason;
+  const outcome = terminationReason !== undefined ? "budget-stopped" : "completed";
+  state.runSpan.setAttribute("dogpile.run.id", result.trace.runId);
+  state.runSpan.setAttribute("dogpile.run.agent_count", result.trace.agentsUsed.length);
+  state.runSpan.setAttribute("dogpile.run.turn_count", result.trace.events.filter((event) => event.type === "agent-turn").length);
+  state.runSpan.setAttribute("dogpile.run.cost_usd", result.cost.usd);
+  state.runSpan.setAttribute("dogpile.run.input_tokens", result.cost.inputTokens);
+  state.runSpan.setAttribute("dogpile.run.output_tokens", result.cost.outputTokens);
+  state.runSpan.setAttribute("dogpile.run.outcome", outcome);
+  if (terminationReason !== undefined) {
+    state.runSpan.setAttribute("dogpile.run.termination_reason", terminationReason);
+  }
+  state.runSpan.setStatus("ok");
+  closeOpenTracingSpans(state);
+  state.runSpan.end();
+}
+
+function closeOpenTracingSpans(state: TracingState): void {
+  for (const span of state.modelCallSpans.values()) {
+    span.end();
+  }
+  state.modelCallSpans.clear();
+  for (const span of state.agentTurnSpans.values()) {
+    span.end();
+  }
+  state.agentTurnSpans.clear();
+  for (const span of state.subRunSpans.values()) {
+    span.end();
+  }
+  state.subRunSpans.clear();
+}
 
 async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Promise<RunResult> {
   const failureInstancesByChildRunId = new Map<string, DogpileError>();
@@ -799,7 +1007,48 @@ function finalEventWithEvaluation(event: FinalEvent, evaluation: RunEvaluation):
   };
 }
 
-function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
+async function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
+  const tracing = openRunTracing({
+    ...(options.tracer ? { tracer: options.tracer } : {}),
+    ...(options.parentSpan ? { parentSpan: options.parentSpan } : {}),
+    intent: options.intent,
+    protocolKind: options.protocol.kind,
+    tier: options.tier
+  });
+  const emitForProtocol =
+    tracing || options.emit
+      ? (event: RunEvent): void => {
+        if (tracing) {
+          handleTracingEvent(tracing, event);
+        }
+        options.emit?.(event);
+      }
+      : undefined;
+  const protocolOptions = tracing
+    ? {
+      ...options,
+      subRunSpansByChildId: tracing.subRunSpans
+    }
+    : options;
+
+  try {
+    const result = await runProtocolInner(protocolOptions, emitForProtocol);
+    if (tracing) {
+      closeRunTracing(tracing, result);
+    }
+    return result;
+  } catch (error) {
+    if (tracing) {
+      closeRunTracing(tracing, undefined, error);
+    }
+    throw error;
+  }
+}
+
+function runProtocolInner(
+  options: RunProtocolOptions,
+  emitForProtocol?: (event: RunEvent) => void
+): Promise<RunResult> {
   switch (options.protocol.kind) {
     case "sequential":
       return runSequential({
@@ -815,7 +1064,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
-        ...(options.emit ? { emit: options.emit } : {})
+        ...(emitForProtocol ? { emit: emitForProtocol } : {})
       });
     case "broadcast":
       return runBroadcast({
@@ -831,7 +1080,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
-        ...(options.emit ? { emit: options.emit } : {})
+        ...(emitForProtocol ? { emit: emitForProtocol } : {})
       });
     case "coordinator":
       return runCoordinator({
@@ -847,7 +1096,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
-        ...(options.emit ? { emit: options.emit } : {}),
+        ...(emitForProtocol ? { emit: emitForProtocol } : {}),
         ...(options.streamEvents !== undefined ? { streamEvents: options.streamEvents } : {}),
         currentDepth: options.currentDepth ?? 0,
         effectiveMaxDepth: options.effectiveMaxDepth ?? Infinity,
@@ -867,6 +1116,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
           return runProtocol({
             ...childProtocolInput,
             protocol: normalizeProtocol(childProtocolInput.protocol),
+            ...(options.tracer ? { tracer: options.tracer } : {}),
             ...(childParent ? { parentSpan: childParent } : {})
           });
         }
@@ -885,7 +1135,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
-        ...(options.emit ? { emit: options.emit } : {})
+        ...(emitForProtocol ? { emit: emitForProtocol } : {})
       });
   }
 }
@@ -938,7 +1188,13 @@ export function stream(options: DogpileOptions): StreamHandle {
  * the ergonomic {@link RunResult} wrapper from the JSON-serializable
  * {@link Trace} returned by a previous `run()`, `stream()`, or
  * `Dogpile.pile()` call.
+ *
+ * Tracing: replay is intentionally tracing-free. Even when an engine instance
+ * has been configured with a `tracer` on its `EngineOptions`, calling this
+ * function emits no spans — replaying historical events with current
+ * timestamps would confuse OTEL backends. See `docs/developer-usage.md`.
  */
+// Tracing-free: replay never uses an EngineOptions tracer.
 export function replay(trace: Trace): RunResult {
   const cost = trace.finalOutput.cost;
   const lastEvent = trace.events.at(-1);
@@ -1146,7 +1402,13 @@ function dogpileErrorFromSerializedPayload(input: {
  * provenance synthesis when a saved trace predates model request/response
  * events. Since all data comes from the trace, replay remains storage-free and
  * provider-free.
+ *
+ * Tracing: replayStream is intentionally tracing-free. Even when an engine
+ * instance has been configured with a `tracer` on its `EngineOptions`, calling
+ * this function emits no spans — replaying historical events with current
+ * timestamps would confuse OTEL backends. See `docs/developer-usage.md`.
  */
+// Tracing-free: replayStream never uses an EngineOptions tracer.
 export function replayStream(trace: Trace): StreamHandle {
   const result = Promise.resolve(replay(trace));
   const replayEvents = replayStreamEvents(trace);
