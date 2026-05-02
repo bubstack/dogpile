@@ -1,0 +1,11 @@
+{
+  "outcome": "completed",
+  "inputTokens": 21,
+  "outputTokens": 12,
+  "costUsd": 0.0003,
+  "totalInputTokens": 21,
+  "totalOutputTokens": 12,
+  "totalCostUsd": 0.0003,
+  "turns": 3,
+  "durationMs": 1500
+}

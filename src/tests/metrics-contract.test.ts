@@ -273,7 +273,7 @@ function noopTestLogger(): Logger {
   };
 }
 
-function testLoggerWithErrorSpy(errorSpy: ReturnType<typeof vi.fn>): Logger {
+function testLoggerWithErrorSpy(errorSpy: (message: string, fields?: Parameters<Logger["error"]>[1]) => void): Logger {
   return {
     debug(): void {},
     info(): void {},
