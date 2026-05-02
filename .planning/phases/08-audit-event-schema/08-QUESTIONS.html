@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phase 8: Audit Event Schema — Discussion Questions</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #1e293b; line-height: 1.5; }
+  .header { background: #1e293b; color: white; padding: 20px 28px; }
+  .header h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 4px; }
+  .header p { font-size: 0.85rem; color: #94a3b8; }
+  .stats-bar { background: white; border-bottom: 1px solid #e2e8f0; padding: 14px 28px; display: flex; align-items: center; gap: 24px; position: sticky; top: 0; z-index: 10; }
+  .stat { display: flex; flex-direction: column; }
+  .stat-value { font-size: 1.4rem; font-weight: 700; color: #1e293b; }
+  .stat-label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat.answered .stat-value { color: #16a34a; }
+  .stat.remaining .stat-value { color: #dc2626; }
+  .progress-wrap { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .progress-bar-bg { background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden; }
+  .progress-bar-fill { background: #22c55e; height: 100%; border-radius: 4px; transition: width 0.3s; }
+  .progress-label { font-size: 0.75rem; color: #64748b; }
+  .save-btn { background: #3b82f6; color: white; border: none; padding: 8px 18px; border-radius: 6px; font-size: 0.875rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .save-btn:hover { background: #2563eb; }
+  .content { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
+  .instructions { background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; font-size: 0.85rem; color: #92400e; }
+  .instructions strong { font-weight: 600; }
+  .section { margin-bottom: 32px; }
+  .section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; cursor: pointer; user-select: none; padding: 10px 14px; background: white; border: 1px solid #e2e8f0; border-radius: 8px; }
+  .section-header:hover { background: #f8fafc; }
+  .section-toggle { font-size: 1rem; color: #64748b; transition: transform 0.2s; }
+  .section-toggle.collapsed { transform: rotate(-90deg); }
+  .section-title { font-size: 1rem; font-weight: 700; color: #1e293b; flex: 1; }
+  .section-progress { font-size: 0.8rem; color: #64748b; background: #f1f5f9; padding: 2px 8px; border-radius: 12px; }
+  .questions-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+  .question-card { background: white; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; transition: border-color 0.15s, background 0.15s; }
+  .question-card.answered { border: 2px solid #22c55e; background: #f0fdf4; }
+  .question-card.chat-more-only { border: 2px solid #f97316; }
+  .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .q-badge { background: #e2e8f0; color: #475569; font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 10px; }
+  .question-card.answered .q-badge { background: #dcfce7; color: #166534; }
+  .q-title { font-size: 0.9rem; font-weight: 700; color: #1e293b; }
+  .q-context { font-size: 0.8rem; color: #64748b; font-style: italic; margin-bottom: 12px; line-height: 1.45; }
+  .options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+  .option-label { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; padding: 7px 9px; border-radius: 6px; border: 1px solid #e2e8f0; transition: border-color 0.1s, background 0.1s; }
+  .option-label:hover { background: #f8fafc; border-color: #cbd5e1; }
+  .option-label input[type="radio"] { margin-top: 3px; flex-shrink: 0; accent-color: #3b82f6; }
+  .option-label.selected { border-color: #3b82f6; background: #eff6ff; }
+  .option-text { display: flex; flex-direction: column; gap: 2px; }
+  .option-bold { font-size: 0.85rem; font-weight: 600; color: #1e293b; }
+  .option-desc { font-size: 0.78rem; color: #64748b; }
+  .custom-input { width: 100%; font-size: 0.8rem; padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 5px; margin-top: 4px; }
+  textarea.chat-more { width: 100%; font-size: 0.8rem; padding: 7px 9px; border: 1px solid #e2e8f0; border-radius: 6px; resize: vertical; min-height: 60px; font-family: inherit; color: #334155; }
+  textarea.chat-more:focus { outline: none; border-color: #f97316; }
+  textarea.chat-more.has-content { border: 2px solid #f97316; }
+  .chat-label { font-size: 0.75rem; font-weight: 600; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .section-body.collapsed { display: none; }
+  .bottom-save { margin: 32px 0 8px; display: flex; justify-content: center; }
+  .download-note { font-size: 0.78rem; color: #94a3b8; text-align: center; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Phase 8: Audit Event Schema — Discussion Questions</h1>
+  <p>Answer at your own pace. Save, then return to Claude and say "refresh" or "finalize".</p>
+</div>
+
+<div class="stats-bar">
+  <div class="stat">
+    <span class="stat-value" id="stat-total">12</span>
+    <span class="stat-label">Total</span>
+  </div>
+  <div class="stat answered">
+    <span class="stat-value" id="stat-answered">0</span>
+    <span class="stat-label">Answered</span>
+  </div>
+  <div class="stat remaining">
+    <span class="stat-value" id="stat-remaining">12</span>
+    <span class="stat-label">Remaining</span>
+  </div>
+  <div class="progress-wrap">
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill" id="progress-fill" style="width: 0%"></div>
+    </div>
+    <div class="progress-label" id="progress-label">0 of 12 answered</div>
+  </div>
+  <button class="save-btn" onclick="saveAnswers()">Save answers</button>
+</div>
+
+<div class="content">
+  <div class="instructions">
+    <strong>How to use:</strong> Select an option for each question. Add notes in "Chat more" if you want nuance discussed. When done, click <strong>Save answers</strong> — then return to Claude and say <strong>"finalize"</strong> to generate CONTEXT.md, or <strong>"refresh"</strong> to see updated stats.
+  </div>
+
+  <!-- Section 1 -->
+  <div class="section" id="section-audit-function-api">
+    <div class="section-header" onclick="toggleSection('audit-function-api')">
+      <span class="section-toggle" id="toggle-audit-function-api">▼</span>
+      <span class="section-title">Audit Function API</span>
+      <span class="section-progress" id="sec-progress-audit-function-api">0 / 3</span>
+    </div>
+    <div class="questions-grid section-body" id="body-audit-function-api">
+
+      <div class="question-card" id="card-Q-01">
+        <div class="card-header">
+          <span class="q-badge">Q-01</span>
+          <span class="q-title">Function input type</span>
+        </div>
+        <div class="q-context">The audit function must accept a completed run to produce AuditRecord. RunResult is the standard caller-facing return value. Trace is the canonical JSON-serializable replay artifact — important for audit generation from stored traces (e.g., from a DB) where the full RunResult may not be available. Phase 7's computeHealth() took a Trace for the same reason.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-01-a">
+            <input type="radio" name="Q-01" value="a" onchange="selectOption('Q-01','a')">
+            <div class="option-text">
+              <span class="option-bold">createAuditRecord(result: RunResult)</span>
+              <span class="option-desc">Convenient for the common case — callers call it right after run(). Cannot be used on a stored trace without reconstructing RunResult.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-01-b">
+            <input type="radio" name="Q-01" value="b" onchange="selectOption('Q-01','b')">
+            <div class="option-text">
+              <span class="option-bold">createAuditRecord(trace: Trace)</span>
+              <span class="option-desc">Consistent with computeHealth(trace). Enables audit from stored/replayed traces. Callers pass result.trace when working from a live result. Pure input — no RunResult dependency.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-01-c">
+            <input type="radio" name="Q-01" value="c" onchange="selectOption('Q-01','c')">
+            <div class="option-text">
+              <span class="option-bold">Overloads: both RunResult and Trace</span>
+              <span class="option-desc">Maximum flexibility. Heavier API surface. Similar overload pattern to what Phase 7 considered for queryEvents. Only warranted if both call sites are real for callers.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-01-custom">
+            <input type="radio" name="Q-01" value="custom" onchange="selectOption('Q-01','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-01" placeholder="Describe your preference..." oninput="updateCustom('Q-01')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-01" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-01')"></textarea>
+      </div>
+
+      <div class="question-card" id="card-Q-02">
+        <div class="card-header">
+          <span class="q-badge">Q-02</span>
+          <span class="q-title">Exported function name</span>
+        </div>
+        <div class="q-context">Naming must be consistent with the Phase 6/7 pattern. Phase 6 exports getProvenance(event). Phase 7 exports queryEvents(events, filter) and computeHealth(trace). No 'create' prefix used so far, but audit records are constructed rather than extracted.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-02-a">
+            <input type="radio" name="Q-02" value="a" onchange="selectOption('Q-02','a')">
+            <div class="option-text">
+              <span class="option-bold">createAuditRecord</span>
+              <span class="option-desc">Constructor semantics — clear that the function builds a new object. Most explicit. Consistent with 'create' naming in the engine (createEngine).</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-02-b">
+            <input type="radio" name="Q-02" value="b" onchange="selectOption('Q-02','b')">
+            <div class="option-text">
+              <span class="option-bold">toAuditRecord</span>
+              <span class="option-desc">Conversion semantics — emphasizes it's derived from existing data. Common pattern for transform functions.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-02-c">
+            <input type="radio" name="Q-02" value="c" onchange="selectOption('Q-02','c')">
+            <div class="option-text">
+              <span class="option-bold">buildAuditRecord</span>
+              <span class="option-desc">Builder semantics — slightly heavier implication of assembly. Less idiomatic in pure TS.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-02-custom">
+            <input type="radio" name="Q-02" value="custom" onchange="selectOption('Q-02','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-02" placeholder="Describe your preference..." oninput="updateCustom('Q-02')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-02" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-02')"></textarea>
+      </div>
+
+      <div class="question-card" id="card-Q-03">
+        <div class="card-header">
+          <span class="q-badge">Q-03</span>
+          <span class="q-title">Subpath export location</span>
+        </div>
+        <div class="q-context">Phase 6 established /runtime/provenance. Phase 7 added /runtime/introspection and /runtime/health. Phase 8 follows the same one-concept-per-subpath pattern. Adding to root index.ts would increase the top-level public surface, which CLAUDE.md says is 'small and deliberate'.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-03-a">
+            <input type="radio" name="Q-03" value="a" onchange="selectOption('Q-03','a')">
+            <div class="option-text">
+              <span class="option-bold">/runtime/audit (new subpath)</span>
+              <span class="option-desc">Consistent with Phase 6/7 pattern. One subpath per observability concept. Requires package.json exports + files + package-exports.test.ts updates.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-03-b">
+            <input type="radio" name="Q-03" value="b" onchange="selectOption('Q-03','b')">
+            <div class="option-text">
+              <span class="option-bold">Root index.ts (src/index.ts)</span>
+              <span class="option-desc">Maximum discoverability. Increases root public surface — CLAUDE.md cautions against this. Not consistent with Phase 6/7 choices.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-03-custom">
+            <input type="radio" name="Q-03" value="custom" onchange="selectOption('Q-03','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-03" placeholder="Describe your preference..." oninput="updateCustom('Q-03')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-03" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-03')"></textarea>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Section 2 -->
+  <div class="section" id="section-audit-record-field-set">
+    <div class="section-header" onclick="toggleSection('audit-record-field-set')">
+      <span class="section-toggle" id="toggle-audit-record-field-set">▼</span>
+      <span class="section-title">AuditRecord Field Set</span>
+      <span class="section-progress" id="sec-progress-audit-record-field-set">0 / 4</span>
+    </div>
+    <div class="questions-grid section-body" id="body-audit-record-field-set">
+
+      <div class="question-card" id="card-Q-04">
+        <div class="card-header">
+          <span class="q-badge">Q-04</span>
+          <span class="q-title">Fields beyond the required minimum</span>
+        </div>
+        <div class="q-context">AUDT-01 success criteria specifies: auditSchemaVersion: '1', runId, intent, timestamps (startedAt/completedAt), agentCount, outcome, cost. RunMetadata already collects protocol, tier, modelProviderId — all derivable from Trace fields. AuditRecord must stay independent of RunEvent schema (AUDT-02), so any field must come from Trace-level data, not from parsing individual RunEvent variants.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-04-a">
+            <input type="radio" name="Q-04" value="a" onchange="selectOption('Q-04','a')">
+            <div class="option-text">
+              <span class="option-bold">Minimum only — 8 fields from success criteria</span>
+              <span class="option-desc">auditSchemaVersion, runId, intent, startedAt, completedAt, agentCount, outcome, cost. Smallest stable surface — fewer fields = fewer schema version bumps.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-04-b">
+            <input type="radio" name="Q-04" value="b" onchange="selectOption('Q-04','b')">
+            <div class="option-text">
+              <span class="option-bold">Minimum + protocol + tier</span>
+              <span class="option-desc">Add protocol ('sequential'|'broadcast'|'shared'|'coordinator') and tier. Both are stable Trace fields. Useful for compliance grouping ('all coordinator runs', 'all budget-tier runs').</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-04-c">
+            <input type="radio" name="Q-04" value="c" onchange="selectOption('Q-04','c')">
+            <div class="option-text">
+              <span class="option-bold">Minimum + protocol + tier + turnCount + modelProviderId</span>
+              <span class="option-desc">Fuller compliance picture. turnCount is derivable from TurnEvent/BroadcastEvent count. modelProviderId comes from Trace.modelProviderId. More fields = richer audit trail.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-04-custom">
+            <input type="radio" name="Q-04" value="custom" onchange="selectOption('Q-04','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-04" placeholder="Describe your preference..." oninput="updateCustom('Q-04')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-04" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-04')"></textarea>
+      </div>
+
+      <div class="question-card" id="card-Q-05">
+        <div class="card-header">
+          <span class="q-badge">Q-05</span>
+          <span class="q-title">"outcome" field values</span>
+        </div>
+        <div class="q-context">Outcome must be derivable from Trace.events without importing RunEvent types into AuditRecord. FinalEvent (type='final') = run completed successfully. BudgetStopEvent (type='budget-stop') = stopped by cap. AbortedEvent is a streaming-only event, not stored in Trace.events. For stored traces, abort is inferred by absence of 'final' or 'budget-stop'. The termination field on FinalEvent can provide additional detail.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-05-a">
+            <input type="radio" name="Q-05" value="a" onchange="selectOption('Q-05','a')">
+            <div class="option-text">
+              <span class="option-bold">"completed" | "budget-stopped" | "aborted"</span>
+              <span class="option-desc">Three-state. Mirrors the three terminal conditions. Clear semantics. 'aborted' is inferred from Trace.events (no 'final', no 'budget-stop').</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-05-b">
+            <input type="radio" name="Q-05" value="b" onchange="selectOption('Q-05','b')">
+            <div class="option-text">
+              <span class="option-bold">"completed" | "stopped"</span>
+              <span class="option-desc">Simpler two-state. 'stopped' covers both budget-stop and abort. Loses the distinction between caller-cancel vs budget-cap — may matter for compliance.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-05-c">
+            <input type="radio" name="Q-05" value="c" onchange="selectOption('Q-05','c')">
+            <div class="option-text">
+              <span class="option-bold">{ status: AuditOutcomeStatus; terminationCode?: string }</span>
+              <span class="option-desc">Structured object. terminationCode carries the BudgetStopReason or abort reason when applicable. Richer but heavier type — and the nested object may need its own fixture protection.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-05-custom">
+            <input type="radio" name="Q-05" value="custom" onchange="selectOption('Q-05','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-05" placeholder="Describe your preference..." oninput="updateCustom('Q-05')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-05" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-05')"></textarea>
+      </div>
+
+      <div class="question-card" id="card-Q-06">
+        <div class="card-header">
+          <span class="q-badge">Q-06</span>
+          <span class="q-title">Cost representation in AuditRecord</span>
+        </div>
+        <div class="q-context">AuditRecord must be independent of RunEvent schema — but CostSummary (usd: number) is a stable, simple type that isn't an event type. RunUsage (src/types.ts ~1461) adds inputTokens/outputTokens. Both are derivable from Trace.finalOutput or the FinalEvent. The question is how much token detail belongs in an audit record.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-06-a">
+            <input type="radio" name="Q-06" value="a" onchange="selectOption('Q-06','a')">
+            <div class="option-text">
+              <span class="option-bold">{ usd: number } — dollar total only</span>
+              <span class="option-desc">Minimum stable shape. No token counts. If token detail is needed, callers read trace.providerCalls. Simplest fixture to freeze.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-06-b">
+            <input type="radio" name="Q-06" value="b" onchange="selectOption('Q-06','b')">
+            <div class="option-text">
+              <span class="option-bold">{ usd: number; inputTokens: number; outputTokens: number }</span>
+              <span class="option-desc">Full accounting. Token counts are in the trace already (CostSummary on FinalEvent). Richer audit trail for cost-allocation use cases.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-06-c">
+            <input type="radio" name="Q-06" value="c" onchange="selectOption('Q-06','c')">
+            <div class="option-text">
+              <span class="option-bold">Re-use CostSummary type</span>
+              <span class="option-desc">CostSummary is already exported. Re-using it keeps audit costs consistent with RunResult.cost. Adds an indirect dependency on types.ts, but CostSummary itself doesn't depend on RunEvent.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-06-custom">
+            <input type="radio" name="Q-06" value="custom" onchange="selectOption('Q-06','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-06" placeholder="Describe your preference..." oninput="updateCustom('Q-06')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-06" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-06')"></textarea>
+      </div>
+
+      <div class="question-card" id="card-Q-07">
+        <div class="card-header">
+          <span class="q-badge">Q-07</span>
+          <span class="q-title">terminationReason field</span>
+        </div>
+        <div class="q-context">When outcome is 'budget-stopped', BudgetStopEvent.reason carries the specific cap class (BudgetStopReason). For compliance, knowing which cap triggered the stop may be material. This would be optional (present only when outcome !== 'completed').</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-07-a">
+            <input type="radio" name="Q-07" value="a" onchange="selectOption('Q-07','a')">
+            <div class="option-text">
+              <span class="option-bold">Include terminationReason?: string</span>
+              <span class="option-desc">Optional string field on AuditRecord. Present when outcome is 'budget-stopped' or 'aborted'. Populated from BudgetStopEvent.reason or inferred for abort. Adds useful compliance detail.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-07-b">
+            <input type="radio" name="Q-07" value="b" onchange="selectOption('Q-07','b')">
+            <div class="option-text">
+              <span class="option-bold">Omit — outcome string alone is sufficient</span>
+              <span class="option-desc">Keep AuditRecord lean. Callers who need termination detail can read trace.events directly. Fewer optional fields = simpler frozen fixture.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-07-custom">
+            <input type="radio" name="Q-07" value="custom" onchange="selectOption('Q-07','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-07" placeholder="Describe your preference..." oninput="updateCustom('Q-07')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-07" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-07')"></textarea>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Section 3 -->
+  <div class="section" id="section-agent-subrun-handling">
+    <div class="section-header" onclick="toggleSection('agent-subrun-handling')">
+      <span class="section-toggle" id="toggle-agent-subrun-handling">▼</span>
+      <span class="section-title">Agent and Sub-Run Handling</span>
+      <span class="section-progress" id="sec-progress-agent-subrun-handling">0 / 3</span>
+    </div>
+    <div class="questions-grid section-body" id="body-agent-subrun-handling">
+
+      <div class="question-card" id="card-Q-08">
+        <div class="card-header">
+          <span class="q-badge">Q-08</span>
+          <span class="q-title">Agent-level detail</span>
+        </div>
+        <div class="q-context">AUDT-01 requires agentCount. Trace.agentsUsed is a readonly AgentSpec[] with id and role. TurnEvent/BroadcastEvent carry per-agent cost. For compliance, per-agent cost breakdown is sometimes required. STATE.md decision: 'AuditRecord is not derived from RunEvent via Pick/Omit' — any per-agent data must be its own AuditRecord-internal type.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-08-a">
+            <input type="radio" name="Q-08" value="a" onchange="selectOption('Q-08','a')">
+            <div class="option-text">
+              <span class="option-bold">Run-level only — agentCount: number</span>
+              <span class="option-desc">Minimal. Matches success criteria exactly. No per-agent data. agentCount = trace.agentsUsed.length.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-08-b">
+            <input type="radio" name="Q-08" value="b" onchange="selectOption('Q-08','b')">
+            <div class="option-text">
+              <span class="option-bold">agentCount + agentIds: readonly string[]</span>
+              <span class="option-desc">Light addition — preserves agent identity without detailed breakdown. Useful for compliance linking (which agents were involved in this run).</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-08-c">
+            <input type="radio" name="Q-08" value="c" onchange="selectOption('Q-08','c')">
+            <div class="option-text">
+              <span class="option-bold">agents: Array&lt;{ id: string; role: string; turnCount: number }&gt;</span>
+              <span class="option-desc">Per-agent summary. turnCount derivable from TurnEvent.agentId matches. Richer but requires parsing TurnEvent entries (which are RunEvent variants — must be done only inside the implementation, not exposed in AuditRecord type).</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-08-custom">
+            <input type="radio" name="Q-08" value="custom" onchange="selectOption('Q-08','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-08" placeholder="Describe your preference..." oninput="updateCustom('Q-08')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-08" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-08')"></textarea>
+      </div>
+
+      <div class="question-card" id="card-Q-09">
+        <div class="card-header">
+          <span class="q-badge">Q-09</span>
+          <span class="q-title">Sub-run (delegate child) representation</span>
+        </div>
+        <div class="q-context">When a coordinator delegates child runs, Trace.events contains SubRunCompletedEvent/SubRunFailedEvent entries. Each carries a childRunId and an embedded child Trace. Phase 8 depends on Phase 7. STATE.md notes Phase 6 (event-shape) must complete before OTEL (Phase 9) — audit depends on stable provenance. The question is whether audit records are recursive or flat.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-09-a">
+            <input type="radio" name="Q-09" value="a" onchange="selectOption('Q-09','a')">
+            <div class="option-text">
+              <span class="option-bold">childRunCount: number only</span>
+              <span class="option-desc">Flat. No nested AuditRecords. childRunCount = count of SubRunCompletedEvent entries in trace.events. Callers who want child audit records call createAuditRecord(subRunEvent.trace) themselves.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-09-b">
+            <input type="radio" name="Q-09" value="b" onchange="selectOption('Q-09','b')">
+            <div class="option-text">
+              <span class="option-bold">childRuns: readonly AuditRecord[]</span>
+              <span class="option-desc">Recursive. createAuditRecord walks sub-run traces and nests child records. Full picture in one call. Potentially deep for deeply nested delegation.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-09-c">
+            <input type="radio" name="Q-09" value="c" onchange="selectOption('Q-09','c')">
+            <div class="option-text">
+              <span class="option-bold">childRunIds: readonly string[] (when applicable)</span>
+              <span class="option-desc">Lists child run ids without their records. Callers can look up stored traces separately. Lightweight linking — good for systems that store traces by runId.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-09-custom">
+            <input type="radio" name="Q-09" value="custom" onchange="selectOption('Q-09','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-09" placeholder="Describe your preference..." oninput="updateCustom('Q-09')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-09" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-09')"></textarea>
+      </div>
+
+      <div class="question-card" id="card-Q-10">
+        <div class="card-header">
+          <span class="q-badge">Q-10</span>
+          <span class="q-title">agentCount semantics</span>
+        </div>
+        <div class="q-context">Trace.agentsUsed contains the agents configured for the run. In a broadcast run this is all agents. In a coordinator run, the coordinator plus its delegates are in agentsUsed. Sub-run agents are in child traces, not parent agentsUsed.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-10-a">
+            <input type="radio" name="Q-10" value="a" onchange="selectOption('Q-10','a')">
+            <div class="option-text">
+              <span class="option-bold">trace.agentsUsed.length</span>
+              <span class="option-desc">Simple — matches existing RunMetadata.agentsUsed. Consistent with how agentCount is expected by callers reading RunMetadata.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-10-b">
+            <input type="radio" name="Q-10" value="b" onchange="selectOption('Q-10','b')">
+            <div class="option-text">
+              <span class="option-bold">Distinct agentIds from TurnEvent entries</span>
+              <span class="option-desc">Counts agents that actually contributed turns. May differ from agentsUsed if a configured agent never got a turn (e.g., a coordinator that only delegated). Requires parsing TurnEvent entries.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-10-custom">
+            <input type="radio" name="Q-10" value="custom" onchange="selectOption('Q-10','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-10" placeholder="Describe your preference..." oninput="updateCustom('Q-10')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-10" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-10')"></textarea>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Section 4 -->
+  <div class="section" id="section-fixture-and-testing">
+    <div class="section-header" onclick="toggleSection('fixture-and-testing')">
+      <span class="section-toggle" id="toggle-fixture-and-testing">▼</span>
+      <span class="section-title">Fixture and Testing</span>
+      <span class="section-progress" id="sec-progress-fixture-and-testing">0 / 2</span>
+    </div>
+    <div class="questions-grid section-body" id="body-fixture-and-testing">
+
+      <div class="question-card" id="card-Q-11">
+        <div class="card-header">
+          <span class="q-badge">Q-11</span>
+          <span class="q-title">audit-record-v1.json fixture completeness</span>
+        </div>
+        <div class="q-context">AUDT-02 requires a frozen JSON fixture at src/tests/fixtures/audit-record-v1.json. Phase 6 uses provenance-event-v1.json (one frozen event shape). Phase 7 uses anomaly-record-v1.json (one example per anomaly code). The fixture's purpose is to make schema changes visible and require an explicit update.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-11-a">
+            <input type="radio" name="Q-11" value="a" onchange="selectOption('Q-11','a')">
+            <div class="option-text">
+              <span class="option-bold">Single minimal fixture — one completed-run record</span>
+              <span class="option-desc">One AuditRecord with all fields populated from a simple sequential run. Small, clear, easy to read. Covers the happy path.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-11-b">
+            <input type="radio" name="Q-11" value="b" onchange="selectOption('Q-11','b')">
+            <div class="option-text">
+              <span class="option-bold">One fixture per outcome — completed, budget-stopped, aborted</span>
+              <span class="option-desc">Three records. Each shows a different outcome value (and terminationReason if included). More coverage but heavier fixture file.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-11-c">
+            <input type="radio" name="Q-11" value="c" onchange="selectOption('Q-11','c')">
+            <div class="option-text">
+              <span class="option-bold">Single realistic fixture from a multi-agent coordinator run</span>
+              <span class="option-desc">One record that exercises agentCount &gt; 1 and optionally childRunCount &gt; 0. Better representation of real usage. Still one file.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-11-custom">
+            <input type="radio" name="Q-11" value="custom" onchange="selectOption('Q-11','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-11" placeholder="Describe your preference..." oninput="updateCustom('Q-11')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-11" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-11')"></textarea>
+      </div>
+
+      <div class="question-card" id="card-Q-12">
+        <div class="card-header">
+          <span class="q-badge">Q-12</span>
+          <span class="q-title">TypeScript type-level fixture verification</span>
+        </div>
+        <div class="q-context">The existing fixture pattern (provenance-event-v1.json) verifies JSON shape via deepEqual. An additional TypeScript satisfies check would catch structural type regressions at compile time — before runtime. The consumer-type-resolution-smoke.ts file in src/tests/fixtures/ provides a precedent for compile-time type verification.</div>
+        <div class="options">
+          <label class="option-label" id="opt-Q-12-a">
+            <input type="radio" name="Q-12" value="a" onchange="selectOption('Q-12','a')">
+            <div class="option-text">
+              <span class="option-bold">JSON shape only — standard frozen fixture pattern</span>
+              <span class="option-desc">Consistent with Phase 6/7 approach. deepEqual against fixture. Type regressions caught by tsc (typecheck step in verify).</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-12-b">
+            <input type="radio" name="Q-12" value="b" onchange="selectOption('Q-12','b')">
+            <div class="option-text">
+              <span class="option-bold">JSON shape + TypeScript satisfies AuditRecord check</span>
+              <span class="option-desc">Add a small type assertion file that imports the fixture JSON and asserts it satisfies AuditRecord. Catches type/shape mismatches at compile time. Light addition — ~5 lines.</span>
+            </div>
+          </label>
+          <label class="option-label" id="opt-Q-12-custom">
+            <input type="radio" name="Q-12" value="custom" onchange="selectOption('Q-12','custom')">
+            <div class="option-text">
+              <span class="option-bold">Custom</span>
+              <input class="custom-input" type="text" id="custom-Q-12" placeholder="Describe your preference..." oninput="updateCustom('Q-12')">
+            </div>
+          </label>
+        </div>
+        <div class="chat-label">Chat more</div>
+        <textarea class="chat-more" id="chat-Q-12" placeholder="Add context, nuance, or clarification for this question..." oninput="updateChatMore('Q-12')"></textarea>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="bottom-save">
+    <button class="save-btn" onclick="saveAnswers()">Save answers</button>
+  </div>
+  <div class="download-note">After saving, return to Claude and say "refresh" to process your answers, or "finalize" to generate CONTEXT.md.</div>
+</div>
+
+<script>
+const JSON_PATH = ".planning/phases/08-audit-event-schema/08-QUESTIONS.json";
+
+const SECTION_MAP = {
+  "Q-01": "audit-function-api", "Q-02": "audit-function-api", "Q-03": "audit-function-api",
+  "Q-04": "audit-record-field-set", "Q-05": "audit-record-field-set", "Q-06": "audit-record-field-set", "Q-07": "audit-record-field-set",
+  "Q-08": "agent-subrun-handling", "Q-09": "agent-subrun-handling", "Q-10": "agent-subrun-handling",
+  "Q-11": "fixture-and-testing", "Q-12": "fixture-and-testing"
+};
+
+const SECTION_COUNTS = {
+  "audit-function-api": 3,
+  "audit-record-field-set": 4,
+  "agent-subrun-handling": 3,
+  "fixture-and-testing": 2
+};
+
+const state = {};
+const TOTAL = 12;
+
+function selectOption(qid, optionId) {
+  state[qid] = state[qid] || {};
+  state[qid].answer = optionId;
+  // Highlight selected option
+  const card = document.getElementById('card-' + qid);
+  card.querySelectorAll('.option-label').forEach(l => l.classList.remove('selected'));
+  const selectedLabel = document.getElementById('opt-' + qid + '-' + optionId);
+  if (selectedLabel) selectedLabel.classList.add('selected');
+  // Mark card as answered
+  card.classList.add('answered');
+  card.querySelector('.q-badge').style.background = '#dcfce7';
+  card.querySelector('.q-badge').style.color = '#166534';
+  updateStats();
+}
+
+function updateCustom(qid) {
+  const input = document.getElementById('custom-' + qid);
+  state[qid] = state[qid] || {};
+  state[qid].customText = input ? input.value : '';
+}
+
+function updateChatMore(qid) {
+  const ta = document.getElementById('chat-' + qid);
+  state[qid] = state[qid] || {};
+  state[qid].chat_more = ta.value;
+  if (ta.value.trim()) {
+    ta.classList.add('has-content');
+    const card = document.getElementById('card-' + qid);
+    if (!state[qid].answer) {
+      card.classList.add('chat-more-only');
+    }
+  } else {
+    ta.classList.remove('has-content');
+    const card = document.getElementById('card-' + qid);
+    card.classList.remove('chat-more-only');
+  }
+  updateStats();
+}
+
+function updateStats() {
+  let answered = 0;
+  let chatMore = 0;
+  for (const qid in state) {
+    if (state[qid].answer) answered++;
+    if (state[qid].chat_more && state[qid].chat_more.trim()) chatMore++;
+  }
+  document.getElementById('stat-answered').textContent = answered;
+  document.getElementById('stat-remaining').textContent = TOTAL - answered;
+  const pct = Math.round((answered / TOTAL) * 100);
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-label').textContent = answered + ' of ' + TOTAL + ' answered';
+
+  // Update section progress
+  for (const sectionId in SECTION_COUNTS) {
+    let sectionAnswered = 0;
+    for (const qid in SECTION_MAP) {
+      if (SECTION_MAP[qid] === sectionId && state[qid] && state[qid].answer) sectionAnswered++;
+    }
+    const el = document.getElementById('sec-progress-' + sectionId);
+    if (el) el.textContent = sectionAnswered + ' / ' + SECTION_COUNTS[sectionId];
+  }
+}
+
+function toggleSection(sectionId) {
+  const body = document.getElementById('body-' + sectionId);
+  const toggle = document.getElementById('toggle-' + sectionId);
+  if (body.classList.contains('collapsed')) {
+    body.classList.remove('collapsed');
+    toggle.classList.remove('collapsed');
+  } else {
+    body.classList.add('collapsed');
+    toggle.classList.add('collapsed');
+  }
+}
+
+async function saveAnswers() {
+  const questions = ["Q-01","Q-02","Q-03","Q-04","Q-05","Q-06","Q-07","Q-08","Q-09","Q-10","Q-11","Q-12"];
+  let answered = 0, chatMore = 0;
+  questions.forEach(qid => {
+    if (state[qid] && state[qid].answer) answered++;
+    if (state[qid] && state[qid].chat_more && state[qid].chat_more.trim()) chatMore++;
+  });
+
+  const payload = {
+    phase: "08-audit-event-schema",
+    generated_at: new Date().toISOString(),
+    stats: { total: TOTAL, answered, chat_more: chatMore, remaining: TOTAL - answered },
+    sections: [
+      buildSection("audit-function-api", "Audit Function API", ["Q-01","Q-02","Q-03"]),
+      buildSection("audit-record-field-set", "AuditRecord Field Set", ["Q-04","Q-05","Q-06","Q-07"]),
+      buildSection("agent-subrun-handling", "Agent and Sub-Run Handling", ["Q-08","Q-09","Q-10"]),
+      buildSection("fixture-and-testing", "Fixture and Testing", ["Q-11","Q-12"])
+    ]
+  };
+
+  const json = JSON.stringify(payload, null, 2);
+
+  if ('showSaveFilePicker' in window) {
+    try {
+      const fh = await window.showSaveFilePicker({ suggestedName: '08-QUESTIONS.json', types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }] });
+      const writable = await fh.createWritable();
+      await writable.write(json);
+      await writable.close();
+      alert('Saved! Return to Claude and say "refresh" or "finalize".');
+      return;
+    } catch(e) { /* fallthrough to download */ }
+  }
+
+  // Fallback: download
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '08-QUESTIONS.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  alert('Downloaded 08-QUESTIONS.json. Replace the original file at:\n' + JSON_PATH + '\n\nThen return to Claude and say "refresh" or "finalize".');
+}
+
+function buildSection(id, title, qids) {
+  return {
+    id,
+    title,
+    questions: qids.map(qid => {
+      const s = state[qid] || {};
+      const answerVal = s.answer ? (s.answer === 'custom' ? (s.customText || '') : s.answer) : null;
+      return {
+        id: qid,
+        answer: answerVal,
+        chat_more: s.chat_more || '',
+        status: answerVal ? 'answered' : (s.chat_more && s.chat_more.trim() ? 'chat-more' : 'unanswered')
+      };
+    })
+  };
+}
+</script>
+</body>
+</html>

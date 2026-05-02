@@ -41,6 +41,7 @@
 **Dev/build:**
 - `@types/node` `^25.6.0` — Node typings (used because `tsconfig.json` lists `"types": ["node"]`).
 - `typescript` `^6.0.3`, `vite` `^8.0.10`, `vitest` `^4.1.5`, `ai` `^6.0.168`.
+- `@opentelemetry/api` `1.9.1`, `@opentelemetry/sdk-trace-base` `2.7.1` — dev/test-only dependencies for tracing contract tests and caller-side bridge examples; no runtime, dependency, or peer dependency is declared.
 
 ## Configuration
 

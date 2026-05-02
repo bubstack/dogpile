@@ -7,6 +7,7 @@ import type {
   JsonObject,
   ModelRequest,
   ModelResponse,
+  RunEvent,
   RuntimeTool
 } from "../index.js";
 
@@ -225,6 +226,12 @@ describe("broadcast protocol", () => {
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-request",
+      "model-request",
+      "model-response",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
       "agent-turn",
@@ -233,7 +240,8 @@ describe("broadcast protocol", () => {
     ]);
     for (const event of result.trace.events) {
       expect(event.runId).toBe(result.trace.runId);
-      expect(new Date(event.at).toISOString()).toBe(event.at);
+      const timestamp = eventTimestamp(event);
+      expect(new Date(timestamp).toISOString()).toBe(timestamp);
     }
 
     const broadcastEvent = result.trace.events.find((event) => event.type === "broadcast");
@@ -279,6 +287,12 @@ describe("broadcast protocol", () => {
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-request",
+      "model-request",
+      "model-response",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
       "agent-turn",
@@ -353,3 +367,8 @@ describe("broadcast protocol", () => {
     ]);
   });
 });
+
+function eventTimestamp(event: RunEvent): string {
+  if ("at" in event) return event.at;
+  return event.type === "model-response" ? event.completedAt : event.startedAt;
+}

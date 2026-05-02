@@ -71,12 +71,14 @@ export interface ModelRequestEvent {
   readonly runId: string;
   /** Root-first ancestry chain when bubbled through a parent stream. */
   readonly parentRunIds?: readonly string[];
-  /** ISO-8601 event timestamp. */
-  readonly at: string;
+  /** ISO-8601 timestamp immediately before the provider call began. */
+  readonly startedAt: string;
   /** Stable provider call id within the run. */
   readonly callId: string;
   /** Configured model provider id receiving the request. */
   readonly providerId: string;
+  /** Resolved model identifier; falls back to provider id when adapter does not set modelId. */
+  readonly modelId: string;
   /** Agent requesting the model call. */
   readonly agentId: string;
   /** Agent role for the active model call. */
@@ -101,12 +103,16 @@ export interface ModelResponseEvent {
   readonly runId: string;
   /** Root-first ancestry chain when bubbled through a parent stream. */
   readonly parentRunIds?: readonly string[];
-  /** ISO-8601 event timestamp. */
-  readonly at: string;
+  /** ISO-8601 timestamp when the provider call started (same value as the paired ModelRequestEvent). */
+  readonly startedAt: string;
+  /** ISO-8601 timestamp after the provider call completed. Duration = completedAt minus startedAt. */
+  readonly completedAt: string;
   /** Stable provider call id within the run. */
   readonly callId: string;
   /** Configured model provider id that produced the response. */
   readonly providerId: string;
+  /** Resolved model identifier; falls back to provider id when adapter does not set modelId. */
+  readonly modelId: string;
   /** Agent that requested the model call. */
   readonly agentId: string;
   /** Agent role for the completed model call. */

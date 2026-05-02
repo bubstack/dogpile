@@ -1,3 +1,7 @@
+import type { DogpileTracer } from "./runtime/tracing.js";
+import type { Logger } from "./runtime/logger.js";
+import type { MetricsHook } from "./runtime/metrics.js";
+
 /**
  * Primitive JSON value accepted in serializable trace metadata.
  */
@@ -884,6 +888,8 @@ export interface ModelOutputChunk {
 export interface ConfiguredModelProvider {
   /** Stable provider id recorded in traces. */
   readonly id: string;
+  /** Optional resolved model identifier. When set, provenance events carry this value; when absent, the SDK falls back to `id`. */
+  readonly modelId?: string;
   /** Generate a response for one protocol-managed model request. */
   generate(request: ModelRequest): Promise<ModelResponse>;
   /**
@@ -1652,7 +1658,7 @@ export interface RunMetadata {
  * Result returned by high-level single-call APIs.
  *
  * The returned shape is
- * `{ output, eventLog, transcript, usage, metadata, accounting, trace, cost, quality, evaluation }`.
+ * `{ output, eventLog, transcript, usage, metadata, accounting, trace, cost, quality, evaluation, health }`.
  * `output` is the final synthesized answer, `eventLog` is the complete ordered
  * coordination log, `transcript` is the complete agent-turn transcript,
  * `usage` reports token and dollar accounting, and `metadata` exposes stable
@@ -1661,6 +1667,7 @@ export interface RunMetadata {
  * serializable replay artifact, `cost` is retained as a compatibility alias
  * for `usage`, and `quality` and `evaluation` are present when a judge or
  * benchmark supplies a normalized score and serializable evaluation payload.
+ * `health` exposes machine-readable diagnostics once computed by the runtime.
  */
 export interface RunResult {
   /** Final synthesized answer for the supplied intent. */
@@ -1688,6 +1695,15 @@ export interface RunResult {
   readonly quality?: NormalizedQualityScore;
   /** Optional serializable evaluation data supplied by a caller-owned evaluator. */
   readonly evaluation?: RunEvaluation;
+  /**
+   * Machine-readable health summary for the run, auto-computed from trace events.
+   *
+   * Always present. Re-computed identically by `replay()` from the same trace —
+   * contains no information beyond what the trace events carry. Use
+   * `computeHealth(trace, thresholds)` from `@dogpile/sdk/runtime/health` to
+   * re-compute with custom thresholds on a stored trace.
+   */
+  readonly health: RunHealthSummary;
 }
 
 /**
@@ -1695,6 +1711,69 @@ export interface RunResult {
  * result is exposed to `run()` or `stream()` callers.
  */
 export type RunEvaluator = (result: Omit<RunResult, "quality" | "evaluation">) => RunEvaluation | Promise<RunEvaluation>;
+
+/**
+ * Machine-readable code identifying a health anomaly detected in a completed run.
+ *
+ * - `"runaway-turns"`: an agent exceeded the configured per-agent turn threshold.
+ * - `"budget-near-miss"`: budget utilization exceeded the configured near-miss threshold.
+ * - `"empty-contribution"`: an agent produced an empty (blank/whitespace) output turn.
+ * - `"provider-error-recovered"`: a provider call failed and was retried successfully.
+ *   Detection is deferred — computeHealth never emits this code in Phase 7 because no
+ *   trace signal exists without an event-shape change. The code is reserved for future use.
+ */
+export type AnomalyCode =
+  | "runaway-turns"
+  | "budget-near-miss"
+  | "empty-contribution"
+  | "provider-error-recovered";
+
+/**
+ * A single health anomaly detected in a completed run trace.
+ *
+ * All fields are required except `agentId`, which is present for per-agent anomalies
+ * (`"runaway-turns"`, `"empty-contribution"`, `"provider-error-recovered"`) and absent
+ * for global anomalies (`"budget-near-miss"`).
+ */
+export interface HealthAnomaly {
+  /** Machine-readable anomaly identifier. */
+  readonly code: AnomalyCode;
+  /** Severity level: `"error"` for runaway turns and empty contributions; `"warning"` for near-miss and recovered patterns. */
+  readonly severity: "warning" | "error";
+  /** Actual measured value that triggered the anomaly (turn count, utilization %, etc.). */
+  readonly value: number;
+  /** Threshold value that was exceeded (for comparison in UIs and alerting). */
+  readonly threshold: number;
+  /** Agent that triggered the anomaly, present for per-agent anomaly codes. */
+  readonly agentId?: string;
+}
+
+/**
+ * Machine-readable health summary for a completed run, auto-computed from trace events.
+ *
+ * Always present on {@link RunResult}. Re-computed identically by `replay()` from the
+ * same trace — no information is stored beyond what the trace events contain.
+ *
+ * Use `computeHealth(trace, thresholds)` from `@dogpile/sdk/runtime/health` to re-compute
+ * with custom thresholds.
+ */
+export interface RunHealthSummary {
+  /** Detected health anomalies. Empty array when no anomalies are found. */
+  readonly anomalies: readonly HealthAnomaly[];
+  /** Derived stats computed from trace events. */
+  readonly stats: {
+    /** Total number of agent-turn events in the trace. */
+    readonly totalTurns: number;
+    /** Number of unique agents that produced at least one turn. */
+    readonly agentCount: number;
+    /**
+     * Budget utilization as a percentage (0–100+).
+     * `null` when no USD cap was configured for the run.
+     * Computed as `(finalCost / maxUsd) * 100`.
+     */
+    readonly budgetUtilizationPct: number | null;
+  };
+}
 
 /**
  * Mission supplied to a high-level Dogpile workflow call.
@@ -1808,6 +1887,32 @@ export interface DogpileOptions extends BudgetCostTierOptions {
   /** Optional caller cancellation signal passed to provider-facing model requests. */
   readonly signal?: AbortSignal;
   /**
+   * Optional duck-typed OTEL-compatible tracer. When provided, the SDK emits
+   * spans for run start/end, sub-run start/end, agent-turn start/end, and
+   * model-call start/end with correct parent-child ancestry. When absent the
+   * run completes with zero span overhead — no allocations, no branch cost.
+   * `replay()` and `replayStream()` ignore this field entirely.
+   * See {@link DogpileTracer} in `@dogpile/sdk/runtime/tracing`.
+   */
+  readonly tracer?: DogpileTracer;
+  /**
+   * Optional callback object for run-completion metrics. When provided,
+   * `onRunComplete` fires with a `RunMetricsSnapshot` at every terminal state
+   * (completed, budget-stopped, or aborted). `onSubRunComplete` fires for each
+   * coordinator-dispatched child run that completes. Hook errors are routed to
+   * `logger.error` (or `console.error` when no logger is provided) and never
+   * propagate into the run result. When absent, zero overhead — no allocations.
+   * See `@dogpile/sdk/runtime/metrics` for the interface.
+   */
+  readonly metricsHook?: MetricsHook;
+  /**
+   * Optional structured logger for SDK-internal diagnostics (hook errors and
+   * future debug/info events). Implement against pino, winston, or any other
+   * logger by satisfying the `Logger` interface from `@dogpile/sdk/runtime/logger`.
+   * When absent, hook errors fall back to `console.error`.
+   */
+  readonly logger?: Logger;
+  /**
    * Maximum coordinator → sub-run recursion depth.
    *
    * Defaults to 4. Per-run values can only LOWER the engine ceiling; raising
@@ -1911,6 +2016,32 @@ export interface EngineOptions {
   readonly seed?: string | number;
   /** Optional caller cancellation signal passed to provider-facing model requests. */
   readonly signal?: AbortSignal;
+  /**
+   * Optional duck-typed OTEL-compatible tracer. When provided, the SDK emits
+   * spans for run start/end, sub-run start/end, agent-turn start/end, and
+   * model-call start/end with correct parent-child ancestry. When absent the
+   * run completes with zero span overhead — no allocations, no branch cost.
+   * `replay()` and `replayStream()` ignore this field entirely.
+   * See {@link DogpileTracer} in `@dogpile/sdk/runtime/tracing`.
+   */
+  readonly tracer?: DogpileTracer;
+  /**
+   * Optional callback object for run-completion metrics. When provided,
+   * `onRunComplete` fires with a `RunMetricsSnapshot` at every terminal state
+   * (completed, budget-stopped, or aborted). `onSubRunComplete` fires for each
+   * coordinator-dispatched child run that completes. Hook errors are routed to
+   * `logger.error` (or `console.error` when no logger is provided) and never
+   * propagate into the run result. When absent, zero overhead — no allocations.
+   * See `@dogpile/sdk/runtime/metrics` for the interface.
+   */
+  readonly metricsHook?: MetricsHook;
+  /**
+   * Optional structured logger for SDK-internal diagnostics (hook errors and
+   * future debug/info events). Implement against pino, winston, or any other
+   * logger by satisfying the `Logger` interface from `@dogpile/sdk/runtime/logger`.
+   * When absent, hook errors fall back to `console.error`.
+   */
+  readonly logger?: Logger;
   /**
    * Maximum coordinator → sub-run recursion depth ceiling.
    *

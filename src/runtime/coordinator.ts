@@ -46,6 +46,7 @@ import {
   lastCostBearingEventCost,
   nextProviderCallId
 } from "./defaults.js";
+import { computeHealth, DEFAULT_HEALTH_THRESHOLDS } from "./health.js";
 import {
   classifyAbortReason,
   classifyChildTimeoutSource,
@@ -64,6 +65,11 @@ import { createWrapUpHintController } from "./wrap-up.js";
  * in by `engine.ts` so coordinator avoids a circular import.
  */
 export type RunProtocolFn = (input: {
+  /**
+   * Planned child run id emitted on sub-run lifecycle events before dispatch.
+   * The engine callback uses this to look up the matching sub-run span.
+   */
+  readonly runId: string;
   readonly intent: string;
   readonly protocol: ProtocolSelection;
   readonly tier: Tier;
@@ -748,46 +754,47 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
     transcriptEntryCount: transcript.length
   });
   const finalEvent = events.at(-1);
+  const trace: Trace = {
+    schemaVersion: "1.0",
+    runId,
+    protocol: "coordinator",
+    tier: options.tier,
+    modelProviderId: options.model.id,
+    agentsUsed: activeAgents,
+    inputs: createReplayTraceRunInputs({
+      intent: options.intent,
+      protocol: options.protocol,
+      tier: options.tier,
+      modelProviderId: options.model.id,
+      agents: activeAgents,
+      temperature: options.temperature
+    }),
+    budget: createReplayTraceBudget({
+      tier: options.tier,
+      ...(options.budget ? { caps: options.budget } : {}),
+      ...(options.terminate ? { termination: options.terminate } : {})
+    }),
+    budgetStateChanges: createReplayTraceBudgetStateChanges(events),
+    seed: createReplayTraceSeed(options.seed),
+    protocolDecisions,
+    providerCalls,
+    finalOutput: createReplayTraceFinalOutput(output, finalEvent ?? {
+      type: "final",
+      runId,
+      at: "",
+      output,
+      cost: totalCost,
+      transcript: createTranscriptLink(transcript)
+    }),
+    ...(triggeringFailureForAbortMode !== undefined ? { triggeringFailureForAbortMode } : {}),
+    events,
+    transcript
+  };
 
   return {
     output,
     eventLog: createRunEventLog(runId, "coordinator", events),
-    trace: {
-      schemaVersion: "1.0",
-      runId,
-      protocol: "coordinator",
-      tier: options.tier,
-      modelProviderId: options.model.id,
-      agentsUsed: activeAgents,
-      inputs: createReplayTraceRunInputs({
-        intent: options.intent,
-        protocol: options.protocol,
-        tier: options.tier,
-        modelProviderId: options.model.id,
-        agents: activeAgents,
-        temperature: options.temperature
-      }),
-      budget: createReplayTraceBudget({
-        tier: options.tier,
-        ...(options.budget ? { caps: options.budget } : {}),
-        ...(options.terminate ? { termination: options.terminate } : {})
-      }),
-      budgetStateChanges: createReplayTraceBudgetStateChanges(events),
-      seed: createReplayTraceSeed(options.seed),
-      protocolDecisions,
-      providerCalls,
-      finalOutput: createReplayTraceFinalOutput(output, finalEvent ?? {
-        type: "final",
-        runId,
-        at: "",
-        output,
-        cost: totalCost,
-        transcript: createTranscriptLink(transcript)
-      }),
-      ...(triggeringFailureForAbortMode !== undefined ? { triggeringFailureForAbortMode } : {}),
-      events,
-      transcript
-    },
+    trace,
     transcript,
     usage: createRunUsage(totalCost),
     metadata: createRunMetadata({
@@ -805,7 +812,8 @@ export async function runCoordinator(options: CoordinatorRunOptions): Promise<Ru
       cost: totalCost,
       events
     }),
-    cost: totalCost
+    cost: totalCost,
+    health: computeHealth(trace, DEFAULT_HEALTH_THRESHOLDS)
   };
 
   function stopIfNeeded(): boolean {
@@ -1404,6 +1412,7 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
       : undefined;
 
   const childOptions = {
+    runId: childRunId,
     intent: decision.intent,
     protocol: decision.protocol,
     tier: options.tier,
@@ -1614,8 +1623,8 @@ async function dispatchDelegate(input: DispatchDelegateOptions): Promise<Dispatc
 function renderSubRunResult(childRunId: string, subResult: RunResult): string {
   const turns = subResult.transcript.length;
   const costUsd = subResult.cost.usd ?? 0;
-  const startedAt = subResult.trace.events[0]?.at;
-  const endedAt = subResult.trace.events.at(-1)?.at;
+  const startedAt = eventTimestamp(subResult.trace.events[0]);
+  const endedAt = eventTimestamp(subResult.trace.events.at(-1));
   const durationMs =
     startedAt && endedAt
       ? Math.max(0, Date.parse(endedAt) - Date.parse(startedAt))
@@ -1624,6 +1633,12 @@ function renderSubRunResult(childRunId: string, subResult: RunResult): string {
     `[sub-run ${childRunId}]: ${subResult.output}`,
     `[sub-run ${childRunId} stats]: turns=${turns} costUsd=${costUsd} durationMs=${durationMs}`
   ].join("\n");
+}
+
+function eventTimestamp(event: RunEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  if ("at" in event) return event.at;
+  return event.type === "model-response" ? event.completedAt : event.startedAt;
 }
 
 /**

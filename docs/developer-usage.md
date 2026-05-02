@@ -468,6 +468,221 @@ The `src/tests/result-contract.test.ts` and
 v0.3 trace fixture lives at `src/tests/fixtures/replay-trace-v0_3.json` and
 must round-trip through every published `replay()`.
 
+## OTEL Tracing
+
+Dogpile exposes a duck-typed tracer interface so callers can wire any
+OTEL-compatible tracer without forcing the SDK to depend on
+`@opentelemetry/*`. The runtime carries no OTEL dependency.
+
+### The Interface
+
+```ts
+import { DOGPILE_SPAN_NAMES } from "@dogpile/sdk/runtime/tracing";
+import type {
+  DogpileTracer,
+  DogpileSpan,
+  DogpileSpanOptions
+} from "@dogpile/sdk/runtime/tracing";
+```
+
+`DogpileTracer.startSpan(name, options?)` returns a `DogpileSpan` with three
+methods: `end()`, `setAttribute(key, value)`, and
+`setStatus(code, message?)` where `code` is `"ok"` or `"error"`.
+`DogpileSpanOptions` carries an optional `parent: DogpileSpan` for explicit
+context threading and an optional `attributes` record.
+
+### Span Hierarchy
+
+Dogpile emits four span types:
+
+- `dogpile.run` — the run span, opened for top-level and delegated child runs.
+- `dogpile.sub-run` — opened when a coordinator delegates to a child run;
+  nested under the parent's `dogpile.run` span.
+- `dogpile.agent-turn` — one span per agent turn, nested under the enclosing
+  `dogpile.run` or `dogpile.sub-run`.
+- `dogpile.model-call` — one span per provider call, nested under its
+  `dogpile.agent-turn`.
+
+### Bridging To `@opentelemetry/api`
+
+The real OTEL `Tracer.startSpan` does not accept a `parent` field on its
+options object; parent context is passed as the third `context` argument.
+`Span.setStatus` takes `{ code: SpanStatusCode, message? }`, not positional
+arguments. Because of these signature differences, callers wrap the OTEL tracer
+with a thin bridge before passing it to Dogpile:
+
+```ts
+import { context, SpanStatusCode, trace } from "@opentelemetry/api";
+import type { Span as OtelSpan } from "@opentelemetry/api";
+import { Dogpile } from "@dogpile/sdk";
+import type {
+  DogpileTracer,
+  DogpileSpan,
+  DogpileSpanOptions
+} from "@dogpile/sdk/runtime/tracing";
+
+const otelTracer = trace.getTracer("dogpile");
+const otelSpanFor = new WeakMap<DogpileSpan, OtelSpan>();
+
+function makeDogpileTracer(): DogpileTracer {
+  return {
+    startSpan(name: string, options?: DogpileSpanOptions): DogpileSpan {
+      const parentOtelSpan = options?.parent
+        ? otelSpanFor.get(options.parent)
+        : undefined;
+      const parentCtx = parentOtelSpan
+        ? trace.setSpan(context.active(), parentOtelSpan)
+        : context.active();
+      const span = otelTracer.startSpan(
+        name,
+        options?.attributes ? { attributes: options.attributes } : {},
+        parentCtx
+      );
+      const wrapper: DogpileSpan = {
+        end(): void {
+          span.end();
+        },
+        setAttribute(key, value): void {
+          span.setAttribute(key, value);
+        },
+        setStatus(code, message): void {
+          span.setStatus({
+            code: code === "ok" ? SpanStatusCode.OK : SpanStatusCode.ERROR,
+            ...(message ? { message } : {})
+          });
+        }
+      };
+      otelSpanFor.set(wrapper, span);
+      return wrapper;
+    }
+  };
+}
+
+const result = await Dogpile.pile({
+  intent: "Summarize the docs.",
+  model,
+  protocol: { kind: "sequential", maxTurns: 8 },
+  tracer: makeDogpileTracer()
+});
+```
+
+The `WeakMap<DogpileSpan, OtelSpan>` mapping is the linchpin: Dogpile passes
+its `DogpileSpan` wrapper through `options.parent` when starting nested spans,
+and the bridge resolves the wrapper back to the underlying OTEL span to
+construct the OTEL parent context.
+
+### Span Attributes
+
+`dogpile.run` spans carry: `dogpile.run.id`, `dogpile.run.protocol`,
+`dogpile.run.tier`, `dogpile.run.intent` (truncated to 200 chars),
+`dogpile.run.outcome` (`completed` / `budget-stopped` / `aborted`),
+`dogpile.run.cost_usd`, `dogpile.run.turn_count`,
+`dogpile.run.input_tokens`, `dogpile.run.output_tokens`, and
+`dogpile.run.termination_reason` for budget-stopped runs.
+
+Callers who treat the intent as sensitive can apply a span processor on their
+OTEL exporter to redact or strip the `dogpile.run.intent` attribute. The SDK
+does not redact; it truncates only.
+
+### Zero Overhead When Absent
+
+When `tracer` is not provided on `EngineOptions` / `DogpileOptions`, the SDK
+skips all span code paths. No span objects are allocated, and no OTEL imports
+are loaded from Dogpile runtime code.
+
+### `replay()` Is Tracing-Free
+
+`replay()` and `replayStream()` intentionally emit no spans, even when an
+engine has been configured with a `tracer`. Replaying historical events with
+current timestamps would surface as misleading spans in OTEL backends. This
+tracing-free behavior is deliberate. Attach
+the tracer to the original live run; the captured `RunResult.trace` already
+contains everything needed for offline analysis without span emission.
+
+## Metrics
+
+Supply a `metricsHook` on `EngineOptions` or `Dogpile.pile()` options to
+receive named counters at run and sub-run completion:
+
+```ts
+import { run } from "@dogpile/sdk";
+import type { MetricsHook } from "@dogpile/sdk/runtime/metrics";
+
+const metricsHook: MetricsHook = {
+  onRunComplete(snapshot) {
+    console.log("run complete", {
+      outcome: snapshot.outcome,         // "completed" | "budget-stopped" | "aborted"
+      inputTokens: snapshot.inputTokens, // own, excluding nested sub-runs
+      outputTokens: snapshot.outputTokens,
+      costUsd: snapshot.costUsd,
+      totalCostUsd: snapshot.totalCostUsd, // full subtree including sub-runs
+      turns: snapshot.turns,
+      durationMs: snapshot.durationMs
+    });
+  },
+  onSubRunComplete(snapshot) {
+    // Fires once per coordinator-dispatched child run.
+    console.log("sub-run complete", snapshot.outcome, snapshot.durationMs + "ms");
+  }
+};
+
+const result = await run({
+  intent: "...",
+  model: myProvider,
+  protocol: { kind: "sequential", maxTurns: 3 },
+  metricsHook
+});
+```
+
+### Behavior
+
+- **Zero overhead when absent.** No allocations occur if `metricsHook` is not
+  supplied.
+- **All terminal states.** `onRunComplete` fires for completed, budget-stopped,
+  and aborted runs. The `outcome` field distinguishes them.
+- **Sub-run granularity.** `onSubRunComplete` fires once per
+  coordinator-dispatched child run when it completes. It does not fire for
+  failed sub-runs.
+- **Own vs. total counters.** `inputTokens`, `outputTokens`, and `costUsd` are
+  own-only: direct tokens and cost for this run, excluding nested sub-runs.
+  `totalInputTokens`, `totalOutputTokens`, and `totalCostUsd` include the full
+  subtree, already rolled up from Phase 2.
+- **Async fire-and-forget.** Callbacks may return a `Promise`. The SDK attaches
+  `.catch` but does not await it, so hook latency never delays run completion.
+  Callers needing guaranteed delivery, such as a database flush, should handle
+  that inside their hook.
+- **Hook errors are isolated.** Throwing or rejecting hooks route the error to
+  `logger.error("dogpile:metricsHook threw", ...)` and never propagate into the
+  run result.
+- **Replay ignores metricsHook.** `replay()` and `replayStream()` do not fire
+  the metrics hook because historical counters from a replay would be
+  misleading.
+
+### Logger
+
+Supply a `logger` to route hook errors to your logging infrastructure instead
+of `console.error`:
+
+```ts
+import type { Logger } from "@dogpile/sdk/runtime/logger";
+
+const logger: Logger = {
+  debug: myLogger.debug.bind(myLogger),
+  info: myLogger.info.bind(myLogger),
+  warn: myLogger.warn.bind(myLogger),
+  error: myLogger.error.bind(myLogger)
+};
+
+const result = await run({
+  intent: "...",
+  model: myProvider,
+  logger
+});
+```
+
+The `logger` field also accepts future SDK-internal diagnostic messages in
+later releases without requiring another public-surface change.
+
 ## Error Handling
 
 Public failures use `DogpileError` with stable string codes.

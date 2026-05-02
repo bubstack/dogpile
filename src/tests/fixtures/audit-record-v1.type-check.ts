@@ -1,0 +1,24 @@
+import type { AuditRecord } from "../../runtime/audit.js";
+
+// Inline object mirrors audit-record-v1.json exactly.
+// Update this object whenever the fixture changes.
+// This file is never imported at runtime - it exists only for tsc --noEmit coverage.
+const _fixture = {
+  auditSchemaVersion: "1",
+  runId: "audit-record-fixture-run-id",
+  intent: "Test audit record shape",
+  startedAt: "2026-05-01T00:00:00.000Z",
+  completedAt: "2026-05-01T00:00:01.000Z",
+  protocol: "coordinator",
+  tier: "balanced",
+  modelProviderId: "audit-fixture-provider",
+  agentCount: 2,
+  turnCount: 3,
+  outcome: { status: "completed" },
+  cost: { usd: 0.0003, inputTokens: 21, outputTokens: 12 },
+  agents: [
+    { id: "agent-1", role: "planner", turnCount: 2 },
+    { id: "agent-2", role: "executor", turnCount: 1 }
+  ],
+  childRunIds: ["child-run-abc"]
+} satisfies AuditRecord;

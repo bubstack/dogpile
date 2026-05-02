@@ -74,11 +74,12 @@ describe("temperature zero stable ordering", () => {
       expect(result.trace.transcript).toEqual(result.transcript);
 
       expect(result.eventLog.eventTypes).toEqual(result.trace.events.map((event) => event.type));
+      const decisionEvents = protocolDecisionEventEntries(result.trace.events);
       expect(result.trace.protocolDecisions.map((decision) => decision.eventIndex)).toEqual(
-        result.trace.events.map((_, index) => index)
+        decisionEvents.map((entry) => entry.index)
       );
       expect(result.trace.protocolDecisions.map((decision) => decision.eventType)).toEqual(
-        result.trace.events.map((event) => event.type)
+        decisionEvents.map((entry) => entry.event.type)
       );
 
       const broadcastEvent = result.trace.events.find((event) => event.type === "broadcast");
@@ -205,7 +206,11 @@ describe("temperature zero stable ordering", () => {
 
       expect(replayed.output).toBe(original.output);
       expect(replayed.trace.finalOutput).toEqual(original.trace.finalOutput);
-      expect(replayed.eventLog).toEqual(original.eventLog);
+      expect(replayed.trace).toBe(persistedTrace);
+      expect(replayed.eventLog.eventTypes).toEqual(replayed.eventLog.events.map((event) => event.type));
+      expect(replayed.eventLog.eventTypes.filter(isModelProvenanceEventType)).toHaveLength(
+        persistedTrace.providerCalls.length * 2
+      );
       expect(replayed.transcript).toEqual(original.transcript);
 
       const streamed = replayStream(persistedTrace);
@@ -217,7 +222,7 @@ describe("temperature zero stable ordering", () => {
 
       expect(streamedEvents).toEqual(original.eventLog.events);
       expect(streamedResult.output).toBe(original.output);
-      expect(streamedResult.eventLog).toEqual(original.eventLog);
+      expect(streamedResult.eventLog).toEqual(replayed.eventLog);
       expect(streamedResult.transcript).toEqual(original.transcript);
     }
   );
@@ -237,6 +242,22 @@ function decisionAgentScope(decision: {
     decision.phase ?? "",
     decision.round?.toString() ?? ""
   ].join(":");
+}
+
+function protocolDecisionEventEntries(
+  events: readonly RunEvent[]
+): readonly { readonly event: RunEvent; readonly index: number }[] {
+  return events.flatMap((event, index) =>
+    isModelActivityEventType(event.type) ? [] : [{ event, index }]
+  );
+}
+
+function isModelActivityEventType(type: RunEvent["type"]): boolean {
+  return type === "model-request" || type === "model-response" || type === "model-output-chunk";
+}
+
+function isModelProvenanceEventType(type: RunEvent["type"]): boolean {
+  return type === "model-request" || type === "model-response";
 }
 
 function expectStableJsonArtifact(value: unknown): void {

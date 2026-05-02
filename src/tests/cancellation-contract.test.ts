@@ -681,6 +681,7 @@ describe("caller cancellation contract", () => {
     await resultRejection;
     await expect(eventsPromise).resolves.toMatchObject([
       { type: "role-assignment" },
+      { type: "model-request" },
       { type: "aborted", reason: "parent-aborted" },
       {
         type: "error",
@@ -747,6 +748,7 @@ describe("caller cancellation contract", () => {
       await resultRejection;
       await expect(eventsPromise).resolves.toMatchObject([
         { type: "role-assignment" },
+        { type: "model-request" },
         { type: "aborted", reason: "timeout" },
         {
           type: "error",
@@ -825,6 +827,7 @@ describe("caller cancellation contract", () => {
       await resultRejection;
       await expect(eventsPromise).resolves.toMatchObject([
         { type: "role-assignment" },
+        { type: "model-request" },
         { type: "aborted", reason: "parent-aborted" },
         {
           type: "error",
@@ -906,6 +909,7 @@ describe("caller cancellation contract", () => {
     await expect(eventsPromise).resolves.toMatchObject([
       { type: "role-assignment", agentId: "writer" },
       { type: "role-assignment", agentId: "critic" },
+      { type: "model-request", agentId: "writer" },
       { type: "aborted", reason: "parent-aborted" },
       {
         type: "error",
@@ -957,6 +961,10 @@ describe("caller cancellation contract", () => {
       value: { type: "role-assignment" }
     });
     const providerSignal = await fetchProbe.receivedSignal;
+    await expect(iterator.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: "model-request" }
+    });
     expect(providerSignal).toBeDefined();
     expect(providerSignal?.aborted).toBe(false);
     expect(fetchProbe.callCount()).toBe(1);
@@ -1065,6 +1073,7 @@ describe("caller cancellation contract", () => {
     await resultRejection;
     await expect(eventsPromise).resolves.toMatchObject([
       { type: "role-assignment" },
+      { type: "model-request" },
       { type: "aborted", reason: "parent-aborted" },
       {
         type: "error",
@@ -1078,8 +1087,18 @@ describe("caller cancellation contract", () => {
         }
       }
     ]);
-    expect((await eventsPromise).map((event) => event.type)).toEqual(["role-assignment", "aborted", "error"]);
-    expect(subscribedEvents.map((event) => event.type)).toEqual(["role-assignment", "aborted", "error"]);
+    expect((await eventsPromise).map((event) => event.type)).toEqual([
+      "role-assignment",
+      "model-request",
+      "aborted",
+      "error"
+    ]);
+    expect(subscribedEvents.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "model-request",
+      "aborted",
+      "error"
+    ]);
   });
 });
 

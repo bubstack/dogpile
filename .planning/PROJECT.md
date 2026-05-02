@@ -8,11 +8,22 @@ A strict, provider-neutral TypeScript SDK that runs one mission through a multi-
 
 Coordinated, observable, replayable multi-agent runs with a strict boundary: Dogpile owns the coordination loop; the application owns credentials, pricing, storage, queues, UI, and tool side effects.
 
-## Current Milestone: v0.4.0 Recursive Coordination
+## Current State
 
-**Goal:** Let a `coordinator` run dispatch whole sub-missions (`sequential`, `broadcast`, `shared`, or another `coordinator`) as first-class agent decisions, with traces, costs, cancellation, and concurrency that compose cleanly. Agent-driven nesting only — caller-defined trees (`Dogpile.nest`) are deferred.
+**Shipped version:** `@dogpile/sdk@0.5.0` on 2026-05-02.
 
-**Target features:**
+**Latest shipped milestone:** v0.5.0 Observability and Auditability.
+
+Dogpile now supports agent-driven recursive coordination (v0.4.0) and a full observability stack (v0.5.0). The v0.5.0 milestone delivered six new capabilities without adding required dependencies or breaking the pure-TS runtime contract:
+
+- **Provenance annotations** — `model-request`/`model-response` events carry `modelId`, `providerId`, `callId`, and ISO timestamps; `replay()` preserves provenance from provider calls; `@dogpile/sdk/runtime/provenance` helper.
+- **Typed event introspection** — `queryEvents(events, filter)` with AND-composable filters (type, agentId, turn range, cost range); overloads return discriminant-narrowed `RunEvent[]` subtypes; `@dogpile/sdk/runtime/introspection`.
+- **Health diagnostics** — required `RunResult.health: RunHealthSummary` on all result paths; deterministic replay parity; anomaly codes `runaway-turns`, `budget-near-miss`, `empty-contribution`, `provider-error-recovered`; `@dogpile/sdk/runtime/health`.
+- **Audit record schema** — `createAuditRecord(trace)` pure function producing `auditSchemaVersion: "1"` records; type-independent of `RunEvent`; frozen fixture guard; `@dogpile/sdk/runtime/audit`.
+- **OTEL tracing bridge** — duck-typed `tracer?: DogpileTracer` on `EngineOptions`; spans `dogpile.run`, `dogpile.sub-run`, `dogpile.agent-turn`, `dogpile.model-call`; sub-run span ancestry via `parentRunIds`; zero runtime OTEL deps; `@dogpile/sdk/runtime/tracing`.
+- **Metrics / counters** — `metricsHook?: MetricsHook` with `RunMetricsSnapshot` (tokens, cost, turns, duration) at root and sub-run completion; fire-and-forget isolation; metrics-free replay; `@dogpile/sdk/runtime/metrics`.
+
+**Validated v0.4.0 + v0.5.0 features:**
 - `delegate` decision on `coordinator` (no new protocol value)
 - Inline child traces; `replay()` replays embedded children
 - Budget / cancel / cost propagation parent → children
@@ -21,6 +32,13 @@ Coordinated, observable, replayable multi-agent runs with a strict boundary: Dog
 - Streaming demux via wrapped child `runId`
 - Child error escalation through coordinator decision context
 - Docs page, example, README row
+- Provenance annotations on model request/response events
+- Replay and replayStream provenance stability
+- Typed event introspection through `queryEvents(events, filter)`
+- Required `RunResult.health` summaries with deterministic replay parity
+- Independent audit records via `createAuditRecord()` with frozen fixture guard
+- Duck-typed OTEL tracing bridge with zero runtime OTEL deps
+- Named counter metrics hook with fire-and-forget isolation
 
 ## Requirements
 
@@ -45,19 +63,22 @@ Coordinated, observable, replayable multi-agent runs with a strict boundary: Dog
 - ✓ **`withRetry(provider, policy)`** — `@dogpile/sdk/runtime/retry`: opt-in transient-failure retry wrapper around any provider. Honors `error.detail.retryAfterMs`, short-circuits on `AbortSignal`, streaming forwarded unchanged. — v0.3.1
 - ✓ **Browser ESM bundle** — `@dogpile/sdk/browser` + package root `browser` condition, both resolve to `dist/browser/index.js`. — v0.1.0
 - ✓ **Paper-reproduction benchmark** — deterministic `pnpm run benchmark:baseline` harness over `benchmark-fixtures/`. — v0.2.0
+- ✓ **Recursive coordination via `delegate`** — coordinator agents can dispatch `sequential`, `broadcast`, `shared`, or nested `coordinator` child missions with inline traces and replay support. — v0.4.0
+- ✓ **Recursive budget, cancellation, and accounting** — parent abort/timeout ceilings propagate to children; costs and tokens roll up recursively. — v0.4.0
+- ✓ **Provider locality and bounded child concurrency** — `metadata.locality`, OpenAI-compatible locality detection, `maxConcurrentChildren`, queued events, and local-provider clamp. — v0.4.0
+- ✓ **Recursive streaming and child failure handling** — child stream events bubble with `parentRunIds`; coordinator decision context receives real child failures; unhandled terminal failures preserve child error identity. — v0.4.0
+- ✓ **Recursive coordination documentation and release artifacts** — concept docs, exhaustive reference, runnable example, README/examples links, changelog, GitHub Release, and npm package. — v0.4.0
+- ✓ **Model-call provenance annotations** — `model-request` / `model-response` events carry `modelId`, `providerId`, `callId`, and ISO timestamps; `replay()` / `replayStream()` preserve or synthesize provenance from provider calls. — Phase 6, v0.5.0
+- ✓ **Runtime provenance helper** — `@dogpile/sdk/runtime/provenance` exports `getProvenance()`, `ProvenanceRecord`, and `PartialProvenanceRecord`, backed by frozen shape fixtures and package export tests. — Phase 6, v0.5.0
+- ✓ **Structured event introspection** — `@dogpile/sdk/runtime/introspection` exports `queryEvents()` and `EventQueryFilter`; filters compose by event type, agent id, global turn range, and cost range while preserving discriminant narrowing. — Phase 7, v0.5.0
+- ✓ **Health diagnostics** — every `RunResult` includes required `health: RunHealthSummary`; `computeHealth()` is available through `@dogpile/sdk/runtime/health`, replay recomputes health deterministically, and anomaly shape is guarded by a frozen fixture. — Phase 7, v0.5.0
+- ✓ **Audit event schema** — `@dogpile/sdk/runtime/audit` exports `AuditRecord` and `createAuditRecord()`; schema version `"1"` is independent of `RunEvent` variants and guarded by a frozen fixture. — Phase 8, v0.5.0
+- ✓ **OTEL tracing bridge** — `DogpileOptions` and `EngineOptions` accept a duck-typed `tracer`; `@dogpile/sdk/runtime/tracing` exports the span contract; engine tracing emits run, sub-run, child-run, model-call, and agent-turn spans with no runtime OTEL dependency. — Phase 9, v0.5.0
+- ✓ **Metrics / counters** — `DogpileOptions` and `EngineOptions` accept an optional `metricsHook` and `logger`; `@dogpile/sdk/runtime/metrics` exports `MetricsHook` and `RunMetricsSnapshot`; engine metrics emit root and sub-run completion counters while preserving metrics-free replay and no-hook behavior. — Phase 10, v0.5.0
 
 ### Active
 
-<!-- Milestone v0.4.0: Recursive Coordination. See REQUIREMENTS.md for full REQ-IDs. -->
-
-- [x] `delegate` decision on `coordinator` — agent-driven nesting, four-protocol list unchanged — Validated in Phase 1
-- [x] Inline child traces with replay-embedded semantics — Validated in Phase 1
-- [x] Parent → children propagation: abort, timeout ceiling + remaining budget, cost roll-up; floors stay per-instance — Validated in Phase 2
-- [x] Bounded child concurrency (`maxConcurrentChildren`, default 4) — Validated in Phase 3
-- [x] Provider `locality` hint; auto-clamp to concurrency 1 when local detected — Validated in Phase 3
-- [x] Child events bubbled into parent stream (wrapped with child ancestry) — Validated in Phase 4
-- [x] Child error escalation through coordinator decision context — Validated in Phase 4
-- [ ] `docs/recursive-coordination.md` + `examples/` entry + README row
+None — v0.5.0 complete. Pending definition of v0.6.0 requirements via `/gsd-new-milestone`.
 
 ### Out of Scope
 
@@ -107,6 +128,15 @@ Coordinated, observable, replayable multi-agent runs with a strict boundary: Dog
 | Scoped npm name `@dogpile/sdk` only; no bare `dogpile` alias | Avoids name-squat ambiguity; npm Trusted Publisher under `bubstack` | ✓ Good |
 | `costUsd` driven by caller-supplied `costEstimator`; no bundled pricing | SDK avoids stale pricing tables; caller owns vendor pricing | ✓ Good |
 | Deterministic paper-reproduction benchmark without making a perf claim | Allows protocol-loop baseline comparisons without overpromising | ✓ Good |
+| `delegate` on `coordinator`, not a fifth protocol | Recursive behavior is naturally a coordinator concern and preserves the four-protocol invariant | ✓ Good (v0.4.0) |
+| Embedded child traces are the recursive replay unit | Keeps traces self-contained and lets replay avoid provider calls | ✓ Good (v0.4.0) |
+| `parentRunIds` is the stream ancestry shape | Supports nested demux without adding a flat, ambiguous `parentRunId` | ✓ Good (v0.4.0) |
+| Local providers clamp child concurrency to 1 | Protects local runtimes from unsafe fan-out while preserving remote parallelism | ✓ Good (v0.4.0) |
+| `RunResult.health` is required (not optional) | All construction paths compute health; replay produces byte-identical health from same trace; optional would cause silent gaps | ✓ Good (v0.5.0) |
+| `AuditRecord` is type-independent from `RunEvent` | Callers can reference audit records without importing event types; decouples audit schema from trace schema evolution | ✓ Good (v0.5.0) |
+| OTEL bridge uses duck-typed tracer + caller WeakMap | Preserves zero OTEL runtime deps; structural identity with real OTEL Tracer was not achievable given parent-context differences | ✓ Good (v0.5.0) |
+| `metricsHook` fires at root depth only; sub-runs via `onSubRunComplete` | Prevents double-counting of child costs in parent `onRunComplete` callback | ✓ Good (v0.5.0) |
+| Hook throws (metrics, logger) routed to logger.error | Errors in observer hooks never propagate into run result; observer semantics guaranteed | ✓ Good (v0.5.0) |
 
 ## Evolution
 
@@ -126,4 +156,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-01 after Phase 4 (Streaming & Child Error Escalation) verified.*
+*Last updated: 2026-05-02 after v0.5.0 milestone*

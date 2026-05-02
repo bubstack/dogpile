@@ -48,7 +48,7 @@ describe("performance baseline harness", () => {
     expect(artifact.measurements[0]).toMatchObject({
       name: "sequential-protocol-loop",
       iterations: 2,
-      eventsPerRun: 7,
+      eventsPerRun: 13,
       transcriptEntriesPerRun: 3
     });
     expect(artifact.measurements[0]?.totalMs).toBeGreaterThanOrEqual(0);

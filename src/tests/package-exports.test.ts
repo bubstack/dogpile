@@ -14,15 +14,29 @@ import {
   run as browserRun
 } from "@dogpile/sdk/browser";
 import { createOpenAICompatibleProvider as createOpenAICompatibleProviderSubpath } from "@dogpile/sdk/providers/openai-compatible";
+import { createAuditRecord, type AuditRecord } from "@dogpile/sdk/runtime/audit";
 import { createEngine } from "@dogpile/sdk/runtime/engine";
+import {
+  DEFAULT_HEALTH_THRESHOLDS,
+  computeHealth,
+  type HealthThresholds,
+  type RunHealthSummary
+} from "@dogpile/sdk/runtime/health";
+import { queryEvents, type EventQueryFilter } from "@dogpile/sdk/runtime/introspection";
+import { DOGPILE_SPAN_NAMES } from "@dogpile/sdk/runtime/tracing";
 import * as internalHelpers from "../internal.js";
 import type {
+  AnomalyCode,
   BroadcastProtocolConfig,
+  HealthAnomaly,
   JsonPrimitive,
   ProtocolConfig,
   RunEvent,
+  RunHealthSummary as RootRunHealthSummary,
   SequentialProtocolConfig
 } from "@dogpile/sdk";
+import type { MetricsHook, RunMetricsSnapshot } from "@dogpile/sdk/runtime/metrics";
+import type { DogpileSpan, DogpileSpanOptions, DogpileTracer } from "@dogpile/sdk/runtime/tracing";
 
 type ExportCondition = {
   readonly types: string;
@@ -1139,15 +1153,20 @@ describe("package exports", () => {
       "src/types/replay.ts",
       "src/browser/index.ts",
       "src/providers/openai-compatible.ts",
+      "src/runtime/audit.ts",
       "src/runtime/broadcast.ts",
       "src/runtime/cancellation.ts",
       "src/runtime/coordinator.ts",
       "src/runtime/decisions.ts",
       "src/runtime/defaults.ts",
       "src/runtime/engine.ts",
+      "src/runtime/health.ts",
       "src/runtime/ids.ts",
+      "src/runtime/introspection.ts",
       "src/runtime/logger.ts",
+      "src/runtime/metrics.ts",
       "src/runtime/model.ts",
+      "src/runtime/provenance.ts",
       "src/runtime/retry.ts",
       "src/runtime/sequential.ts",
       "src/runtime/shared.ts",
@@ -1155,6 +1174,7 @@ describe("package exports", () => {
       "src/runtime/tools.ts",
       "src/runtime/tools/built-in.ts",
       "src/runtime/tools/vercel-ai.ts",
+      "src/runtime/tracing.ts",
       "src/runtime/wrap-up.ts",
       "src/runtime/validation.ts",
       "README.md",
@@ -1265,6 +1285,11 @@ describe("package exports", () => {
         import: "./dist/types.js",
         default: "./dist/types.js"
       },
+      "./runtime/audit": {
+        types: "./dist/runtime/audit.d.ts",
+        import: "./dist/runtime/audit.js",
+        default: "./dist/runtime/audit.js"
+      },
       "./runtime/broadcast": {
         types: "./dist/runtime/broadcast.d.ts",
         import: "./dist/runtime/broadcast.js",
@@ -1285,10 +1310,35 @@ describe("package exports", () => {
         import: "./dist/runtime/engine.js",
         default: "./dist/runtime/engine.js"
       },
+      "./runtime/health": {
+        types: "./dist/runtime/health.d.ts",
+        import: "./dist/runtime/health.js",
+        default: "./dist/runtime/health.js"
+      },
+      "./runtime/introspection": {
+        types: "./dist/runtime/introspection.d.ts",
+        import: "./dist/runtime/introspection.js",
+        default: "./dist/runtime/introspection.js"
+      },
       "./runtime/model": {
         types: "./dist/runtime/model.d.ts",
         import: "./dist/runtime/model.js",
         default: "./dist/runtime/model.js"
+      },
+      "./runtime/provenance": {
+        types: "./dist/runtime/provenance.d.ts",
+        import: "./dist/runtime/provenance.js",
+        default: "./dist/runtime/provenance.js"
+      },
+      "./runtime/tracing": {
+        types: "./dist/runtime/tracing.d.ts",
+        import: "./dist/runtime/tracing.js",
+        default: "./dist/runtime/tracing.js"
+      },
+      "./runtime/metrics": {
+        types: "./dist/runtime/metrics.d.ts",
+        import: "./dist/runtime/metrics.js",
+        default: "./dist/runtime/metrics.js"
       },
       "./providers/openai-compatible": {
         types: "./dist/providers/openai-compatible.d.ts",
@@ -1470,8 +1520,75 @@ describe("package exports", () => {
     const broadcastProtocol: BroadcastProtocolConfig = { kind: "broadcast", maxRounds: 1 };
     const tracePrimitive: JsonPrimitive = "exports-smoke";
     const eventType: RunEvent["type"] = "final";
+    const eventQueryFilter: EventQueryFilter = { type: eventType };
+    const healthThresholds: HealthThresholds = DEFAULT_HEALTH_THRESHOLDS;
+    const anomalyCode: AnomalyCode = "empty-contribution";
+    const healthAnomaly: HealthAnomaly = {
+      code: anomalyCode,
+      severity: "error",
+      value: 0,
+      threshold: 0,
+      agentId: "agent-a"
+    };
+    const healthSummary: RunHealthSummary = {
+      anomalies: [healthAnomaly],
+      stats: {
+        totalTurns: 0,
+        agentCount: 0,
+        budgetUtilizationPct: null
+      }
+    };
+    const rootHealthSummary: RootRunHealthSummary = healthSummary;
+    const queriedEvents = queryEvents([], eventQueryFilter);
+    const dogpileSpan: DogpileSpan = {
+      end(): void {},
+      setAttribute(_key: string, _value: string | number | boolean): void {},
+      setStatus(_code: "ok" | "error", _message?: string): void {}
+    };
+    const dogpileSpanOptions: DogpileSpanOptions = {
+      parent: dogpileSpan,
+      attributes: { a: "x", b: 1, c: true }
+    };
+    const dogpileTracer: DogpileTracer = {
+      startSpan(_name: string, _options?: DogpileSpanOptions): DogpileSpan {
+        return dogpileSpan;
+      }
+    };
+    const metricsSnapshot: RunMetricsSnapshot = {
+      outcome: "completed",
+      inputTokens: 10,
+      outputTokens: 5,
+      costUsd: 0.001,
+      totalInputTokens: 10,
+      totalOutputTokens: 5,
+      totalCostUsd: 0.001,
+      turns: 2,
+      durationMs: 1500
+    };
+    const metricsHook: MetricsHook = {
+      onRunComplete(_s: RunMetricsSnapshot): void {}
+    };
+    const auditRecord = createAuditRecord({
+      runId: "package-export-audit",
+      protocol: "sequential",
+      tier: "balanced",
+      modelProviderId: "package-export-provider",
+      inputs: { intent: "package export audit smoke" },
+      events: [],
+      finalOutput: {
+        kind: "replay-trace-final-output",
+        output: "",
+        cost: { usd: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        completedAt: "2026-05-01T00:00:00.000Z",
+        transcript: { kind: "trace-transcript", entryCount: 0, lastEntryIndex: null }
+      }
+    } as unknown as Parameters<typeof createAuditRecord>[0]);
+    const typedAuditRecord: AuditRecord = auditRecord;
 
     expect(typeof createEngine).toBe("function");
+    expect(typeof createAuditRecord).toBe("function");
+    expect(typeof computeHealth).toBe("function");
+    expect(typeof queryEvents).toBe("function");
     expect(typeof createOpenAICompatibleProvider).toBe("function");
     expect(createOpenAICompatibleProviderSubpath).toBe(createOpenAICompatibleProvider);
     expect(typeof BrowserDogpile.pile).toBe("function");
@@ -1482,5 +1599,17 @@ describe("package exports", () => {
     expect(broadcastProtocol.kind).toBe("broadcast");
     expect(tracePrimitive).toBe("exports-smoke");
     expect(eventType).toBe("final");
+    expect(queriedEvents).toEqual([]);
+    expect(healthThresholds).toEqual({});
+    expect(rootHealthSummary.anomalies[0]?.code).toBe("empty-contribution");
+    expect(DOGPILE_SPAN_NAMES.RUN).toBe("dogpile.run");
+    expect(DOGPILE_SPAN_NAMES.SUB_RUN).toBe("dogpile.sub-run");
+    expect(DOGPILE_SPAN_NAMES.AGENT_TURN).toBe("dogpile.agent-turn");
+    expect(DOGPILE_SPAN_NAMES.MODEL_CALL).toBe("dogpile.model-call");
+    expect(typeof dogpileSpanOptions.attributes).toBe("object");
+    expect(dogpileTracer.startSpan("test")).toBe(dogpileSpan);
+    expect(metricsSnapshot.outcome).toBe("completed");
+    expect(typeof metricsHook.onRunComplete).toBe("function");
+    expect(typedAuditRecord.auditSchemaVersion).toBe("1");
   });
 });

@@ -1,7 +1,9 @@
 import { DogpileError } from "../types.js";
 import type {
   AbortedEvent,
+  BudgetStopEvent,
   BudgetTier,
+  CostSummary,
   DogpileErrorCode,
   DogpileOptions,
   Engine,
@@ -9,11 +11,13 @@ import type {
   FinalEvent,
   JsonObject,
   JsonValue,
+  ModelRequestEvent,
   ProtocolSelection,
   RunCallOptions,
   RunEvaluation,
   RunEvent,
   RunResult,
+  ReplayTraceProviderCall,
   SubRunFailedEvent,
   StreamErrorEvent,
   StreamEvent,
@@ -25,6 +29,7 @@ import type {
 import { runBroadcast } from "./broadcast.js";
 import { runCoordinator, type AbortDrainFn } from "./coordinator.js";
 import {
+  addCost,
   createReplayTraceFinalOutput,
   createReplayTraceBudgetStateChanges,
   canonicalizeRunResult,
@@ -34,12 +39,14 @@ import {
   createRunMetadata,
   createRunUsage,
   defaultAgents,
+  emptyCost,
   normalizeProtocol,
   orderAgentsForTemperature,
   recomputeAccountingFromTrace,
   resolveOnChildFailure,
   tierTemperature
 } from "./defaults.js";
+import { computeHealth, DEFAULT_HEALTH_THRESHOLDS } from "./health.js";
 import { runSequential } from "./sequential.js";
 import { runShared } from "./shared.js";
 import {
@@ -56,6 +63,9 @@ import {
   validateProviderLocality,
   validateRunCallOptions
 } from "./validation.js";
+import { DOGPILE_SPAN_NAMES, type DogpileSpan, type DogpileTracer } from "./tracing.js";
+import type { Logger } from "./logger.js";
+import type { MetricsHook, RunMetricsSnapshot } from "./metrics.js";
 
 const DEFAULT_MAX_DEPTH = 4;
 const DEFAULT_MAX_CONCURRENT_CHILDREN = 4;
@@ -130,6 +140,9 @@ export function createEngine(options: EngineOptions): Engine {
         ...(terminate ? { terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
         ...(options.evaluate ? { evaluate: options.evaluate } : {}),
+        ...(options.tracer ? { tracer: options.tracer } : {}),
+        ...(options.metricsHook ? { metricsHook: options.metricsHook } : {}),
+        ...(options.logger ? { logger: options.logger } : {}),
         currentDepth: 0,
         effectiveMaxDepth,
         effectiveMaxConcurrentChildren,
@@ -258,6 +271,9 @@ export function createEngine(options: EngineOptions): Engine {
             ...(options.defaultSubRunTimeoutMs !== undefined
               ? { defaultSubRunTimeoutMs: options.defaultSubRunTimeoutMs }
               : {}),
+            ...(options.tracer ? { tracer: options.tracer } : {}),
+            ...(options.metricsHook ? { metricsHook: options.metricsHook } : {}),
+            ...(options.logger ? { logger: options.logger } : {}),
             streamEvents: true,
             emit(event: RunEvent): void {
               if (status !== "running") {
@@ -682,9 +698,488 @@ interface RunProtocolOptions {
   readonly defaultSubRunTimeoutMs?: number;
   readonly registerAbortDrain?: (drain: AbortDrainFn) => void;
   readonly failureInstancesByChildRunId?: Map<string, DogpileError>;
+  readonly tracer?: EngineOptions["tracer"];
+  readonly metricsHook?: EngineOptions["metricsHook"];
+  readonly logger?: EngineOptions["logger"];
+  /**
+   * Optional parent span for the next runProtocol invocation. Threaded by the
+   * coordinator when dispatching child runs so that the child's `dogpile.run`
+   * span is correctly nested under its parent's `dogpile.sub-run` span.
+   * Internal-only; not part of the public surface.
+   */
+  readonly parentSpan?: DogpileSpan;
+  /**
+   * Per-child sub-run span lookup, keyed by childRunId. Populated by the
+   * parent's emit closure on `sub-run-started`. The coordinator dispatcher
+   * reads this to thread the correct per-child span as parent for the
+   * recursive runProtocol call. Internal-only.
+   */
+  readonly subRunSpansByChildId?: ReadonlyMap<string, DogpileSpan>;
 }
 
 type NonStreamingProtocolOptions = Omit<RunProtocolOptions, "emit"> & Pick<EngineOptions, "evaluate">;
+
+interface TracingState {
+  readonly tracer: DogpileTracer;
+  readonly runSpan: DogpileSpan;
+  readonly subRunSpans: Map<string, DogpileSpan>;
+  readonly agentTurnSpans: Map<string, DogpileSpan>;
+  readonly modelCallSpans: Map<string, DogpileSpan>;
+  readonly pendingModelRequests: Map<string, ModelRequestEvent>;
+  readonly agentTurnCounters: Map<string, number>;
+  readonly turnAccumByAgent: Map<string, TurnAccum>;
+  readonly agentIds: Set<string>;
+  runId?: string;
+  turnCount: number;
+  lastCost: CostSummary;
+}
+
+interface TurnAccum {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+function openRunTracing(options: {
+  readonly tracer?: DogpileTracer;
+  readonly parentSpan?: DogpileSpan;
+  readonly intent: string;
+  readonly protocolKind: string;
+  readonly tier: unknown;
+}): TracingState | undefined {
+  if (!options.tracer) {
+    return undefined;
+  }
+
+  const runSpan = options.tracer.startSpan(DOGPILE_SPAN_NAMES.RUN, {
+    ...(options.parentSpan ? { parent: options.parentSpan } : {}),
+    attributes: {
+      "dogpile.run.protocol": options.protocolKind,
+      "dogpile.run.tier": String(options.tier),
+      "dogpile.run.intent": options.intent.slice(0, 200)
+    }
+  });
+
+  return {
+    tracer: options.tracer,
+    runSpan,
+    subRunSpans: new Map(),
+    agentTurnSpans: new Map(),
+    modelCallSpans: new Map(),
+    pendingModelRequests: new Map(),
+    agentTurnCounters: new Map(),
+    turnAccumByAgent: new Map(),
+    agentIds: new Set(),
+    turnCount: 0,
+    lastCost: emptyCost()
+  };
+}
+
+interface MetricsState {
+  readonly metricsHook: MetricsHook;
+  readonly logger: Logger | undefined;
+  readonly startedAtMs: number;
+  readonly subRunStartTimes: Map<string, number>;
+  totalCost: CostSummary;
+  nestedCost: CostSummary;
+  turns: number;
+}
+
+function openRunMetrics(options: {
+  readonly metricsHook?: MetricsHook;
+  readonly logger?: Logger;
+}): MetricsState | undefined {
+  if (!options.metricsHook) {
+    return undefined;
+  }
+
+  return {
+    metricsHook: options.metricsHook,
+    logger: options.logger,
+    startedAtMs: Date.now(),
+    subRunStartTimes: new Map(),
+    totalCost: emptyCost(),
+    nestedCost: emptyCost(),
+    turns: 0
+  };
+}
+
+function routeMetricsError(err: unknown, logger: Logger | undefined): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  try {
+    if (logger !== undefined) {
+      logger.error("dogpile:metricsHook threw", { error: msg });
+    } else {
+      console.error("dogpile:metricsHook threw", { error: msg });
+    }
+  } catch {
+    // A logger that throws from error() cannot be helped.
+  }
+}
+
+function fireHook(
+  callback: ((snapshot: RunMetricsSnapshot) => void | Promise<void>) | undefined,
+  snapshot: RunMetricsSnapshot,
+  logger: Logger | undefined
+): void {
+  if (!callback) {
+    return;
+  }
+
+  try {
+    const result = callback(snapshot);
+    if (result && typeof (result as Promise<void>).catch === "function") {
+      (result as Promise<void>).catch((err: unknown) => {
+        routeMetricsError(err, logger);
+      });
+    }
+  } catch (err: unknown) {
+    routeMetricsError(err, logger);
+  }
+}
+
+function buildRunSnapshot(
+  result: RunResult,
+  startedAtMs: number
+): RunMetricsSnapshot {
+  const nestedCosts = nestedSubRunCosts(result);
+  const budgetStopEvent = result.trace.events.find((event): event is BudgetStopEvent => event.type === "budget-stop");
+  const outcome: RunMetricsSnapshot["outcome"] = budgetStopEvent !== undefined ? "budget-stopped" : "completed";
+  const totalInputTokens = result.cost.inputTokens;
+  const totalOutputTokens = result.cost.outputTokens;
+  const totalCostUsd = result.cost.usd;
+  const ownInputTokens =
+    totalInputTokens - nestedCosts.reduce((sum, cost) => sum + cost.inputTokens, 0);
+  const ownOutputTokens =
+    totalOutputTokens - nestedCosts.reduce((sum, cost) => sum + cost.outputTokens, 0);
+  const ownCostUsd =
+    totalCostUsd - nestedCosts.reduce((sum, cost) => sum + cost.usd, 0);
+  const turns = result.trace.events.filter((event) => event.type === "agent-turn").length;
+
+  return {
+    outcome,
+    inputTokens: ownInputTokens,
+    outputTokens: ownOutputTokens,
+    costUsd: ownCostUsd,
+    totalInputTokens,
+    totalOutputTokens,
+    totalCostUsd,
+    turns,
+    durationMs: Date.now() - startedAtMs
+  };
+}
+
+function buildSubRunSnapshot(
+  subResult: RunResult,
+  durationMs: number
+): RunMetricsSnapshot {
+  const nestedCosts = nestedSubRunCosts(subResult);
+  const budgetStopEvent = subResult.trace.events.find((event): event is BudgetStopEvent => event.type === "budget-stop");
+  const outcome: RunMetricsSnapshot["outcome"] = budgetStopEvent !== undefined ? "budget-stopped" : "completed";
+  const totalInputTokens = subResult.cost.inputTokens;
+  const totalOutputTokens = subResult.cost.outputTokens;
+  const totalCostUsd = subResult.cost.usd;
+  const ownInputTokens =
+    totalInputTokens - nestedCosts.reduce((sum, cost) => sum + cost.inputTokens, 0);
+  const ownOutputTokens =
+    totalOutputTokens - nestedCosts.reduce((sum, cost) => sum + cost.outputTokens, 0);
+  const ownCostUsd =
+    totalCostUsd - nestedCosts.reduce((sum, cost) => sum + cost.usd, 0);
+  const turns = subResult.trace.events.filter((event) => event.type === "agent-turn").length;
+
+  return {
+    outcome,
+    inputTokens: ownInputTokens,
+    outputTokens: ownOutputTokens,
+    costUsd: ownCostUsd,
+    totalInputTokens,
+    totalOutputTokens,
+    totalCostUsd,
+    turns,
+    durationMs
+  };
+}
+
+function nestedSubRunCosts(result: RunResult): CostSummary[] {
+  return result.trace.events.flatMap((event) => {
+    if (event.type === "sub-run-completed") {
+      return [event.subResult.cost];
+    }
+    if (event.type === "sub-run-failed") {
+      return [event.partialCost];
+    }
+    return [];
+  });
+}
+
+function subtractCost(total: CostSummary, nested: CostSummary): CostSummary {
+  return {
+    usd: total.usd - nested.usd,
+    inputTokens: total.inputTokens - nested.inputTokens,
+    outputTokens: total.outputTokens - nested.outputTokens,
+    totalTokens: total.totalTokens - nested.totalTokens
+  };
+}
+
+function handleMetricsEvent(state: MetricsState, event: RunEvent): void {
+  const parentRunIds = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
+  if (parentRunIds !== undefined) {
+    return;
+  }
+
+  switch (event.type) {
+    case "agent-turn": {
+      state.totalCost = event.cost;
+      state.turns += 1;
+      break;
+    }
+    case "broadcast":
+    case "budget-stop":
+    case "final": {
+      state.totalCost = event.cost;
+      break;
+    }
+    case "sub-run-started": {
+      state.subRunStartTimes.set(event.childRunId, Date.now());
+      break;
+    }
+    case "sub-run-completed": {
+      state.totalCost = addCost(state.totalCost, event.subResult.cost);
+      state.nestedCost = addCost(state.nestedCost, event.subResult.cost);
+      const startMs = state.subRunStartTimes.get(event.childRunId);
+      const durationMs = startMs !== undefined ? Date.now() - startMs : 0;
+      state.subRunStartTimes.delete(event.childRunId);
+      const snapshot = buildSubRunSnapshot(event.subResult, durationMs);
+      fireHook(state.metricsHook.onSubRunComplete, snapshot, state.logger);
+      break;
+    }
+    case "sub-run-failed": {
+      state.totalCost = addCost(state.totalCost, event.partialCost);
+      state.nestedCost = addCost(state.nestedCost, event.partialCost);
+      state.subRunStartTimes.delete(event.childRunId);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function closeRunMetrics(state: MetricsState, result: RunResult | undefined): void {
+  if (result !== undefined) {
+    const snapshot = buildRunSnapshot(result, state.startedAtMs);
+    fireHook(state.metricsHook.onRunComplete, snapshot, state.logger);
+    return;
+  }
+
+  const ownCost = subtractCost(state.totalCost, state.nestedCost);
+  const snapshot: RunMetricsSnapshot = {
+    outcome: "aborted",
+    inputTokens: ownCost.inputTokens,
+    outputTokens: ownCost.outputTokens,
+    costUsd: ownCost.usd,
+    totalInputTokens: state.totalCost.inputTokens,
+    totalOutputTokens: state.totalCost.outputTokens,
+    totalCostUsd: state.totalCost.usd,
+    turns: state.turns,
+    durationMs: Date.now() - state.startedAtMs
+  };
+  fireHook(state.metricsHook.onRunComplete, snapshot, state.logger);
+}
+
+function handleTracingEvent(state: TracingState, event: RunEvent): void {
+  const parentRunIds = (event as { readonly parentRunIds?: readonly string[] }).parentRunIds;
+  if (parentRunIds !== undefined) {
+    return;
+  }
+
+  if (state.runId === undefined) {
+    state.runId = event.runId;
+    state.runSpan.setAttribute("dogpile.run.id", event.runId);
+  }
+
+  switch (event.type) {
+    case "model-request": {
+      state.pendingModelRequests.set(event.callId, event);
+      state.agentIds.add(event.agentId);
+
+      if (!state.agentTurnSpans.has(event.agentId)) {
+        const turnNumber = (state.agentTurnCounters.get(event.agentId) ?? 0) + 1;
+        state.agentTurnCounters.set(event.agentId, turnNumber);
+        const turnParent = state.subRunSpans.get(event.runId) ?? state.runSpan;
+        const turnSpan = state.tracer.startSpan(DOGPILE_SPAN_NAMES.AGENT_TURN, {
+          parent: turnParent,
+          attributes: {
+            "dogpile.agent.id": event.agentId,
+            "dogpile.agent.role": event.role,
+            "dogpile.turn.number": turnNumber,
+            "dogpile.model.id": event.modelId
+          }
+        });
+        state.agentTurnSpans.set(event.agentId, turnSpan);
+      }
+
+      const callParent =
+        state.agentTurnSpans.get(event.agentId) ??
+        state.subRunSpans.get(event.runId) ??
+        state.runSpan;
+      const callSpan = state.tracer.startSpan(DOGPILE_SPAN_NAMES.MODEL_CALL, {
+        parent: callParent,
+        attributes: {
+          "dogpile.model.id": event.modelId,
+          "dogpile.call.id": event.callId,
+          "dogpile.provider.id": event.providerId
+        }
+      });
+      state.modelCallSpans.set(event.callId, callSpan);
+      break;
+    }
+    case "model-response": {
+      const span = state.modelCallSpans.get(event.callId);
+      if (span) {
+        const inputTokens = event.response.usage?.inputTokens ?? 0;
+        const outputTokens = event.response.usage?.outputTokens ?? 0;
+        const responseCost: CostSummary = {
+          usd: event.response.costUsd ?? 0,
+          inputTokens,
+          outputTokens,
+          totalTokens: event.response.usage?.totalTokens ?? inputTokens + outputTokens
+        };
+        span.setAttribute("dogpile.model.input_tokens", inputTokens);
+        span.setAttribute("dogpile.model.output_tokens", outputTokens);
+        if (event.response.costUsd !== undefined) {
+          span.setAttribute("dogpile.model.cost_usd", event.response.costUsd);
+        }
+        span.setStatus("ok");
+        span.end();
+        state.modelCallSpans.delete(event.callId);
+        const accum = state.turnAccumByAgent.get(event.agentId) ?? {
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0
+        };
+        accum.inputTokens += inputTokens;
+        accum.outputTokens += outputTokens;
+        accum.costUsd += responseCost.usd;
+        state.turnAccumByAgent.set(event.agentId, accum);
+        state.lastCost = addCost(state.lastCost, responseCost);
+      }
+      state.pendingModelRequests.delete(event.callId);
+      break;
+    }
+    case "agent-turn": {
+      state.agentIds.add(event.agentId);
+      state.turnCount += 1;
+      state.lastCost = event.cost;
+      const turnSpan = state.agentTurnSpans.get(event.agentId);
+      if (turnSpan) {
+        turnSpan.setAttribute("dogpile.agent.role", event.role);
+        const accum = state.turnAccumByAgent.get(event.agentId);
+        turnSpan.setAttribute("dogpile.turn.cost_usd", accum?.costUsd ?? 0);
+        turnSpan.setAttribute("dogpile.turn.input_tokens", accum?.inputTokens ?? 0);
+        turnSpan.setAttribute("dogpile.turn.output_tokens", accum?.outputTokens ?? 0);
+        turnSpan.setStatus("ok");
+        turnSpan.end();
+        state.agentTurnSpans.delete(event.agentId);
+      }
+      state.turnAccumByAgent.delete(event.agentId);
+      break;
+    }
+    case "broadcast":
+    case "budget-stop":
+    case "final": {
+      state.lastCost = event.cost;
+      break;
+    }
+    case "sub-run-started": {
+      const span = state.tracer.startSpan(DOGPILE_SPAN_NAMES.SUB_RUN, {
+        parent: state.runSpan,
+        attributes: {
+          "dogpile.sub_run.child_run_id": event.childRunId,
+          "dogpile.sub_run.parent_run_id": event.parentRunId,
+          "dogpile.sub_run.depth": event.depth
+        }
+      });
+      state.subRunSpans.set(event.childRunId, span);
+      break;
+    }
+    case "sub-run-completed": {
+      const span = state.subRunSpans.get(event.childRunId);
+      if (span) {
+        span.setStatus("ok");
+        span.end();
+        state.subRunSpans.delete(event.childRunId);
+      }
+      break;
+    }
+    case "sub-run-failed": {
+      const span = state.subRunSpans.get(event.childRunId);
+      if (span) {
+        span.setStatus("error", event.error.message);
+        span.end();
+        state.subRunSpans.delete(event.childRunId);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function closeRunTracing(state: TracingState, result: RunResult | undefined, error?: unknown): void {
+  if (error !== undefined) {
+    if (state.runId !== undefined) {
+      state.runSpan.setAttribute("dogpile.run.id", state.runId);
+    }
+    state.runSpan.setAttribute("dogpile.run.agent_count", state.agentIds.size);
+    state.runSpan.setAttribute("dogpile.run.turn_count", state.turnCount);
+    state.runSpan.setAttribute("dogpile.run.cost_usd", state.lastCost.usd);
+    state.runSpan.setAttribute("dogpile.run.input_tokens", state.lastCost.inputTokens);
+    state.runSpan.setAttribute("dogpile.run.output_tokens", state.lastCost.outputTokens);
+    state.runSpan.setAttribute("dogpile.run.outcome", "aborted");
+    state.runSpan.setStatus("error", error instanceof Error ? error.message : String(error));
+    closeOpenTracingSpans(state);
+    state.runSpan.end();
+    return;
+  }
+
+  if (result === undefined) {
+    closeOpenTracingSpans(state);
+    state.runSpan.end();
+    return;
+  }
+
+  const budgetStopEvent = result.trace.events.find((event): event is BudgetStopEvent => event.type === "budget-stop");
+  const terminationReason = budgetStopEvent?.reason;
+  const outcome = terminationReason !== undefined ? "budget-stopped" : "completed";
+  state.runSpan.setAttribute("dogpile.run.id", result.trace.runId);
+  state.runSpan.setAttribute("dogpile.run.agent_count", result.trace.agentsUsed.length);
+  state.runSpan.setAttribute("dogpile.run.turn_count", result.trace.events.filter((event) => event.type === "agent-turn").length);
+  state.runSpan.setAttribute("dogpile.run.cost_usd", result.cost.usd);
+  state.runSpan.setAttribute("dogpile.run.input_tokens", result.cost.inputTokens);
+  state.runSpan.setAttribute("dogpile.run.output_tokens", result.cost.outputTokens);
+  state.runSpan.setAttribute("dogpile.run.outcome", outcome);
+  if (terminationReason !== undefined) {
+    state.runSpan.setAttribute("dogpile.run.termination_reason", terminationReason);
+  }
+  state.runSpan.setStatus("ok");
+  closeOpenTracingSpans(state);
+  state.runSpan.end();
+}
+
+function closeOpenTracingSpans(state: TracingState): void {
+  for (const span of state.modelCallSpans.values()) {
+    span.end();
+  }
+  state.modelCallSpans.clear();
+  for (const span of state.agentTurnSpans.values()) {
+    span.end();
+  }
+  state.agentTurnSpans.clear();
+  for (const span of state.subRunSpans.values()) {
+    span.end();
+  }
+  state.subRunSpans.clear();
+}
 
 async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Promise<RunResult> {
   const failureInstancesByChildRunId = new Map<string, DogpileError>();
@@ -728,7 +1223,8 @@ async function runNonStreamingProtocol(options: NonStreamingProtocolOptions): Pr
         events
       }),
       eventLog: createRunEventLog(trace.runId, trace.protocol, events),
-      trace
+      trace,
+      health: computeHealth(trace, DEFAULT_HEALTH_THRESHOLDS)
     };
     const terminalThrow = resolveRuntimeTerminalThrow(runResult.trace, failureInstancesByChildRunId);
     if (terminalThrow) {
@@ -781,7 +1277,61 @@ function finalEventWithEvaluation(event: FinalEvent, evaluation: RunEvaluation):
   };
 }
 
-function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
+async function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
+  const tracing = openRunTracing({
+    ...(options.tracer ? { tracer: options.tracer } : {}),
+    ...(options.parentSpan ? { parentSpan: options.parentSpan } : {}),
+    intent: options.intent,
+    protocolKind: options.protocol.kind,
+    tier: options.tier
+  });
+  const metrics = openRunMetrics({
+    ...(options.metricsHook ? { metricsHook: options.metricsHook } : {}),
+    ...(options.logger ? { logger: options.logger } : {})
+  });
+  const emitForProtocol =
+    tracing || metrics || options.emit
+      ? (event: RunEvent): void => {
+        if (tracing) {
+          handleTracingEvent(tracing, event);
+        }
+        if (metrics) {
+          handleMetricsEvent(metrics, event);
+        }
+        options.emit?.(event);
+      }
+      : undefined;
+  const protocolOptions = tracing
+    ? {
+      ...options,
+      subRunSpansByChildId: tracing.subRunSpans
+    }
+    : options;
+
+  try {
+    const result = await runProtocolInner(protocolOptions, emitForProtocol);
+    if (tracing) {
+      closeRunTracing(tracing, result);
+    }
+    if (metrics && (options.currentDepth === 0 || options.currentDepth === undefined)) {
+      closeRunMetrics(metrics, result);
+    }
+    return result;
+  } catch (error) {
+    if (tracing) {
+      closeRunTracing(tracing, undefined, error);
+    }
+    if (metrics && (options.currentDepth === 0 || options.currentDepth === undefined)) {
+      closeRunMetrics(metrics, undefined);
+    }
+    throw error;
+  }
+}
+
+function runProtocolInner(
+  options: RunProtocolOptions,
+  emitForProtocol?: (event: RunEvent) => void
+): Promise<RunResult> {
   switch (options.protocol.kind) {
     case "sequential":
       return runSequential({
@@ -797,7 +1347,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
-        ...(options.emit ? { emit: options.emit } : {})
+        ...(emitForProtocol ? { emit: emitForProtocol } : {})
       });
     case "broadcast":
       return runBroadcast({
@@ -813,7 +1363,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
-        ...(options.emit ? { emit: options.emit } : {})
+        ...(emitForProtocol ? { emit: emitForProtocol } : {})
       });
     case "coordinator":
       return runCoordinator({
@@ -829,7 +1379,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
-        ...(options.emit ? { emit: options.emit } : {}),
+        ...(emitForProtocol ? { emit: emitForProtocol } : {}),
         ...(options.streamEvents !== undefined ? { streamEvents: options.streamEvents } : {}),
         currentDepth: options.currentDepth ?? 0,
         effectiveMaxDepth: options.effectiveMaxDepth ?? Infinity,
@@ -843,11 +1393,17 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.failureInstancesByChildRunId !== undefined
           ? { failureInstancesByChildRunId: options.failureInstancesByChildRunId }
           : {}),
-        runProtocol: (childInput) =>
-          runProtocol({
-            ...childInput,
-            protocol: normalizeProtocol(childInput.protocol)
-          })
+        runProtocol: (childInput) => {
+          const { runId: childRunId, ...childProtocolInput } = childInput;
+          const childParent = options.subRunSpansByChildId?.get(childRunId) ?? options.parentSpan;
+          return runProtocol({
+            ...childProtocolInput,
+            protocol: normalizeProtocol(childProtocolInput.protocol),
+            ...(options.tracer ? { tracer: options.tracer } : {}),
+            ...(childParent ? { parentSpan: childParent } : {}),
+            ...(options.logger ? { logger: options.logger } : {})
+          });
+        }
       });
     case "shared":
       return runShared({
@@ -863,7 +1419,7 @@ function runProtocol(options: RunProtocolOptions): Promise<RunResult> {
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
         ...(options.terminate ? { terminate: options.terminate } : {}),
         ...(options.wrapUpHint ? { wrapUpHint: options.wrapUpHint } : {}),
-        ...(options.emit ? { emit: options.emit } : {})
+        ...(emitForProtocol ? { emit: emitForProtocol } : {})
       });
   }
 }
@@ -916,7 +1472,14 @@ export function stream(options: DogpileOptions): StreamHandle {
  * the ergonomic {@link RunResult} wrapper from the JSON-serializable
  * {@link Trace} returned by a previous `run()`, `stream()`, or
  * `Dogpile.pile()` call.
+ *
+ * Tracing and metrics: replay is intentionally tracing-free and metrics-free.
+ * Even when an engine instance has been configured with a `tracer` or
+ * `metricsHook` on its `EngineOptions`, calling this function emits no spans
+ * or callbacks — replaying historical events with current timestamps would
+ * confuse observability backends. See `docs/developer-usage.md`.
  */
+// Tracing/metrics-free: replay never uses EngineOptions tracer or metricsHook.
 export function replay(trace: Trace): RunResult {
   const cost = trace.finalOutput.cost;
   const lastEvent = trace.events.at(-1);
@@ -931,7 +1494,11 @@ export function replay(trace: Trace): RunResult {
   }
   const baseResult = {
     output: trace.finalOutput.output,
-    eventLog: createRunEventLog(trace.runId, trace.protocol, trace.events),
+    eventLog: createRunEventLog(
+      trace.runId,
+      trace.protocol,
+      synthesizeProviderEvents(trace, trace.providerCalls)
+    ),
     trace,
     transcript: trace.transcript,
     usage: createRunUsage(cost),
@@ -944,7 +1511,8 @@ export function replay(trace: Trace): RunResult {
       events: trace.events
     }),
     accounting,
-    cost
+    cost,
+    health: computeHealth(trace, DEFAULT_HEALTH_THRESHOLDS)
   };
 
   if (lastEvent?.type !== "final") {
@@ -956,6 +1524,60 @@ export function replay(trace: Trace): RunResult {
     ...(lastEvent.quality !== undefined ? { quality: lastEvent.quality } : {}),
     ...(lastEvent.evaluation !== undefined ? { evaluation: lastEvent.evaluation } : {})
   };
+}
+
+function synthesizeProviderEvents(
+  trace: Trace,
+  providerCalls: readonly ReplayTraceProviderCall[]
+): readonly RunEvent[] {
+  const hasLiveProvenance = trace.events.some(
+    (event) => event.type === "model-request" || event.type === "model-response"
+  );
+  if (hasLiveProvenance) {
+    return trace.events;
+  }
+
+  const baseEvents = trace.events.filter(
+    (event) => event.type !== "model-request" && event.type !== "model-response"
+  );
+  const result: RunEvent[] = [];
+  let turnCount = 0;
+
+  for (const event of baseEvents) {
+    if (event.type === "agent-turn") {
+      const call = providerCalls[turnCount];
+      if (call !== undefined) {
+        const modelId = typeof call.modelId === "string" && call.modelId.length > 0 ? call.modelId : call.providerId;
+        result.push({
+          type: "model-request",
+          runId: trace.runId,
+          callId: call.callId,
+          providerId: call.providerId,
+          modelId,
+          startedAt: call.startedAt,
+          agentId: call.agentId,
+          role: call.role,
+          request: call.request
+        });
+        result.push({
+          type: "model-response",
+          runId: trace.runId,
+          callId: call.callId,
+          providerId: call.providerId,
+          modelId,
+          startedAt: call.startedAt,
+          completedAt: call.completedAt,
+          agentId: call.agentId,
+          role: call.role,
+          response: call.response
+        });
+      }
+      turnCount += 1;
+    }
+    result.push(event);
+  }
+
+  return result;
 }
 
 function resolveRuntimeTerminalThrow(
@@ -1060,11 +1682,19 @@ function dogpileErrorFromSerializedPayload(input: {
  * Replay a saved completed trace as a stream without invoking a model provider.
  *
  * @remarks
- * This is the streaming counterpart to {@link replay}. It yields the exact
- * saved {@link Trace.events} in order and resolves {@link StreamHandle.result}
- * to the rehydrated {@link RunResult}. Since all data comes from the trace,
- * replay remains storage-free and provider-free.
+ * This is the streaming counterpart to {@link replay}. It yields the same
+ * event sequence exposed by the replayed result event log, including legacy
+ * provenance synthesis when a saved trace predates model request/response
+ * events. Since all data comes from the trace, replay remains storage-free and
+ * provider-free.
+ *
+ * Tracing and metrics: replayStream is intentionally tracing-free and
+ * metrics-free. Even when an engine instance has been configured with a
+ * `tracer` or `metricsHook` on its `EngineOptions`, calling this function
+ * emits no spans or callbacks — replaying historical events with current
+ * timestamps would confuse observability backends. See `docs/developer-usage.md`.
  */
+// Tracing/metrics-free: replayStream never uses EngineOptions tracer or metricsHook.
 export function replayStream(trace: Trace): StreamHandle {
   const result = Promise.resolve(replay(trace));
   const replayEvents = replayStreamEvents(trace);
@@ -1109,7 +1739,7 @@ export function replayStream(trace: Trace): StreamHandle {
 function replayStreamEvents(trace: Trace, parentRunIds: readonly string[] = []): StreamEvent[] {
   const events: StreamEvent[] = [];
 
-  for (const event of trace.events) {
+  for (const event of synthesizeProviderEvents(trace, trace.providerCalls)) {
     if (event.type === "sub-run-completed") {
       events.push(...replayStreamEvents(event.subResult.trace, [...parentRunIds, trace.runId]));
     }

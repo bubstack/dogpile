@@ -14,7 +14,8 @@ import type {
   BenchmarkRunnerConfig,
   DogpileOptions,
   ModelRequest,
-  ModelResponse
+  ModelResponse,
+  RunEvent
 } from "../types.js";
 
 describe("benchmark runner configuration", () => {
@@ -101,9 +102,17 @@ describe("benchmark runner configuration", () => {
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -128,10 +137,20 @@ describe("benchmark runner configuration", () => {
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "model-request",
+      "model-request",
+      "model-request",
+      "model-response",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
       "agent-turn",
-      "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -148,8 +167,8 @@ describe("benchmark runner configuration", () => {
     expect(artifact.kind).toBe("benchmark-run");
     expect(artifact.schemaVersion).toBe("1.0");
     expect(artifact.runId).toBe(result.trace.runId);
-    expect(artifact.startedAt).toBe(result.trace.events[0]?.at);
-    expect(artifact.completedAt).toBe(result.trace.events.at(-1)?.at);
+    expect(artifact.startedAt).toBe(eventTimestamp(result.trace.events[0]));
+    expect(artifact.completedAt).toBe(eventTimestamp(result.trace.events.at(-1)));
     expect(artifact.output).toBe(result.output);
     expect(artifact.cost).toEqual(result.cost);
     expect(artifact.accounting).toEqual({
@@ -271,9 +290,17 @@ describe("benchmark runner configuration", () => {
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -452,6 +479,12 @@ describe("benchmark runner configuration", () => {
     expect(JSON.parse(JSON.stringify(coordinatorArtifact))).toEqual(coordinatorArtifact);
   });
 });
+
+function eventTimestamp(event: RunEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  if ("at" in event) return event.at;
+  return event.type === "model-response" ? event.completedAt : event.startedAt;
+}
 
 interface SharedBenchmarkControls {
   readonly intent: DogpileOptions["intent"];

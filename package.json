@@ -1,6 +1,6 @@
 {
   "name": "@dogpile/sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "TypeScript SDK for running multi-agent LLM coordination protocols.",
   "license": "Apache-2.0",
   "type": "module",
@@ -45,6 +45,11 @@
       "import": "./dist/types.js",
       "default": "./dist/types.js"
     },
+    "./runtime/audit": {
+      "types": "./dist/runtime/audit.d.ts",
+      "import": "./dist/runtime/audit.js",
+      "default": "./dist/runtime/audit.js"
+    },
     "./runtime/broadcast": {
       "types": "./dist/runtime/broadcast.d.ts",
       "import": "./dist/runtime/broadcast.js",
@@ -65,10 +70,35 @@
       "import": "./dist/runtime/engine.js",
       "default": "./dist/runtime/engine.js"
     },
+    "./runtime/health": {
+      "types": "./dist/runtime/health.d.ts",
+      "import": "./dist/runtime/health.js",
+      "default": "./dist/runtime/health.js"
+    },
+    "./runtime/introspection": {
+      "types": "./dist/runtime/introspection.d.ts",
+      "import": "./dist/runtime/introspection.js",
+      "default": "./dist/runtime/introspection.js"
+    },
     "./runtime/model": {
       "types": "./dist/runtime/model.d.ts",
       "import": "./dist/runtime/model.js",
       "default": "./dist/runtime/model.js"
+    },
+    "./runtime/provenance": {
+      "types": "./dist/runtime/provenance.d.ts",
+      "import": "./dist/runtime/provenance.js",
+      "default": "./dist/runtime/provenance.js"
+    },
+    "./runtime/tracing": {
+      "types": "./dist/runtime/tracing.d.ts",
+      "import": "./dist/runtime/tracing.js",
+      "default": "./dist/runtime/tracing.js"
+    },
+    "./runtime/metrics": {
+      "types": "./dist/runtime/metrics.d.ts",
+      "import": "./dist/runtime/metrics.js",
+      "default": "./dist/runtime/metrics.js"
     },
     "./providers/openai-compatible": {
       "types": "./dist/providers/openai-compatible.d.ts",
@@ -142,15 +172,20 @@
     "src/types/replay.ts",
     "src/browser/index.ts",
     "src/providers/openai-compatible.ts",
+    "src/runtime/audit.ts",
     "src/runtime/broadcast.ts",
     "src/runtime/cancellation.ts",
     "src/runtime/coordinator.ts",
     "src/runtime/decisions.ts",
     "src/runtime/defaults.ts",
     "src/runtime/engine.ts",
+    "src/runtime/health.ts",
     "src/runtime/ids.ts",
+    "src/runtime/introspection.ts",
     "src/runtime/logger.ts",
+    "src/runtime/metrics.ts",
     "src/runtime/model.ts",
+    "src/runtime/provenance.ts",
     "src/runtime/retry.ts",
     "src/runtime/sequential.ts",
     "src/runtime/shared.ts",
@@ -158,6 +193,7 @@
     "src/runtime/tools.ts",
     "src/runtime/tools/built-in.ts",
     "src/runtime/tools/vercel-ai.ts",
+    "src/runtime/tracing.ts",
     "src/runtime/wrap-up.ts",
     "src/runtime/validation.ts",
     "README.md",
@@ -184,6 +220,8 @@
     "verify": "pnpm run package:identity && pnpm run build && pnpm run package:artifacts && pnpm run quickstart:smoke -- --skip-build && pnpm run typecheck && pnpm run test"
   },
   "devDependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/sdk-trace-base": "2.7.1",
     "@types/node": "^25.6.0",
     "ai": "^6.0.168",
     "typescript": "^6.0.3",

@@ -291,9 +291,10 @@ describe("trace event schema", () => {
       {
         type: "model-request",
         runId: "run-child",
-        at: "2026-05-01T00:00:09.000Z",
+        startedAt: "2026-05-01T00:00:09.000Z",
         callId: "call-1",
         providerId: "provider",
+        modelId: "provider",
         agentId: "agent-1",
         role: "planner",
         request: {
@@ -306,9 +307,11 @@ describe("trace event schema", () => {
       {
         type: "model-response",
         runId: "run-child",
-        at: "2026-05-01T00:00:10.000Z",
+        startedAt: "2026-05-01T00:00:09.000Z",
+        completedAt: "2026-05-01T00:00:10.000Z",
         callId: "call-1",
         providerId: "provider",
+        modelId: "provider",
         agentId: "agent-1",
         role: "planner",
         response: { text: "ok" },
@@ -446,9 +449,10 @@ describe("trace event schema", () => {
     const modelRequestEvent: ModelRequestEvent = {
       type: "model-request",
       runId: "run-activity-contract",
-      at: "2026-04-24T00:00:00.000Z",
+      startedAt: "2026-04-24T00:00:00.000Z",
       callId: "run-activity-contract:provider-call:1",
       providerId: "deterministic-model",
+      modelId: "deterministic-model",
       agentId: "planner",
       role: "planner",
       request: {
@@ -463,9 +467,11 @@ describe("trace event schema", () => {
     const modelResponseEvent: ModelResponseEvent = {
       type: "model-response",
       runId: "run-activity-contract",
-      at: "2026-04-24T00:00:01.000Z",
+      startedAt: modelRequestEvent.startedAt,
+      completedAt: "2026-04-24T00:00:01.000Z",
       callId: modelRequestEvent.callId,
       providerId: modelRequestEvent.providerId,
+      modelId: modelRequestEvent.modelId,
       agentId: "planner",
       role: "planner",
       response: {
@@ -538,7 +544,7 @@ describe("trace event schema", () => {
     expect(JSON.parse(JSON.stringify([...streamOutputEvents, transcript]))).toEqual([...streamOutputEvents, transcript]);
   });
 
-  it("emits serializable role-assignment, agent-turn, and final event variants", async () => {
+  it("emits serializable role-assignment, model activity, agent-turn, and final event variants", async () => {
     const result = await run({
       intent: "Verify sequential trace event schemas.",
       protocol: { kind: "sequential", maxTurns: 1 },
@@ -546,16 +552,34 @@ describe("trace event schema", () => {
       model: createDeterministicModelProvider("event-schema-sequential-model")
     });
 
-    expect(result.trace.events.map((event) => event.type)).toEqual(["role-assignment", "agent-turn", "final"]);
+    expect(result.trace.events.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
     expect(JSON.parse(JSON.stringify(result.trace.events))).toEqual(result.trace.events);
 
-    const [roleAssignmentEvent, turnEvent, finalEvent] = result.trace.events;
+    const [roleAssignmentEvent, modelRequestEvent, modelResponseEvent, turnEvent, finalEvent] = result.trace.events;
 
     expect(roleAssignmentEvent?.type).toBe("role-assignment");
     if (roleAssignmentEvent?.type !== "role-assignment") {
       throw new Error("missing role-assignment event");
     }
     expectRoleAssignmentEvent(roleAssignmentEvent, result.trace.runId);
+
+    expect(modelRequestEvent?.type).toBe("model-request");
+    if (modelRequestEvent?.type !== "model-request") {
+      throw new Error("missing model-request event");
+    }
+    expectModelRequestEvent(modelRequestEvent, result.trace.runId);
+
+    expect(modelResponseEvent?.type).toBe("model-response");
+    if (modelResponseEvent?.type !== "model-response") {
+      throw new Error("missing model-response event");
+    }
+    expectModelResponseEvent(modelResponseEvent, result.trace.runId, modelRequestEvent);
 
     expect(turnEvent?.type).toBe("agent-turn");
     if (turnEvent?.type !== "agent-turn") {
@@ -609,7 +633,11 @@ describe("trace event schema", () => {
     expect(streamedEvents.map((event) => event.type)).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -627,6 +655,12 @@ describe("trace event schema", () => {
       "role-assignment",
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-request",
+      "model-request",
+      "model-response",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
       "agent-turn",
@@ -657,7 +691,7 @@ describe("trace event schema", () => {
       events.push(event);
     }
 
-    expect(events.map((event) => event.type)).toEqual(["role-assignment", "error"]);
+    expect(events.map((event) => event.type)).toEqual(["role-assignment", "model-request", "error"]);
     const errorEvent = events.at(-1);
     expect(errorEvent?.type).toBe("error");
     if (errorEvent?.type !== "error") {
@@ -738,11 +772,18 @@ describe("trace event schema", () => {
     expectIsoTimestamp(fixture.at);
     expect(fixture.subResult.trace.runId).toBe(child.trace.runId);
     expect(fixture.subResult.output).toBe(child.output);
+    expect(Array.isArray(fixture.subResult.health.anomalies)).toBe(true);
+    expect(sortedKeys(fixture.subResult.health.stats)).toEqual([
+      "agentCount",
+      "budgetUtilizationPct",
+      "totalTurns"
+    ]);
 
     const roundTripped = JSON.parse(JSON.stringify(fixture)) as SubRunCompletedEvent;
     expect(roundTripped).toEqual(fixture);
     expect(roundTripped.subResult.trace.events).toEqual(child.trace.events);
     expect(roundTripped.subResult.accounting).toEqual(child.accounting);
+    expect(roundTripped.subResult.health).toEqual(child.health);
     expect(roundTripped.subResult.output).toBe(child.output);
   });
 
@@ -950,6 +991,19 @@ function expectStreamedTraceEvents(events: readonly RunEvent[], runId: string, o
       case "role-assignment":
         expectRoleAssignmentEvent(event, runId);
         break;
+      case "model-request":
+        expectModelRequestEvent(event, runId);
+        break;
+      case "model-response": {
+        const requestEvent = events.find(
+          (candidate) => candidate.type === "model-request" && candidate.callId === event.callId
+        );
+        if (requestEvent?.type !== "model-request") {
+          throw new Error("missing paired model-request event");
+        }
+        expectModelResponseEvent(event, runId, requestEvent);
+        break;
+      }
       case "agent-turn":
         expectTurnEvent(event, runId);
         break;
@@ -982,6 +1036,58 @@ function expectTurnEvent(event: TurnEvent, runId: string): void {
   expect(event.input).toContain("Mission:");
   expect(event.output).toBeTruthy();
   expectCostSummary(event.cost);
+}
+
+function expectModelRequestEvent(event: ModelRequestEvent, runId: string): void {
+  expect(sortedKeys(event)).toEqual([
+    "agentId",
+    "callId",
+    "modelId",
+    "providerId",
+    "request",
+    "role",
+    "runId",
+    "startedAt",
+    "type"
+  ]);
+  expect(event.runId).toBe(runId);
+  expect(event.callId).toContain(`${runId}:provider-call:`);
+  expect(event.modelId).toBeTruthy();
+  expect(event.providerId).toBeTruthy();
+  expect(event.agentId).toBeTruthy();
+  expect(event.role).toBeTruthy();
+  expectIsoTimestamp(event.startedAt);
+  expect(event.request.messages.length).toBeGreaterThan(0);
+}
+
+function expectModelResponseEvent(
+  event: ModelResponseEvent,
+  runId: string,
+  requestEvent: ModelRequestEvent
+): void {
+  expect(sortedKeys(event)).toEqual([
+    "agentId",
+    "callId",
+    "completedAt",
+    "modelId",
+    "providerId",
+    "response",
+    "role",
+    "runId",
+    "startedAt",
+    "type"
+  ]);
+  expect(event.runId).toBe(runId);
+  expect(event.callId).toBe(requestEvent.callId);
+  expect(event.providerId).toBe(requestEvent.providerId);
+  expect(event.modelId).toBe(requestEvent.modelId);
+  expect(event.agentId).toBe(requestEvent.agentId);
+  expect(event.role).toBe(requestEvent.role);
+  expect(event.startedAt).toBe(requestEvent.startedAt);
+  expectIsoTimestamp(event.startedAt);
+  expectIsoTimestamp(event.completedAt);
+  expect(Date.parse(event.startedAt)).toBeLessThanOrEqual(Date.parse(event.completedAt));
+  expect(event.response.text).toBeTruthy();
 }
 
 function expectBroadcastEvent(event: BroadcastEvent, runId: string): void {
@@ -1101,7 +1207,15 @@ function minimalRunResult(runId: string): RunResult {
       cost,
       budgetStateChanges: []
     },
-    cost
+    cost,
+    health: {
+      anomalies: [],
+      stats: {
+        totalTurns: 0,
+        agentCount: 0,
+        budgetUtilizationPct: null
+      }
+    }
   };
 }
 

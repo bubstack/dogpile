@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { replayStream, run, stream } from "../index.js";
-import type { ConfiguredModelProvider, ModelOutputChunk, ModelRequest, ModelResponse, RunResult, StreamEvent } from "../index.js";
+import type {
+  ConfiguredModelProvider,
+  ModelOutputChunk,
+  ModelRequest,
+  ModelResponse,
+  RunEvent,
+  RunResult,
+  StreamEvent
+} from "../index.js";
 
 describe("SDK streaming API", () => {
   it("returns the same final output value as the equivalent non-streaming call", async () => {
@@ -155,8 +163,8 @@ describe("SDK streaming API", () => {
     expect(streamingResult.metadata).toEqual({
       ...nonStreamingResult.metadata,
       runId: streamingResult.trace.runId,
-      startedAt: streamingResult.trace.events[0]?.at,
-      completedAt: streamingFinalEvent?.at
+      startedAt: eventTimestamp(streamingResult.trace.events[0]),
+      completedAt: eventTimestamp(streamingFinalEvent)
     });
     expect(withoutDynamicTraceFields(streamingResult.eventLog)).toEqual(
       withoutDynamicTraceFields(nonStreamingResult.eventLog)
@@ -248,8 +256,18 @@ describe("SDK streaming API", () => {
 
     const firstGate = requireGate(gates, 0);
     await waitForRequest(firstGate);
+    const firstRequest = await iterator.next();
+    expect(firstRequest.value).toMatchObject({
+      type: "model-request",
+      agentId: "alpha"
+    });
     firstGate.resolve("alpha ordered output");
 
+    const firstResponse = await iterator.next();
+    expect(firstResponse.value).toMatchObject({
+      type: "model-response",
+      agentId: "alpha"
+    });
     const firstTurn = await iterator.next();
     expect(firstTurn.value).toMatchObject({
       type: "agent-turn",
@@ -259,8 +277,18 @@ describe("SDK streaming API", () => {
 
     const secondGate = requireGate(gates, 1);
     await waitForRequest(secondGate);
+    const secondRequest = await iterator.next();
+    expect(secondRequest.value).toMatchObject({
+      type: "model-request",
+      agentId: "beta"
+    });
     secondGate.resolve("beta ordered output");
 
+    const secondResponse = await iterator.next();
+    expect(secondResponse.value).toMatchObject({
+      type: "model-response",
+      agentId: "beta"
+    });
     const secondTurn = await iterator.next();
     const finalEvent = await iterator.next();
     const result = await handle.result;
@@ -275,11 +303,25 @@ describe("SDK streaming API", () => {
       output: "beta ordered output"
     });
 
-    const iteratorEvents = [firstRole.value, secondRole.value, firstTurn.value, secondTurn.value, finalEvent.value];
+    const iteratorEvents = [
+      firstRole.value,
+      secondRole.value,
+      firstRequest.value,
+      firstResponse.value,
+      firstTurn.value,
+      secondRequest.value,
+      secondResponse.value,
+      secondTurn.value,
+      finalEvent.value
+    ];
     expect(iteratorEvents.map((event) => event?.type)).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -299,6 +341,8 @@ describe("SDK streaming API", () => {
     const iterator = handle[Symbol.asyncIterator]();
 
     expect((await iterator.next()).value?.type).toBe("role-assignment");
+    expect((await iterator.next()).value?.type).toBe("model-request");
+    expect((await iterator.next()).value?.type).toBe("model-response");
     const turn = await iterator.next();
     const finalEvent = await iterator.next();
     const result = await handle.result;
@@ -339,12 +383,18 @@ describe("SDK streaming API", () => {
     const iterator = handle[Symbol.asyncIterator]();
 
     const roleAssignment = await iterator.next();
+    const requestEvent = await iterator.next();
     const errorEvent = await iterator.next();
     const afterError = await iterator.next();
     const rejectedError = await resultRejection;
 
     expect(roleAssignment.value).toMatchObject({
       type: "role-assignment",
+      agentId: "failing-agent",
+      role: "writer"
+    });
+    expect(requestEvent.value).toMatchObject({
+      type: "model-request",
       agentId: "failing-agent",
       role: "writer"
     });
@@ -372,6 +422,7 @@ describe("SDK streaming API", () => {
     const resultState = observeResult(handle.result);
 
     expect((await iterator.next()).value?.type).toBe("role-assignment");
+    expect((await iterator.next()).value?.type).toBe("model-request");
     await chunkStream.started;
     expect(resultState.settled).toBe(false);
 
@@ -399,6 +450,12 @@ describe("SDK streaming API", () => {
       output: "partial done"
     });
 
+    const responseEvent = await iterator.next();
+    expect(responseEvent.value).toMatchObject({
+      type: "model-response",
+      agentId: "writer",
+      role: "writer"
+    });
     const completedTurn = await iterator.next();
     expect(completedTurn.value).toMatchObject({
       type: "agent-turn",
@@ -414,13 +471,15 @@ describe("SDK streaming API", () => {
     expect(result.output).toBe("partial done");
     expect(result.trace.events.map((event) => event.type)).toEqual([
       "role-assignment",
+      "model-request",
       "model-output-chunk",
       "model-output-chunk",
+      "model-response",
       "agent-turn",
       "final"
     ]);
-    expect(result.trace.events.at(1)).toEqual(firstChunk.value);
-    expect(result.trace.events.at(2)).toEqual(secondChunk.value);
+    expect(result.trace.events.at(2)).toEqual(firstChunk.value);
+    expect(result.trace.events.at(3)).toEqual(secondChunk.value);
   });
 
   it("passes a caller AbortSignal through streamed model requests", async () => {
@@ -461,7 +520,9 @@ describe("SDK streaming API", () => {
     expect(result.trace.providerCalls[0]?.request.signal).toBeUndefined();
     expect(streamedEvents.map((event) => event.type)).toEqual([
       "role-assignment",
+      "model-request",
       "model-output-chunk",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -762,9 +823,17 @@ describe("SDK streaming API", () => {
     expect((await iterator.next()).value?.type).toBe("role-assignment");
     expect((await iterator.next()).value?.type).toBe("role-assignment");
     await waitForRequest(firstGate);
+    expect((await iterator.next()).value).toMatchObject({
+      type: "model-request",
+      agentId: "planner"
+    });
     expect(resultState.settled).toBe(false);
 
     firstGate.resolve("planner output");
+    expect((await iterator.next()).value).toMatchObject({
+      type: "model-response",
+      agentId: "planner"
+    });
     const firstTurn = await iterator.next();
     expect(firstTurn.done).toBe(false);
     expect(firstTurn.value).toMatchObject({
@@ -776,7 +845,15 @@ describe("SDK streaming API", () => {
     expect(resultState.settled).toBe(false);
 
     await waitForRequest(secondGate);
+    expect((await iterator.next()).value).toMatchObject({
+      type: "model-request",
+      agentId: "critic"
+    });
     secondGate.resolve("critic output");
+    expect((await iterator.next()).value).toMatchObject({
+      type: "model-response",
+      agentId: "critic"
+    });
     const secondTurn = await iterator.next();
     expect(secondTurn.done).toBe(false);
     expect(secondTurn.value).toMatchObject({
@@ -804,7 +881,11 @@ describe("SDK streaming API", () => {
     expect(result.trace.events.map((event) => event.type)).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
@@ -833,10 +914,26 @@ describe("SDK streaming API", () => {
 
     await waitForRequest(releaseGate);
     await waitForRequest(paperGate);
+    expect((await iterator.next()).value).toMatchObject({
+      type: "model-request",
+      agentId: "release"
+    });
+    expect((await iterator.next()).value).toMatchObject({
+      type: "model-request",
+      agentId: "paper"
+    });
     expect(resultState.settled).toBe(false);
 
     releaseGate.resolve("release output");
     paperGate.resolve("paper output");
+    expect((await iterator.next()).value).toMatchObject({
+      type: "model-response",
+      agentId: "release"
+    });
+    expect((await iterator.next()).value).toMatchObject({
+      type: "model-response",
+      agentId: "paper"
+    });
     const releaseTurn = await iterator.next();
     expect(releaseTurn.value).toMatchObject({
       type: "agent-turn",
@@ -881,6 +978,10 @@ describe("SDK streaming API", () => {
     expect(result.trace.events.map((event) => event.type)).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-request",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
       "broadcast",
@@ -888,6 +989,12 @@ describe("SDK streaming API", () => {
     ]);
   });
 });
+
+function eventTimestamp(event: RunEvent | StreamEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  if ("at" in event) return event.at;
+  return event.type === "model-response" ? event.completedAt : event.startedAt;
+}
 
 const output = "critic judged final output";
 const PARTICIPATE_OUTPUT = [

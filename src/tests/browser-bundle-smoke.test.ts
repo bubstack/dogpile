@@ -78,7 +78,7 @@ describe("browser ESM bundle smoke", () => {
     expect(stderr).toBe("");
     expect(fileURLToPath(smoke.resolved)).toBe(join(rootDir, "dist", "browser", "index.js"));
     expect(smoke.output).toBe("browser-smoke:browser-agent loaded the built browser ESM bundle.");
-    expect(smoke.eventTypes).toEqual(["role-assignment", "agent-turn", "final"]);
+    expect(smoke.eventTypes).toEqual(["role-assignment", "model-request", "model-response", "agent-turn", "final"]);
     expect(smoke.providerCalls).toBe(1);
     expect(smoke.transcriptEntries).toBe(1);
     expect(smoke.cost).toEqual({

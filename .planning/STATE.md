@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v0.4.0
-milestone_name: milestone
-status: Phase 5 complete; v0.4.0 shipped to npm on 2026-05-01
-last_updated: "2026-05-01T16:30:00Z"
-last_activity: 2026-05-01 -- Phase 05 complete; @dogpile/sdk@0.4.0 published
+milestone: v0.5.0
+milestone_name: Observability and Auditability
+status: complete
+last_updated: "2026-05-02T00:00:00Z"
+last_activity: 2026-05-02 -- v0.5.0 milestone complete and archived
 progress:
   total_phases: 5
   completed_phases: 5
-  total_plans: 22
-  completed_plans: 22
+  total_plans: 23
+  completed_plans: 23
   percent: 100
 ---
 
@@ -17,53 +17,70 @@ progress:
 
 ## Project Reference
 
+See: .planning/PROJECT.md (updated 2026-05-02)
+
 **Core value:** Coordinated, observable, replayable multi-agent runs with a strict boundary — Dogpile owns the coordination loop; the application owns credentials, pricing, storage, queues, UI, and tool side effects.
 
-**Current focus:** v0.4.0 Recursive Coordination — agent-driven nesting via a `delegate` decision on the `coordinator` protocol, with embedded child traces, propagated budgets/cancel/cost, bounded concurrency with locality clamp, child event bubbling, and child error escalation.
+**Current focus:** Planning next milestone (v0.6.0)
 
 ## Current Position
 
-Phase: complete
-Plan: complete
-Status: v0.4.0 Recursive Coordination shipped to npm
-Last activity: 2026-05-01 -- Phase 05 complete; @dogpile/sdk@0.4.0 published
+Phase: 10
+Plan: Complete
+Status: v0.5.0 milestone complete; archived; tagged v0.5.0
+Last activity: 2026-05-02 -- v0.5.0 milestone archived and tagged
+
+```
+Progress [██████████] 100% (23/23 milestone plans)
+```
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
 | Phases complete | 5 / 5 |
-| Requirements complete | 27 / 27 |
-| Plans complete | 22 / 22 |
+| Requirements complete | 13 / 13 |
+| Plans complete | 23 / 23 |
+| Phase 08 P01 | 5 min | 2 tasks | 2 files |
+| Phase 08 P02 | 4 min | 2 tasks | 3 files |
+| Phase 08 P03 | 4 min | 2 tasks | 4 files |
+| Phase 09 P00 | 4 min | 1 task | 2 files |
+| Phase 09 P01 | 6 min | 2 tasks | 8 files |
+| Phase 09 P02 | 14 min | 3 tasks | 2 files |
+| Phase 09 P03 | 8 min | 3 tasks | 4 files |
+| Phase 09 P04 | 6 min | 2 tasks | 3 files |
+| Phase 10 P01 | 4 min | 2 tasks | 3 files |
+| Phase 10 P02 | 6 min | 2 tasks | 2 files |
+| Phase 10 P03 | 7 min | 2 tasks | 5 files |
+| Phase 10 P04 | 2 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
 ### Decisions
 
-- **Phase numbering starts at 1.** Project pre-dates GSD phase tracking; no prior `.planning/phases/` directory exists.
-- **5 phases, dependency-ordered.** DELEGATE+TRACE grouped (same surface), then BUDGET, then PROVIDER+CONCURRENCY (locality is prerequisite for clamp), then STREAM+ERROR, then DOCS last.
+- **OTEL bridge uses tracer injection.** Caller passes an optional `tracer` object duck-typed against the OTEL Tracer interface. SDK emits spans when present, no-ops when absent. Zero new dependencies added to the runtime.
 - **Public-surface invariants must move together.** Every event/result/exports change updates `src/tests/event-schema.test.ts`, `src/tests/result-contract.test.ts`, `src/tests/package-exports.test.ts`, `package.json` `exports`/`files`, and `CHANGELOG.md`.
-- **Phase 1 — AgentDecision is a discriminated union.** `ParticipateAgentDecision | DelegateAgentDecision`, discriminated on `type`. Consumers must narrow on `decision.type === "participate"` before reading paper-style fields.
-- **Phase 1 — Sub-run events.** `RunEvent` union extended with `sub-run-started`, `sub-run-completed`, `sub-run-failed`. `sub-run-completed.subResult` carries the child `RunResult` inline. `recursive: true` flag on `sub-run-started` when both parent and child protocol are `coordinator` (D-16).
-- **Phase 1 — maxDepth dual gate.** Default 4; per-run can only LOWER the engine value (`effectiveMaxDepth = min(engine ?? 4, run ?? Infinity)`). Overflow throws `DogpileError({ code: "invalid-configuration", detail: { kind: "delegate-validation", reason: "depth-overflow" } })` at BOTH parse time AND dispatch time.
-- **Phase 1 — Replay walks trace verbatim.** `recomputeAccountingFromTrace` recurses into `sub-run-completed.subResult`; mismatch throws with `reason: "trace-accounting-mismatch"`. No child-event bubbling in Phase 1 (deferred to Phase 4 per D-09).
-- **Phase 1 — Provider inheritance.** Child sub-runs inherit the parent provider object verbatim (D-11); cost-cap not propagated; child timeoutMs default = `parent.deadline - now` (or undefined if parent uncapped, per planner-resolved Q3).
-- **Phase 3 Plan 03-01 — Provider locality metadata.** `ConfiguredModelProvider.metadata?.locality` is the public provider hint; OpenAI-compatible providers auto-detect local hosts through `classifyHostLocality`; invalid locality is rejected at construct time and engine run start.
-- **Phase 3 Plan 03-01 — Local spoofing guard.** `locality: "remote"` on a detected-local OpenAI-compatible `baseURL` throws `invalid-configuration` with `detail.reason: "remote-override-on-local-host"`.
-- **Phase 3 Plan 03-02 — Bounded fan-out dispatch.** Coordinator delegate arrays now execute through a per-turn semaphore with default `maxConcurrentChildren=4`, per-run/decision lowering, `sub-run-queued` pressure events, completion-order result prompts, and synthetic `sibling-failed` failures for queued children abandoned after a sibling failure.
-- **Phase 3 Plan 03-02 — Additive fan-out identity.** `parentDecisionId` format remains unchanged; `parentDecisionArrayIndex` disambiguates delegates from the same plan turn on queued/started/completed/failed sub-run events.
-- **Phase 3 Plan 03-03 — Local-provider clamp.** Coordinator fan-out now walks the active provider tree at each dispatch; any `metadata.locality === "local"` provider clamps effective child concurrency to 1 and emits exactly one `sub-run-concurrency-clamped` event per run with `reason: "local-provider-detected"`.
-- **Phase 3 Plan 03-03 — Public-surface wrap-up.** The v0.4.0 CHANGELOG now includes the Phase 1-3 recursive coordination public-surface inventory, including `metadata.locality`, `maxConcurrentChildren`, `sub-run-queued`, `parentDecisionArrayIndex`, `sub-run-concurrency-clamped`, and replay decision literals.
-- **Phase 4 Plan 04-01 — Stream ancestry chain.** `parentRunIds?: readonly string[]` is the canonical stream ancestry shape on `StreamLifecycleEvent | StreamOutputEvent`; no flat `parentRunId?:` was added.
-- **Phase 4 Plan 04-01 — Live-only child bubbling.** Child events are wrapped with root-first ancestry only for live streams; parent `RunResult.events` and embedded child `subResult.trace.events` remain chain-free.
-- **Phase 4 Plan 04-01 — Replay stream mirror.** `replayStream()` expands embedded `subResult.trace` events and reconstructs `parentRunIds` at replay emit time.
-- **Phase 4 Plan 04-02 — Stream cancel drain.** `StreamHandle.cancel()` now drains active coordinator `DispatchedChild` records before terminal error: started children get synthetic `sub-run-failed` with `detail.reason: "parent-aborted"`, queued children keep `sibling-failed`, and closed children suppress late live forwarding.
-- **Phase 4 Plan 04-02 — Aborted lifecycle event.** `AbortedEvent` joins `StreamLifecycleEvent` with `reason: "parent-aborted" | "timeout"` and is emitted before terminal stream `error` events on abort paths.
-- **Phase 4 Plan 04-03 — Coordinator failure context.** Real child failures now reach the next coordinator plan turn as enriched tagged text plus a structured JSON roster under `## Sub-run failures since last decision`; synthetic `sibling-failed` and `parent-aborted` failures are excluded.
-- **Phase 4 Plan 04-03 — onChildFailure config.** `onChildFailure?: "continue" | "abort"` is public on engine, high-level, and per-run surfaces; it resolves per-run > engine > default `continue`, and abort mode stores `triggeringFailureForAbortMode`.
-- **Phase 4 Plan 04-04 — Terminal child failure throws.** Budget terminal paths re-throw the last real child failure instance from `failureInstancesByChildRunId`; replay reconstructs a fresh `DogpileError` from serialized `sub-run-failed.error`; cancel and depth-overflow errors remain verbatim.
-- **Phase 4 Plan 04-04 — Timeout source discrimination.** `provider-timeout` errors now support optional `detail.source: "provider" | "engine"`; absence remains provider-compatible, and parent-budget propagation remains `aborted` with `detail.reason: "timeout"`.
-- **Phase 5 — v0.4.0 release shipped.** Recursive coordination docs, exhaustive reference, runnable example, README/examples index, developer/reference docs, changelog migration notes, release identity, tag `v0.4.0`, GitHub Release, and npm publication all landed; `@dogpile/sdk@0.4.0` is `latest`.
+- **Phase 6 (Provenance) is the only event-shape change.** All other phases are pure additions or engine-option injections. Phase 6 must complete before OTEL (Phase 9) which depends on stable provenance fields.
+- **Audit record is an independent type.** `AuditRecord` is not derived from `RunEvent` via Pick/Omit; it has its own `auditSchemaVersion: "1"` and is protected by a frozen fixture test.
+- **No `@opentelemetry/*` imports in src/runtime/, src/browser/, src/providers/.** OTEL integration is duck-typed only; a grep-based test will enforce this boundary.
+- **Tracing contract is locked before engine wiring.** `DogpileTracer`, `DogpileSpan`, `DogpileSpanOptions`, and `DOGPILE_SPAN_NAMES` are defined in `src/runtime/tracing.ts`; `tracer?: DogpileTracer` is present on `DogpileOptions` and `EngineOptions`; root exports are available while `/runtime/tracing` subpath wiring remains deferred to Phase 9 Plan 03.
+- **Phase 7 contracts ship before behavior.** `queryEvents` and `computeHealth` are stubbed contract surfaces in 07-01; 07-02 and 07-03 implement behavior against those signatures.
+- **queryEvents filter semantics are locked.** Filters compose with AND semantics; `turnRange` uses global 1-based `agent-turn` positions and excludes non-turn events, while `costRange` only includes `agent-turn` and `broadcast` events.
+- **computeHealth provider recovery is deferred.** `provider-error-recovered` remains in the anomaly union and fixture but is never emitted until a future event-shape change provides a trace signal.
+- **RunResult.health is required.** All public and embedded RunResult construction paths now compute health from trace data before returning or embedding results.
+- **Protocol-level health is part of the result contract.** Sequential, broadcast, shared, and coordinator constructors compute health so stream results and delegated child subResults satisfy the same required contract as top-level run and replay results.
+- **Phase 7 public surface is locked.** `AnomalyCode`, `HealthAnomaly`, and `RunHealthSummary` are root-exported; `@dogpile/sdk/runtime/health` and `@dogpile/sdk/runtime/introspection` are package subpaths with package export tests, source-map packaging coverage, changelog, and CLAUDE.md invariants.
+- **Phase 9 live sub-run fixture is available.** `createDelegatingDeterministicProvider` emits a real delegate decision and paired sub-run lifecycle events for OTEL-02 contract tests without synthetic event injection.
+- **Phase 9 engine tracing uses internal runProtocol wrapping.** `openRunTracing`, `handleTracingEvent`, and `closeRunTracing` wrap internal `runProtocol` so both top-level and delegated child runs emit `dogpile.run` spans. A narrow coordinator callback-shape change passes the planned `childRunId` through as internal `runId` for deterministic `subRunSpansByChildId` lookup.
+- **Phase 9 tracing public surface is locked.** `@dogpile/sdk/runtime/tracing` is package-exported, package-exports tests assert the subpath and type surface, no-otel-imports guards runtime/browser/provider roots, and the live OTEL contract test verifies run/sub-run/child-run parentage through `createDelegatingDeterministicProvider`.
+- **Phase 9 docs lockstep is complete.** CHANGELOG.md, CLAUDE.md, and docs/developer-usage.md document the OTEL tracing bridge, WeakMap bridge pattern, span hierarchy, attribute surface, zero-overhead absent tracer behavior, and tracing-free replay contract. `pnpm run verify` passed.
+- **Phase 9 code review findings were fixed before verification.** `dogpile.agent-turn` spans now use per-turn model-call accounting, and failed `dogpile.run` spans retain best-effort run id/count/cost attributes. Regression coverage lives in `src/tests/otel-tracing-contract.test.ts`.
+- **Phase 10 metrics engine uses root-only run completion.** `onRunComplete` fires only for `currentDepth === 0` or undefined; coordinator child runs are reported through `onSubRunComplete` from the parent emit closure to avoid double-counting.
+- **Phase 10 metrics hooks are fire-and-forget.** Synchronous hook throws and async rejections are routed to `logger.error("dogpile:metricsHook threw", { error })` or `console.error` fallback and never change the run result.
+- **Phase 10 replay remains metrics-free.** `replay()` and `replayStream()` do not emit metrics callbacks, matching the existing tracing-free replay contract.
+- **Phase 10 metrics public surface is locked.** `@dogpile/sdk/runtime/metrics` is package-exported; package export tests assert the subpath and type surface, and `metrics-snapshot-v1.json` freezes the 9-field `RunMetricsSnapshot` shape.
+- **Phase 10 docs lockstep is complete.** CHANGELOG.md, CLAUDE.md, and docs/developer-usage.md document the MetricsHook interface, RunMetricsSnapshot counters, metricsHook/logger option fields, zero-overhead absent-hook behavior, async hook isolation, and metrics-free replay contract. `pnpm run verify` passed.
+- **Phase 10 code review findings were fixed before verification.** Failed child partial costs are excluded from parent own metrics, aborted snapshots preserve observed partial counters, and Promise-like hook rejections route through the logger. Regression coverage lives in `src/tests/metrics-engine-contract.test.ts`.
 
 ### Todos
 
@@ -73,10 +90,19 @@ Last activity: 2026-05-01 -- Phase 05 complete; @dogpile/sdk@0.4.0 published
 
 (none)
 
+## Deferred Items
+
+- Per-turn health streaming (health diagnostics emitted as events during a run, not only at completion)
+- Caller-defined-tree API: `Dogpile.nest({ children: [...] })`
+- Cross-protocol shared transcript across parent/child boundary
+- Per-child retry policy on `delegate` decisions
+- `compactProvenance` deduplication mode
+- Built-in OTLP HTTP exporter
+
 ## Session Continuity
 
-**Next action:** v0.4.0 shipped. Define the next milestone or pick follow-ups from Future Requirements: caller-defined trees, cross-protocol shared transcript, per-child retry policy, or OTEL/tracing bridge.
+**Next action:** Start v0.6.0 milestone planning via `/gsd-new-milestone`.
 
 ---
 
-*Last updated: 2026-05-01 — Phase 5 complete; 27/27 requirements shipped; @dogpile/sdk@0.4.0 published.*
+*Last updated: 2026-05-02 — v0.5.0 milestone complete and archived.*

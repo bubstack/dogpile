@@ -8,7 +8,7 @@ import {
   startSampleWorkflow
 } from "../internal.js";
 import { stream } from "../index.js";
-import type { ConfiguredModelProvider, ModelOutputChunk, ModelRequest, ModelResponse, RunResult } from "../index.js";
+import type { ConfiguredModelProvider, ModelOutputChunk, ModelRequest, ModelResponse, RunEvent, RunResult } from "../index.js";
 
 describe("demo app streaming attachment", () => {
   it("defines a runnable sample workflow entrypoint from mission, protocol, and cost controls", async () => {
@@ -51,6 +51,10 @@ describe("demo app streaming attachment", () => {
     expect(result.trace.events.map((event) => event.type)).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-request",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
       "broadcast",
@@ -58,7 +62,18 @@ describe("demo app streaming attachment", () => {
     ]);
     expect(app.snapshot()).toMatchObject({
       status: "completed",
-      traceEventTypes: ["role-assignment", "role-assignment", "agent-turn", "agent-turn", "broadcast", "final"],
+      traceEventTypes: [
+        "role-assignment",
+        "role-assignment",
+        "model-request",
+        "model-request",
+        "model-response",
+        "model-response",
+        "agent-turn",
+        "agent-turn",
+        "broadcast",
+        "final"
+      ],
       latestOutput: result.output
     });
   });
@@ -101,10 +116,14 @@ describe("demo app streaming attachment", () => {
     expect(result.trace.events.map((event) => event.type)).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-request",
       "model-output-chunk",
       "model-output-chunk",
       "model-output-chunk",
       "model-output-chunk",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
       "broadcast",
@@ -118,7 +137,12 @@ describe("demo app streaming attachment", () => {
     expect(snapshot.missingRequiredTraceEventTypes).toEqual([]);
     expect(snapshot.hasCapturedRequiredTraceEventTypes).toBe(true);
     expect(snapshot.traceEventList.map((item) => item.eventType)).toEqual(result.eventLog.eventTypes);
-    expect(snapshot.traceEventList[2]).toMatchObject({
+    const firstChunkItem = snapshot.traceEventList.find((item) => item.eventType === "model-output-chunk");
+    const budgetStopItem = snapshot.traceEventList.find((item) => item.eventType === "budget-stop");
+    const broadcastItem = snapshot.traceEventList.find((item) => item.eventType === "broadcast");
+    const finalItem = snapshot.traceEventList.find((item) => item.eventType === "final");
+
+    expect(firstChunkItem).toMatchObject({
       eventType: "model-output-chunk",
       visualSection: "agent-turns",
       visualState: "turn-completed",
@@ -129,7 +153,7 @@ describe("demo app streaming attachment", () => {
         chunkIndex: 0
       }
     });
-    expect(snapshot.traceEventList[9]).toMatchObject({
+    expect(budgetStopItem).toMatchObject({
       eventType: "budget-stop",
       visualSection: "activity-log",
       visualState: "budget-stopped",
@@ -139,8 +163,8 @@ describe("demo app streaming attachment", () => {
         iteration: 2
       }
     });
-    expect(snapshot.broadcastSection.items).toEqual([snapshot.traceEventList[8]]);
-    expect(snapshot.finalOutputSection.items).toEqual([snapshot.traceEventList[10]]);
+    expect(snapshot.broadcastSection.items).toEqual([broadcastItem]);
+    expect(snapshot.finalOutputSection.items).toEqual([finalItem]);
   });
 
   it("starts a demo run through the SDK subscription API and records live events", async () => {
@@ -155,8 +179,8 @@ describe("demo app streaming attachment", () => {
 
     expect(app.snapshot()).toMatchObject({
       status: "running",
-      traceEventCount: 1,
-      traceEventTypes: ["role-assignment"],
+      traceEventCount: 2,
+      traceEventTypes: ["role-assignment", "model-request"],
       roleAssignmentSection: {
         id: "role-assignments",
         title: "Role assignments",
@@ -187,8 +211,8 @@ describe("demo app streaming attachment", () => {
         state: "empty",
         items: []
       },
-      eventCount: 1,
-      eventTypes: ["role-assignment"]
+      eventCount: 2,
+      eventTypes: ["role-assignment", "model-request"]
     });
 
     await gate.requested;
@@ -198,8 +222,8 @@ describe("demo app streaming attachment", () => {
     expect(result.output).toBe("live demo output");
     expect(app.snapshot()).toMatchObject({
       status: "completed",
-      traceEventTypes: ["role-assignment", "agent-turn", "final"],
-      eventTypes: ["role-assignment", "agent-turn", "final"],
+      traceEventTypes: ["role-assignment", "model-request", "model-response", "agent-turn", "final"],
+      eventTypes: ["role-assignment", "model-request", "model-response", "agent-turn", "final"],
       latestOutput: "live demo output"
     });
   });
@@ -220,14 +244,14 @@ describe("demo app streaming attachment", () => {
 
     expect(pendingState).toBe("pending");
     expect(runningSnapshot.status).toBe("running");
-    expect(runningSnapshot.traceEventTypes).toEqual(["role-assignment"]);
-    expect(runningSnapshot.traceEvents).toHaveLength(1);
-    expect(runningSnapshot.latestTraceEvent?.type).toBe("role-assignment");
+    expect(runningSnapshot.traceEventTypes).toEqual(["role-assignment", "model-request"]);
+    expect(runningSnapshot.traceEvents).toHaveLength(2);
+    expect(runningSnapshot.latestTraceEvent?.type).toBe("model-request");
     expect(runningSnapshot.traceEventList).toEqual([
       {
         order: 1,
         eventType: "role-assignment",
-        at: runningSnapshot.traceEvents[0]?.at,
+        at: eventTimestamp(runningSnapshot.traceEvents[0]),
         runId: runningSnapshot.traceEvents[0]?.runId,
         title: "Assigned incremental-runner",
         visualSection: "role-roster",
@@ -237,9 +261,26 @@ describe("demo app streaming attachment", () => {
           agentId: "incremental-agent",
           role: "incremental-runner"
         }
+      },
+      {
+        order: 2,
+        eventType: "model-request",
+        at: eventTimestamp(runningSnapshot.traceEvents[1]),
+        runId: runningSnapshot.traceEvents[1]?.runId,
+        title: "incremental-runner model request",
+        visualSection: "agent-turns",
+        visualState: "turn-completed",
+        metadata: {
+          type: "model-request",
+          callId: expect.any(String),
+          providerId: "demo-incremental-model",
+          agentId: "incremental-agent",
+          role: "incremental-runner",
+          messageCount: 2
+        }
       }
     ]);
-    expect(runningSnapshot.latestTraceEventListItem).toEqual(runningSnapshot.traceEventList[0]);
+    expect(runningSnapshot.latestTraceEventListItem).toEqual(runningSnapshot.traceEventList[1]);
     expect(runningSnapshot.roleAssignmentSection).toEqual({
       id: "role-assignments",
       title: "Role assignments",
@@ -270,13 +311,25 @@ describe("demo app streaming attachment", () => {
     const result = await app.result;
     const completedSnapshot = app.snapshot();
 
-    expect(result.trace.events.map((event) => event.type)).toEqual(["role-assignment", "agent-turn", "final"]);
+    expect(result.trace.events.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
     expect(completedSnapshot.traceEvents).toEqual(result.trace.events);
-    expect(completedSnapshot.traceEventList.map((item) => item.order)).toEqual([1, 2, 3]);
-    expect(completedSnapshot.traceEventList.map((item) => item.eventType)).toEqual(["role-assignment", "agent-turn", "final"]);
-    expect(completedSnapshot.traceEventList.map((item) => item.at)).toEqual(result.trace.events.map((event) => event.at));
-    expect(completedSnapshot.traceEventList[1]).toMatchObject({
-      order: 2,
+    expect(completedSnapshot.traceEventList.map((item) => item.order)).toEqual([1, 2, 3, 4, 5]);
+    expect(completedSnapshot.traceEventList.map((item) => item.eventType)).toEqual([
+      "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
+    expect(completedSnapshot.traceEventList.map((item) => item.at)).toEqual(result.trace.events.map(eventTimestamp));
+    expect(completedSnapshot.traceEventList[3]).toMatchObject({
+      order: 4,
       eventType: "agent-turn",
       runId: result.trace.runId,
       title: "incremental-runner turn",
@@ -290,8 +343,8 @@ describe("demo app streaming attachment", () => {
         costUsd: 0.001
       }
     });
-    expect(completedSnapshot.traceEventList[2]).toMatchObject({
-      order: 3,
+    expect(completedSnapshot.traceEventList[4]).toMatchObject({
+      order: 5,
       eventType: "final",
       runId: result.trace.runId,
       title: "Final output",
@@ -303,13 +356,13 @@ describe("demo app streaming attachment", () => {
         transcriptEntryCount: result.transcript.length
       }
     });
-    expect(completedSnapshot.latestTraceEventListItem).toEqual(completedSnapshot.traceEventList[2]);
+    expect(completedSnapshot.latestTraceEventListItem).toEqual(completedSnapshot.traceEventList[4]);
     expect(completedSnapshot.roleAssignmentSection.items).toEqual([completedSnapshot.traceEventList[0]]);
     expect(completedSnapshot.agentTurnSection).toEqual({
       id: "agent-turns",
       title: "Agent turns",
       state: "active",
-      items: [completedSnapshot.traceEventList[1]]
+      items: [completedSnapshot.traceEventList[3]]
     });
     expect(completedSnapshot.broadcastSection).toEqual({
       id: "broadcast-rounds",
@@ -321,11 +374,11 @@ describe("demo app streaming attachment", () => {
       id: "final-output",
       title: "Final output",
       state: "completed",
-      items: [completedSnapshot.traceEventList[2]],
+      items: [completedSnapshot.traceEventList[4]],
       output: "incremental output"
     });
-    expect(runningSnapshot.traceEvents).toHaveLength(1);
-    expect(runningSnapshot.traceEventList).toHaveLength(1);
+    expect(runningSnapshot.traceEvents).toHaveLength(2);
+    expect(runningSnapshot.traceEventList).toHaveLength(2);
   });
 
   it("renders final events in a distinct final output section", async () => {
@@ -345,11 +398,11 @@ describe("demo app streaming attachment", () => {
       id: "final-output",
       title: "Final output",
       state: "completed",
-      items: [snapshot.traceEventList[2]],
+      items: [snapshot.traceEventList[4]],
       output: result.output
     });
-    expect(snapshot.traceEventList[2]).toMatchObject({
-      order: 3,
+    expect(snapshot.traceEventList[4]).toMatchObject({
+      order: 5,
       eventType: "final",
       runId: result.trace.runId,
       title: "Final output",
@@ -383,6 +436,10 @@ describe("demo app streaming attachment", () => {
     expect(result.trace.events.map((event) => event.type)).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-request",
+      "model-response",
+      "model-response",
       "agent-turn",
       "agent-turn",
       "broadcast",
@@ -392,10 +449,10 @@ describe("demo app streaming attachment", () => {
       id: "broadcast-rounds",
       title: "Broadcast rounds",
       state: "active",
-      items: [snapshot.traceEventList[4]]
+      items: [snapshot.traceEventList[8]]
     });
-    expect(snapshot.traceEventList[4]).toMatchObject({
-      order: 5,
+    expect(snapshot.traceEventList[8]).toMatchObject({
+      order: 9,
       eventType: "broadcast",
       runId: result.trace.runId,
       title: "Broadcast round 1",
@@ -408,8 +465,8 @@ describe("demo app streaming attachment", () => {
         costUsd: 0.002
       }
     });
-    expect(snapshot.traceEventList[4]?.visualSection).not.toBe("activity-log");
-    expect(snapshot.agentTurnSection.items).toEqual([snapshot.traceEventList[2], snapshot.traceEventList[3]]);
+    expect(snapshot.traceEventList[8]?.visualSection).not.toBe("activity-log");
+    expect(snapshot.agentTurnSection.items).toEqual([snapshot.traceEventList[6], snapshot.traceEventList[7]]);
   });
 
   it("attaches to an existing live stream handle without consuming the async iterator", async () => {
@@ -429,11 +486,17 @@ describe("demo app streaming attachment", () => {
     gate.resolve("attached output");
     const result = await app.result;
 
-    expect(result.trace.events.map((event) => event.type)).toEqual(["role-assignment", "agent-turn", "final"]);
+    expect(result.trace.events.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
     expect(app.snapshot()).toMatchObject({
       status: "completed",
-      traceEventCount: 3,
-      eventCount: 3,
+      traceEventCount: 5,
+      eventCount: 5,
       latestOutput: "attached output"
     });
   });
@@ -457,14 +520,20 @@ describe("demo app streaming attachment", () => {
     expect(result.output).toBe("detached output");
     expect(app.snapshot()).toMatchObject({
       status: "completed",
-      traceEventCount: 1,
-      traceEventTypes: ["role-assignment"],
-      eventCount: 1,
-      eventTypes: ["role-assignment"],
+      traceEventCount: 2,
+      traceEventTypes: ["role-assignment", "model-request"],
+      eventCount: 2,
+      eventTypes: ["role-assignment", "model-request"],
       latestOutput: "detached output"
     });
   });
 });
+
+function eventTimestamp(event: RunEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  if ("at" in event) return event.at;
+  return event.type === "model-response" ? event.completedAt : event.startedAt;
+}
 
 interface ResponseGate {
   readonly requested: Promise<void>;

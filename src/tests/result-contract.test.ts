@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDeterministicModelProvider } from "../internal.js";
 import { Dogpile, replay, replayStream, run } from "../index.js";
+import { computeHealth, DEFAULT_HEALTH_THRESHOLDS } from "../runtime/health.js";
 import type {
   ConfiguredModelProvider,
   BudgetCaps,
@@ -41,6 +42,17 @@ import type {
   Trace,
   TranscriptEntry
 } from "../index.js";
+import type { RunHealthSummary } from "../types.js";
+
+function protocolDecisionEventEntries(
+  events: readonly RunEvent[]
+): readonly { readonly event: RunEvent; readonly index: number }[] {
+  return events.flatMap((event, index) =>
+    event.type === "model-request" || event.type === "model-response" || event.type === "model-output-chunk"
+      ? []
+      : [{ event, index }]
+  );
+}
 
 describe("single-call result contract", () => {
   it("exports named high-level input contracts for mission, protocol selection, and budget tier controls", () => {
@@ -80,7 +92,7 @@ describe("single-call result contract", () => {
     expect(engineOptions.budget).toEqual(budget);
   });
 
-  it("returns output, event log, transcript, usage, metadata, trace, cost, and optional quality in one typed contract", async () => {
+  it("returns output, event log, transcript, usage, metadata, trace, cost, health, and optional quality in one typed contract", async () => {
     const result = await run({
       intent: "Define the public single-call result artifact.",
       protocol: { kind: "sequential", maxTurns: 1 },
@@ -96,6 +108,7 @@ describe("single-call result contract", () => {
     const metadata: RunMetadata = result.metadata;
     const accounting: RunAccounting = result.accounting;
     const cost: CostSummary = result.cost;
+    const health: RunHealthSummary = result.health;
     const quality: NormalizedQualityScore = 0.91;
     const judgedResult: RunResult = { ...result, quality };
     const finalEvent = trace.events.at(-1);
@@ -104,6 +117,7 @@ describe("single-call result contract", () => {
       "accounting",
       "cost",
       "eventLog",
+      "health",
       "metadata",
       "output",
       "trace",
@@ -114,6 +128,7 @@ describe("single-call result contract", () => {
       "accounting",
       "cost",
       "eventLog",
+      "health",
       "metadata",
       "output",
       "quality",
@@ -137,6 +152,13 @@ describe("single-call result contract", () => {
     expect(transcript).toEqual(trace.transcript);
     expect(usage).toEqual(cost);
     expect(cost).toEqual(finalEvent.cost);
+    expect(health).toEqual(computeHealth(trace, DEFAULT_HEALTH_THRESHOLDS));
+    expect(Array.isArray(health.anomalies)).toBe(true);
+    expect(typeof health.stats.totalTurns).toBe("number");
+    expect(typeof health.stats.agentCount).toBe("number");
+    expect(
+      typeof health.stats.budgetUtilizationPct === "number" || health.stats.budgetUtilizationPct === null
+    ).toBe(true);
     expect(accounting).toEqual({
       kind: "run-accounting",
       tier: "fast",
@@ -150,7 +172,7 @@ describe("single-call result contract", () => {
       tier: "fast",
       modelProviderId: "result-contract-model",
       agentsUsed: trace.agentsUsed,
-      startedAt: trace.events[0]?.at,
+      startedAt: eventTimestamp(trace.events[0]),
       completedAt: finalEvent.at
     });
     expect(finalEvent.transcript).toEqual({
@@ -160,6 +182,31 @@ describe("single-call result contract", () => {
     });
     expect(judgedResult.quality).toBe(0.91);
     expect(JSON.parse(JSON.stringify(judgedResult))).toEqual(judgedResult);
+  });
+
+  it("preserves health when caller evaluation augments the result", async () => {
+    let evaluatorInputHealth: RunHealthSummary | undefined;
+    const evaluation = {
+      quality: 0.77,
+      rationale: "contract fixture"
+    };
+
+    const result = await run({
+      intent: "Evaluate a run while preserving its computed health.",
+      protocol: { kind: "sequential", maxTurns: 1 },
+      tier: "fast",
+      model: createDeterministicModelProvider("evaluated-health-contract-model"),
+      evaluate(input) {
+        evaluatorInputHealth = input.health;
+        return evaluation;
+      }
+    });
+    const expectedHealth = computeHealth(result.trace, DEFAULT_HEALTH_THRESHOLDS);
+
+    expect(evaluatorInputHealth).toEqual(expectedHealth);
+    expect(result.health).toEqual(expectedHealth);
+    expect(result.quality).toBe(evaluation.quality);
+    expect(result.evaluation).toEqual(evaluation);
   });
 
   it("defines a versioned replay trace artifact with inputs, budget, seed, protocol decisions, provider calls, and final output", async () => {
@@ -233,9 +280,9 @@ describe("single-call result contract", () => {
     expect(budgetStateChanges).toEqual([
       {
         kind: "replay-trace-budget-state-change",
-        eventIndex: 2,
+        eventIndex: 4,
         eventType: "agent-turn",
-        at: result.trace.events[2]?.at,
+        at: eventTimestamp(result.trace.events[4]),
         cost: {
           usd: 0.002,
           inputTokens: 5,
@@ -245,9 +292,9 @@ describe("single-call result contract", () => {
       },
       {
         kind: "replay-trace-budget-state-change",
-        eventIndex: 3,
+        eventIndex: 7,
         eventType: "agent-turn",
-        at: result.trace.events[3]?.at,
+        at: eventTimestamp(result.trace.events[7]),
         cost: {
           usd: 0.004,
           inputTokens: 10,
@@ -257,9 +304,9 @@ describe("single-call result contract", () => {
       },
       {
         kind: "replay-trace-budget-state-change",
-        eventIndex: 4,
+        eventIndex: 8,
         eventType: "final",
-        at: result.trace.events[4]?.at,
+        at: eventTimestamp(result.trace.events[8]),
         cost: result.cost
       }
     ]);
@@ -268,7 +315,13 @@ describe("single-call result contract", () => {
       source: "caller",
       value: 2603289901
     });
-    expect(decisions.map((decision) => decision.eventType)).toEqual(result.trace.events.map((event) => event.type));
+    const decisionEvents = protocolDecisionEventEntries(result.trace.events);
+    expect(decisions.map((decision) => decision.eventIndex)).toEqual(
+      decisionEvents.map((entry) => entry.index)
+    );
+    expect(decisions.map((decision) => decision.eventType)).toEqual(
+      decisionEvents.map((entry) => entry.event.type)
+    );
     expect(decisions.at(-1)).toMatchObject({
       kind: "replay-trace-protocol-decision",
       eventIndex: result.trace.events.length - 1,
@@ -386,16 +439,20 @@ describe("single-call result contract", () => {
       value: "complete-replay-artifact-seed"
     });
 
-    expect(trace.events).toHaveLength(5);
+    expect(trace.events).toHaveLength(9);
     expect(trace.events.map((event) => event.type)).toEqual([
       "role-assignment",
       "role-assignment",
+      "model-request",
+      "model-response",
       "agent-turn",
+      "model-request",
+      "model-response",
       "agent-turn",
       "final"
     ]);
     expect(trace.transcript).toHaveLength(2);
-    expect(trace.protocolDecisions).toHaveLength(trace.events.length);
+    expect(trace.protocolDecisions).toHaveLength(protocolDecisionEventEntries(trace.events).length);
     expect(trace.providerCalls).toHaveLength(trace.transcript.length);
     expect(trace.budgetStateChanges).toHaveLength(3);
 
@@ -456,21 +513,127 @@ describe("single-call result contract", () => {
     const replayed = replay(savedTrace);
     const namespacedReplay = Dogpile.replay(savedTrace);
 
-    expect(replayed).toEqual({
-      output: result.output,
-      eventLog: result.eventLog,
-      trace: savedTrace,
-      transcript: result.transcript,
-      usage: result.usage,
-      metadata: result.metadata,
-      accounting: result.accounting,
-      cost: result.cost
+    expect(replayed.output).toBe(result.output);
+    expect(replayed.trace).toBe(savedTrace);
+    expect(replayed.transcript).toEqual(result.transcript);
+    expect(replayed.usage).toEqual(result.usage);
+    expect(replayed.metadata).toEqual(result.metadata);
+    expect(replayed.accounting).toEqual(result.accounting);
+    expect(replayed.cost).toEqual(result.cost);
+    expect(replayed.health).toEqual(computeHealth(savedTrace, DEFAULT_HEALTH_THRESHOLDS));
+    expect(replayed.eventLog).toEqual({
+      kind: "run-event-log",
+      runId: savedTrace.runId,
+      protocol: savedTrace.protocol,
+      eventTypes: replayed.eventLog.events.map((event) => event.type),
+      eventCount: replayed.eventLog.events.length,
+      events: replayed.eventLog.events
     });
     expect(namespacedReplay).toEqual(replayed);
     expect(replayed.eventLog.events).toBe(savedTrace.events);
+    expectReplayProvenanceRoundTrip(replayed.eventLog.events, savedTrace.providerCalls);
     expect(replayed.transcript).toBe(savedTrace.transcript);
     expect(replayed.output).toBe(savedTrace.finalOutput.output);
     expect(JSON.parse(JSON.stringify(replayed))).toEqual(replayed);
+
+    const nonFinalTrace: Trace = {
+      ...savedTrace,
+      events: savedTrace.events.slice(0, -1)
+    };
+    const replayedNonFinal = replay(nonFinalTrace);
+    expect(replayedNonFinal.health).toEqual(computeHealth(nonFinalTrace, DEFAULT_HEALTH_THRESHOLDS));
+  });
+
+  it("synthesizes replay model provenance events from provider calls for legacy traces", async () => {
+    const result = await run({
+      intent: "Replay a saved trace that predates live model provenance events.",
+      protocol: { kind: "sequential", maxTurns: 2 },
+      tier: "fast",
+      model: createDeterministicModelProvider("legacy-replay-provenance-model"),
+      agents: [
+        { id: "agent-1", role: "planner" },
+        { id: "agent-2", role: "critic" }
+      ]
+    });
+    const savedTrace = JSON.parse(JSON.stringify(result.trace)) as Trace;
+    const legacyEvents = savedTrace.events.filter(
+      (event) => event.type !== "model-request" && event.type !== "model-response"
+    );
+    const legacyTrace: Trace = {
+      ...savedTrace,
+      events: legacyEvents
+    };
+
+    const replayed = replay(legacyTrace);
+
+    expect(legacyTrace.events).toBe(legacyEvents);
+    expect(replayed.trace.events).toBe(legacyEvents);
+    expect(replayed.eventLog.events).not.toBe(legacyEvents);
+    expect(legacyEvents.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "role-assignment",
+      "agent-turn",
+      "agent-turn",
+      "final"
+    ]);
+    expect(replayed.eventLog.eventTypes).toEqual([
+      "role-assignment",
+      "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
+    expectReplayProvenanceRoundTrip(replayed.eventLog.events, legacyTrace.providerCalls);
+
+    const streamHandle = replayStream(legacyTrace);
+    const subscriberEvents: StreamEvent[] = [];
+    const streamedEvents: StreamEvent[] = [];
+    streamHandle.subscribe((event) => {
+      subscriberEvents.push(event);
+    });
+    for await (const event of streamHandle) {
+      streamedEvents.push(event);
+    }
+    const streamedReplay = await streamHandle.result;
+    expect(streamedReplay.eventLog.events).toEqual(replayed.eventLog.events);
+    expect(streamedEvents).toEqual(replayed.eventLog.events);
+    expect(subscriberEvents).toEqual(replayed.eventLog.events);
+
+    const firstRequest = replayed.eventLog.events[2];
+    const firstResponse = replayed.eventLog.events[3];
+    if (firstRequest?.type !== "model-request" || firstResponse?.type !== "model-response") {
+      throw new Error("expected synthesized model provenance events before first turn");
+    }
+
+    expect(firstRequest).toEqual({
+      type: "model-request",
+      runId: legacyTrace.runId,
+      callId: legacyTrace.providerCalls[0]?.callId,
+      providerId: legacyTrace.providerCalls[0]?.providerId,
+      modelId: legacyTrace.providerCalls[0]?.modelId,
+      startedAt: legacyTrace.providerCalls[0]?.startedAt,
+      agentId: legacyTrace.providerCalls[0]?.agentId,
+      role: legacyTrace.providerCalls[0]?.role,
+      request: legacyTrace.providerCalls[0]?.request
+    });
+    expect(firstResponse).toEqual({
+      type: "model-response",
+      runId: legacyTrace.runId,
+      callId: legacyTrace.providerCalls[0]?.callId,
+      providerId: legacyTrace.providerCalls[0]?.providerId,
+      modelId: legacyTrace.providerCalls[0]?.modelId,
+      startedAt: legacyTrace.providerCalls[0]?.startedAt,
+      completedAt: legacyTrace.providerCalls[0]?.completedAt,
+      agentId: legacyTrace.providerCalls[0]?.agentId,
+      role: legacyTrace.providerCalls[0]?.role,
+      response: legacyTrace.providerCalls[0]?.response
+    });
+    expect("parentRunIds" in firstRequest).toBe(false);
+    expect("parentRunIds" in firstResponse).toBe(false);
   });
 
   it("replays a saved trace as streaming events, final output, and transcript while failing on any live provider call", async () => {
@@ -558,12 +721,13 @@ describe("single-call result contract", () => {
     expect(result.eventLog.eventTypes).toEqual(trace.events.map((event) => event.type));
     expect(trace.events.at(-1)?.type).toBe("final");
     expect(trace.finalOutput.output).toBe(result.output);
-    expect(trace.protocolDecisions).toHaveLength(trace.events.length);
+    const decisionEvents = protocolDecisionEventEntries(trace.events);
+    expect(trace.protocolDecisions).toHaveLength(decisionEvents.length);
     expect(trace.protocolDecisions.map((decision) => decision.eventIndex)).toEqual(
-      trace.events.map((_event, index) => index)
+      decisionEvents.map((entry) => entry.index)
     );
     expect(trace.protocolDecisions.map((decision) => decision.eventType)).toEqual(
-      trace.events.map((event) => event.type)
+      decisionEvents.map((entry) => entry.event.type)
     );
 
     expect(trace.providerCalls).toHaveLength(trace.transcript.length);
@@ -580,6 +744,8 @@ describe("single-call result contract", () => {
       }
 
       expect(call.providerId).toBe(trace.modelProviderId);
+      expect(typeof call.modelId).toBe("string");
+      expect(call.modelId.length).toBeGreaterThan(0);
       expect(call.agentId).toBe(transcript.agentId);
       expect(call.role).toBe(transcript.role);
       expect(call.request.messages.at(-1)?.content).toBe(transcript.input);
@@ -598,12 +764,35 @@ describe("single-call result contract", () => {
     }[] = [
       {
         protocol: { kind: "sequential", maxTurns: 2 },
-        expectedEventTypes: ["role-assignment", "role-assignment", "agent-turn", "agent-turn", "final"],
+        expectedEventTypes: [
+          "role-assignment",
+          "role-assignment",
+          "model-request",
+          "model-response",
+          "agent-turn",
+          "model-request",
+          "model-response",
+          "agent-turn",
+          "final"
+        ],
         transcriptLength: 2
       },
       {
         protocol: { kind: "coordinator", maxTurns: 2 },
-        expectedEventTypes: ["role-assignment", "role-assignment", "agent-turn", "agent-turn", "agent-turn", "final"],
+        expectedEventTypes: [
+          "role-assignment",
+          "role-assignment",
+          "model-request",
+          "model-response",
+          "agent-turn",
+          "model-request",
+          "model-response",
+          "agent-turn",
+          "model-request",
+          "model-response",
+          "agent-turn",
+          "final"
+        ],
         transcriptLength: 3
       },
       {
@@ -611,6 +800,10 @@ describe("single-call result contract", () => {
         expectedEventTypes: [
           "role-assignment",
           "role-assignment",
+          "model-request",
+          "model-request",
+          "model-response",
+          "model-response",
           "agent-turn",
           "agent-turn",
           "broadcast",
@@ -620,7 +813,17 @@ describe("single-call result contract", () => {
       },
       {
         protocol: { kind: "shared", maxTurns: 2 },
-        expectedEventTypes: ["role-assignment", "role-assignment", "agent-turn", "agent-turn", "final"],
+        expectedEventTypes: [
+          "role-assignment",
+          "role-assignment",
+          "model-request",
+          "model-request",
+          "model-response",
+          "model-response",
+          "agent-turn",
+          "agent-turn",
+          "final"
+        ],
         transcriptLength: 2
       }
     ];
@@ -668,6 +871,8 @@ describe("single-call result contract", () => {
       );
       for (const call of result.trace.providerCalls) {
         expect(call.kind).toBe("replay-trace-provider-call");
+        expect(typeof call.modelId).toBe("string");
+        expect(call.modelId.length).toBeGreaterThan(0);
         expect(call.request.temperature).toBe(0);
         expect(call.request.metadata).toMatchObject({
           runId: result.trace.runId,
@@ -745,11 +950,12 @@ describe("single-call result contract", () => {
       });
 
       expect(result.trace.protocolDecisions.map((decision) => decision.decision)).toEqual(testCase.decisions);
+      const decisionEvents = protocolDecisionEventEntries(result.trace.events);
       expect(result.trace.protocolDecisions.map((decision) => decision.eventIndex)).toEqual(
-        result.trace.protocolDecisions.map((_decision, index) => index)
+        decisionEvents.map((entry) => entry.index)
       );
       expect(result.trace.protocolDecisions.map((decision) => decision.eventType)).toEqual(
-        result.trace.events.map((event) => event.type)
+        decisionEvents.map((entry) => entry.event.type)
       );
       expect(result.trace.protocolDecisions.every((decision) => decision.protocol === testCase.protocol.kind)).toBe(
         true
@@ -824,7 +1030,13 @@ describe("single-call result contract", () => {
     releaseGeneration();
     const result = await resultPromise;
 
-    expect(result.trace.events.map((event) => event.type)).toEqual(["role-assignment", "agent-turn", "final"]);
+    expect(result.trace.events.map((event) => event.type)).toEqual([
+      "role-assignment",
+      "model-request",
+      "model-response",
+      "agent-turn",
+      "final"
+    ]);
     expect(result.eventLog.events).toEqual(result.trace.events);
     expect(result.transcript).toEqual(result.trace.transcript);
     expect(result.output).toContain("completed finisher turn");
@@ -1161,6 +1373,64 @@ describe("single-call result contract", () => {
   });
 });
 
+function eventTimestamp(event: RunEvent | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  if ("at" in event) return event.at;
+  return event.type === "model-response" ? event.completedAt : event.startedAt;
+}
+
 function sortedKeys(value: object): string[] {
   return Object.keys(value).sort();
+}
+
+function expectReplayProvenanceRoundTrip(
+  events: readonly RunEvent[],
+  providerCalls: readonly ReplayTraceProviderCall[]
+): void {
+  const replayedModelRequests = events.filter((event) => event.type === "model-request");
+  const replayedModelResponses = events.filter((event) => event.type === "model-response");
+
+  expect(replayedModelRequests.length).toBeGreaterThan(0);
+  expect(replayedModelResponses.length).toBeGreaterThan(0);
+  expect(replayedModelRequests).toHaveLength(providerCalls.length);
+  expect(replayedModelResponses).toHaveLength(providerCalls.length);
+
+  for (const [index, event] of replayedModelRequests.entries()) {
+    const call = providerCalls[index];
+    if (event.type !== "model-request" || call === undefined) {
+      throw new Error("missing replayed model-request provenance fixture");
+    }
+
+    expect(event.callId).toBe(call.callId);
+    expect(event.providerId).toBe(call.providerId);
+    expect(event.modelId).toBe(call.modelId);
+    expect(event.startedAt).toBe(call.startedAt);
+    expect(event.agentId).toBe(call.agentId);
+    expect(event.role).toBe(call.role);
+    expect(event.request).toEqual(call.request);
+    expect(typeof event.modelId).toBe("string");
+    expect(typeof event.providerId).toBe("string");
+    expect(typeof event.callId).toBe("string");
+    expect(typeof event.startedAt).toBe("string");
+    expect(Date.parse(event.startedAt)).not.toBeNaN();
+  }
+
+  for (const [index, event] of replayedModelResponses.entries()) {
+    const call = providerCalls[index];
+    if (event.type !== "model-response" || call === undefined) {
+      throw new Error("missing replayed model-response provenance fixture");
+    }
+
+    expect(event.callId).toBe(call.callId);
+    expect(event.providerId).toBe(call.providerId);
+    expect(event.modelId).toBe(call.modelId);
+    expect(event.startedAt).toBe(call.startedAt);
+    expect(event.completedAt).toBe(call.completedAt);
+    expect(event.agentId).toBe(call.agentId);
+    expect(event.role).toBe(call.role);
+    expect(event.response).toEqual(call.response);
+    expect(typeof event.modelId).toBe("string");
+    expect(typeof event.completedAt).toBe("string");
+    expect(Date.parse(event.completedAt)).not.toBeNaN();
+  }
 }

@@ -1,5 +1,70 @@
 # Changelog
 
+## [0.5.0] — 2026-05-01
+
+v0.5.0 Observability and Auditability starts with provenance annotations: model provider calls now produce real request/response events, replay can synthesize those events from provider-call anchors, and callers get a small runtime helper for normalized provenance fields.
+
+Prepared the release identity for `@dogpile/sdk@0.5.0` and `dogpile-sdk-0.5.0.tgz`.
+
+### Breaking
+
+- **`ModelRequestEvent` shape changed.** The `at` field is removed. The event now carries `startedAt: string` (ISO-8601 timestamp immediately before the provider call) and `modelId: string` (resolved model identifier). Update any code that reads `event.at` on a `ModelRequestEvent`.
+- **`ModelResponseEvent` shape changed.** The `at` field is removed. The event now carries `startedAt: string`, `completedAt: string` (ISO-8601 timestamp after the provider call), and `modelId: string`. Callers can compute call duration from a single event. Update any code that reads `event.at` on a `ModelResponseEvent`.
+- **`model-request` and `model-response` events are now emitted.** These event types were previously typed but never produced at runtime. They are now emitted on every provider call across all four protocols (`sequential`, `broadcast`, `coordinator`, `shared`). Callers with exhaustive switches over `RunEvent["type"]` that lack a `default` branch may encounter unhandled cases — add `case "model-request":` and `case "model-response":` branches or a fallback `default`.
+
+### Added — Provenance annotations (Phase 6)
+
+- **`ConfiguredModelProvider.modelId?` optional field.** Provider adapters can now declare the specific model identifier, such as `"gpt-4o"`. When absent, the SDK uses `provider.id` as the fallback. `createOpenAICompatibleProvider` and the internal Vercel AI provider populate this field automatically from the configured model.
+- **`ReplayTraceProviderCall.modelId` required field.** The model identifier is now recorded in every provider call entry in `trace.providerCalls`. This is a shape change on the replay type — if you have hand-crafted `ReplayTraceProviderCall` objects, such as in tests, add the `modelId` field.
+- **New subpath: `@dogpile/sdk/runtime/provenance`.** Exports `getProvenance(event)`, `ProvenanceRecord`, and `PartialProvenanceRecord`. `getProvenance()` extracts normalized provenance fields from any `ModelRequestEvent` or `ModelResponseEvent`; the overloaded signature returns `ProvenanceRecord` with `completedAt` for response events and `PartialProvenanceRecord` without `completedAt` for request events.
+
+### Added — Structured event introspection + health diagnostics (Phase 7)
+
+- **New subpath: `@dogpile/sdk/runtime/introspection`.** Exports `queryEvents(events, filter)` and `EventQueryFilter`. `queryEvents()` filters a `readonly RunEvent[]` by event type, agent id, global turn range, and/or cost range with AND semantics, returning a narrowed subtype such as `TurnEvent[]` when `filter.type === "agent-turn"` without caller casts.
+- **New subpath: `@dogpile/sdk/runtime/health`.** Exports `computeHealth(trace, thresholds?)`, `HealthThresholds`, `DEFAULT_HEALTH_THRESHOLDS`, `RunHealthSummary`, and `HealthAnomaly`. `computeHealth()` derives anomaly records and stats from a trace without I/O or runtime state.
+- **`result.health: RunHealthSummary` required field.** Every `RunResult` now includes an always-present machine-readable health summary computed from trace events at result time and recomputed identically by `replay()`. The summary exposes `health.anomalies: readonly HealthAnomaly[]` and `health.stats.totalTurns`, `health.stats.agentCount`, and `health.stats.budgetUtilizationPct`.
+- **New root-exported health types.** `AnomalyCode`, `HealthAnomaly`, and `RunHealthSummary` are exported from `@dogpile/sdk`.
+- **Frozen health anomaly fixture.** `src/tests/fixtures/anomaly-record-v1.json` records one sample `HealthAnomaly` per anomaly code. `provider-error-recovered` is present in the `AnomalyCode` union and fixture but is not emitted by `computeHealth()` in Phase 7 because current traces have no provider-recovery signal without an event-shape change.
+
+### Added — Audit Event Schema (Phase 8)
+
+- **New subpath: `@dogpile/sdk/runtime/audit`.** Exports `createAuditRecord(trace)`, `AuditRecord`, `AuditOutcome`, `AuditCost`, `AuditAgentRecord`, and `AuditOutcomeStatus`.
+- **`createAuditRecord(trace: Trace): AuditRecord`.** Pure function that derives a versioned, schema-stable audit record from any completed trace. It works on live `RunResult.trace` values and stored/replayed traces without I/O, storage, or provider access.
+- **`AuditRecord` standalone type.** The audit schema is independent of `RunEvent` variants and contains `auditSchemaVersion`, `runId`, `intent`, `startedAt`, `completedAt`, `protocol`, `tier`, `modelProviderId`, `agentCount`, `turnCount`, `outcome`, `cost`, `agents`, and optional `childRunIds`.
+- **Budget-stop audit outcome.** `AuditOutcome` uses `{ status: "completed" | "budget-stopped" | "aborted"; terminationCode?: string }`; `terminationCode` carries the normalized budget stop reason (`"cost"`, `"tokens"`, `"iterations"`, or `"timeout"`) for budget-stopped runs.
+- **Frozen audit record fixture.** `src/tests/fixtures/audit-record-v1.json` records the canonical AuditRecord v1 field order and shallow type shape. Intentional AuditRecord schema changes must update the JSON fixture, companion `audit-record-v1.type-check.ts`, and shape test together.
+
+**Note:** Audit records are not auto-attached to `RunResult`. Callers explicitly invoke `createAuditRecord(result.trace)`.
+
+### Added — OTEL tracing bridge (Phase 9)
+
+- **New subpath: `@dogpile/sdk/runtime/tracing`.** Exports `DogpileTracer`, `DogpileSpan`, `DogpileSpanOptions`, and `DOGPILE_SPAN_NAMES`. Pure-TS, zero runtime dependencies; `@opentelemetry/*` is not imported anywhere in `src/runtime/`, `src/browser/`, or `src/providers/`. The `src/tests/no-otel-imports.test.ts` grep test enforces this boundary.
+- **`tracer?: DogpileTracer` on `EngineOptions` and `DogpileOptions`.** When a duck-typed tracer is provided, the SDK emits spans on every run; when absent the run completes with zero span overhead.
+- **Four span names emitted under the `dogpile.*` namespace:** `dogpile.run`, `dogpile.sub-run`, `dogpile.agent-turn`, `dogpile.model-call`. Hierarchy: `dogpile.run` → `dogpile.sub-run` → `dogpile.agent-turn` → `dogpile.model-call`.
+- **`dogpile.run` span attributes:** `dogpile.run.id`, `dogpile.run.protocol`, `dogpile.run.tier`, `dogpile.run.intent` (truncated to 200 chars), `dogpile.run.outcome` (`completed` / `budget-stopped` / `aborted`), `dogpile.run.cost_usd`, `dogpile.run.turn_count`, `dogpile.run.input_tokens`, `dogpile.run.output_tokens`, and `dogpile.run.termination_reason` for budget-stopped runs.
+- **`dogpile.agent-turn` span attributes:** `dogpile.agent.id`, `dogpile.turn.number`, `dogpile.agent.role`, `dogpile.model.id`, `dogpile.turn.cost_usd`, `dogpile.turn.input_tokens`, `dogpile.turn.output_tokens`. `dogpile.turn.number` is derived from a per-agentId counter inside the engine because `TurnEvent` itself has no `turnNumber` field.
+- **`dogpile.model-call` span attributes:** `dogpile.model.id`, `dogpile.call.id`, `dogpile.provider.id`, `dogpile.model.input_tokens`, `dogpile.model.output_tokens`, and `dogpile.model.cost_usd` when the provider reports it.
+- **Sub-run spans are correctly nested.** Children dispatched by the coordinator protocol appear as descendants of the parent run span via internal `parentSpan` threading on `RunProtocolOptions`; they do not appear as disconnected root traces in OTEL backends.
+- **Span status semantics.** `dogpile.run` spans get `setStatus("ok")` for completed runs, including budget-stopped runs with the termination reason captured as an attribute, and `setStatus("error", message)` for aborted or thrown runs. `dogpile.sub-run` spans on `sub-run-failed` events get `setStatus("error", event.error.message)`.
+- **Streaming parity.** `stream()` produces the same four span types with the same nesting and attributes as `run()`.
+- **Root re-exports.** `DogpileTracer`, `DogpileSpan`, `DogpileSpanOptions` are re-exported as types from `@dogpile/sdk`; `DOGPILE_SPAN_NAMES` is a value-level root re-export.
+- **`replay()` and `replayStream()` are tracing-free.** Even when an engine has been configured with a `tracer`, calling `replay()` or `replayStream()` emits no spans; historical timestamps would confuse OTEL backends. See `docs/developer-usage.md` for the recommended user-side bridge pattern.
+- **No runtime dependency added.** `@opentelemetry/api` and `@opentelemetry/sdk-trace-base` are devDependencies used only by `src/tests/otel-tracing-contract.test.ts`.
+
+### Added — Metrics / Counters hook (Phase 10)
+
+- **New subpath: `@dogpile/sdk/runtime/metrics`.** Exports `MetricsHook` and `RunMetricsSnapshot`. Pure-TS, zero runtime dependencies. No root re-exports.
+- **`metricsHook?: MetricsHook` on `EngineOptions` and `DogpileOptions`.** When provided, `onRunComplete` fires at every terminal state (completed, budget-stopped, aborted) with a `RunMetricsSnapshot`; `onSubRunComplete` fires for each coordinator-dispatched child run. When absent, zero overhead — no allocations.
+- **`RunMetricsSnapshot` fields:** `outcome`, `inputTokens`, `outputTokens`, `costUsd`, `totalInputTokens`, `totalOutputTokens`, `totalCostUsd`, `turns`, `durationMs`. Own-only counters exclude nested sub-run tokens; total counters include the full subtree.
+- **`logger?: Logger` on `EngineOptions` and `DogpileOptions`.** Routes hook errors to a caller-supplied structured logger; falls back to `console.error` when absent. Uses the existing `Logger` interface from `@dogpile/sdk/runtime/logger`. Enables future engine-level diagnostic logging without another surface change.
+- **Async fire-and-forget.** Hook callbacks are `(snapshot) => void | Promise<void>`. Async returns attach `.catch(err => logger.error(...))`. Hook latency never delays run completion.
+- **`replay()` and `replayStream()` ignore `metricsHook` entirely.** Consistent with the Phase 9 replay-is-tracing-free invariant.
+- **Frozen fixture.** `src/tests/fixtures/metrics-snapshot-v1.json` records the canonical `RunMetricsSnapshot` v1 field order. Companion `metrics-snapshot-v1.type-check.ts` enforces compile-time type fidelity.
+
+### Replay
+
+- **`replay()` synthesizes `model-request` / `model-response` events from `trace.providerCalls`.** The augmented event log returned by `replay()` includes provenance events derived from the canonical `providerCalls` anchor. This ensures provenance fields in replayed results are identical to those in live runs (PROV-02). Older traces without these events in `trace.events` gain them on replay.
+
 ## [0.4.0] — 2026-05-01
 
 Recursive coordination — coordinators can now dispatch whole sub-missions via a `delegate` decision, with embedded child traces, propagated budgets/aborts/costs, bounded concurrency with locality clamping, live child-event bubbling on streams, and structured child-failure escalation. See [`docs/recursive-coordination.md`](docs/recursive-coordination.md) for the full surface and a worked example.
