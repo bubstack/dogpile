@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.5.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-02T01:11:09Z"
-last_activity: 2026-05-02 -- Phase 10 Plan 02 metrics engine integration completed
+last_updated: "2026-05-02T01:21:20Z"
+last_activity: 2026-05-02 -- Phase 10 Plan 03 metrics public-surface lockstep completed
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 23
-  completed_plans: 21
-  percent: 91
+  completed_plans: 22
+  percent: 96
 ---
 
 # State
@@ -24,12 +24,12 @@ progress:
 ## Current Position
 
 Phase: 10
-Plan: Wave 3 / 10-03
+Plan: Wave 4 / 10-04
 Status: Executing Phase 10 plans
-Last activity: 2026-05-02 -- Phase 10 Plan 02 metrics engine integration completed
+Last activity: 2026-05-02 -- Phase 10 Plan 03 metrics public-surface lockstep completed
 
 ```
-Progress [█████████░] 91% (21/23 milestone plans)
+Progress [██████████] 96% (22/23 milestone plans)
 ```
 
 ## Performance Metrics
@@ -49,6 +49,7 @@ Progress [█████████░] 91% (21/23 milestone plans)
 | Phase 09 P04 | 6 min | 2 tasks | 3 files |
 | Phase 10 P01 | 4 min | 2 tasks | 3 files |
 | Phase 10 P02 | 6 min | 2 tasks | 2 files |
+| Phase 10 P03 | 7 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,7 @@ Progress [█████████░] 91% (21/23 milestone plans)
 - **Phase 10 metrics engine uses root-only run completion.** `onRunComplete` fires only for `currentDepth === 0` or undefined; coordinator child runs are reported through `onSubRunComplete` from the parent emit closure to avoid double-counting.
 - **Phase 10 metrics hooks are fire-and-forget.** Synchronous hook throws and async rejections are routed to `logger.error("dogpile:metricsHook threw", { error })` or `console.error` fallback and never change the run result.
 - **Phase 10 replay remains metrics-free.** `replay()` and `replayStream()` do not emit metrics callbacks, matching the existing tracing-free replay contract.
+- **Phase 10 metrics public surface is locked.** `@dogpile/sdk/runtime/metrics` is package-exported; package export tests assert the subpath and type surface, and `metrics-snapshot-v1.json` freezes the 9-field `RunMetricsSnapshot` shape.
 
 ### Todos
 
@@ -94,8 +96,8 @@ Progress [█████████░] 91% (21/23 milestone plans)
 
 ## Session Continuity
 
-**Next action:** Execute Phase 10 Plan 03 — Public-surface lockstep for metrics.
+**Next action:** Execute Phase 10 Plan 04 — Documentation lockstep for metrics.
 
 ---
 
-*Last updated: 2026-05-02 — Phase 10 Plan 02 completed.*
+*Last updated: 2026-05-02 — Phase 10 Plan 03 completed.*
